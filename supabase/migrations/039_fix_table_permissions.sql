@@ -1,0 +1,63 @@
+-- ============================================================
+-- 039_fix_table_permissions.sql — restore missing table grants
+--
+-- Context
+--
+--   Like 037/038, the base table-level privileges for the
+--   `authenticated` role are missing for five more tables. RLS
+--   policies already gate *which rows* each role may touch, but
+--   they are only evaluated once the role holds the base grant,
+--   so every query fails with 42501 "permission denied for table":
+--
+--     message_templates:    template-manager load + sync/submit
+--                           routes (the 037/038-style ad-hoc
+--                           GRANT ALL was applied live but was
+--                           never recorded in a migration, so a
+--                           fresh `supabase db reset` loses it)
+--     conversations:        dashboard metrics (conversations
+--                           series, response time), inbox reads
+--                           and read-state updates
+--     account_invitations:  team settings list / invite / revoke
+--     member_presence:      presence polling (writes go through
+--                           the SECURITY DEFINER touch_presence
+--                           RPC, so SELECT is sufficient)
+--     quick_replies:        GET /api/quick-replies (reported 500)
+--
+-- The fix
+--
+--   Minimum grants for exactly the operations the existing
+--   `authenticated` client code issues. GRANT is idempotent.
+--   RLS stays ENABLED and continues to filter rows via the
+--   existing is_account_member() / conversation-scoped policies.
+--   service_role is intentionally NOT touched here: the reported
+--   errors are all `authenticated`, and the service-role send /
+--   webhook / automation pipelines are tracked separately.
+--
+-- Grant matrix (from auditing every .from('...') call site):
+--
+--     message_templates
+--       authenticated  SELECT  (template-manager fetchTemplates,
+--                               sync route lookup)
+--                      INSERT  (sync upsert — new, submit .upsert)
+--                      UPDATE  (sync upsert — existing, submit)
+--                      DELETE  (DELETE /api/whatsapp/templates/[id])
+--     conversations
+--       authenticated  SELECT  (dashboard metrics, inbox reads,
+--                               RLS subquery from messages)
+--                      UPDATE  (inbox read state / status /
+--                               assigned_agent_id — message-thread)
+--     account_invitations
+--       authenticated  SELECT  (GET /api/account/invitations)
+--                      INSERT  (POST /api/account/invitations)
+--                      DELETE  (DELETE /api/account/invitations/[id])
+--     member_presence
+--       authenticated  SELECT  (use-presence polling)
+--     quick_replies
+--       authenticated  SELECT  (GET /api/quick-replies)
+-- ============================================================
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.message_templates TO authenticated;
+GRANT SELECT, UPDATE ON public.conversations TO authenticated;
+GRANT SELECT, INSERT, DELETE ON public.account_invitations TO authenticated;
+GRANT SELECT ON public.member_presence TO authenticated;
+GRANT SELECT ON public.quick_replies TO authenticated;
