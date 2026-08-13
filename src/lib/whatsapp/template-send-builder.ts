@@ -69,6 +69,15 @@ type MetaSendParameter =
   | { type: 'coupon_code'; coupon_code: string }
   | { type: 'payload'; payload: string };
 
+/**
+ * True for a plain public http(s) URL — the only shape Meta accepts as a
+ * send-time media `link`. Resumable-Upload handles (`4::…`) fail this, so
+ * they are never leaked into the payload as a bogus link.
+ */
+function isPublicUrl(value: string | null | undefined): value is string {
+  return typeof value === 'string' && /^https?:\/\/\S+$/i.test(value);
+}
+
 function buildHeaderComponent(
   template: MessageTemplate,
   params: SendTimeParams,
@@ -96,14 +105,21 @@ function buildHeaderComponent(
 
   // image / video / document — Meta requires the media component on
   // every send. Prefer the caller's explicit override; fall back to the
-  // template's stored public URL.
+  // template's stored public URL; then to `header_handle` when it holds
+  // a public URL.
   //
-  // NOTE: `template.header_handle` is intentionally NOT used here. It's a
-  // Resumable-Upload handle that's only valid as the *creation-time*
-  // sample (`example.header_handle`); it is NOT a reusable send-time
-  // media id, and passing it as `{ id }` makes Meta reject the send. Only
-  // an explicit `headerMediaId` (a real /media upload id) is honored.
-  const link = params.headerMediaUrl ?? template.header_media_url;
+  // NOTE: `header_handle` is normally a Resumable-Upload handle (e.g.
+  // `4::…`) that's only valid as the *creation-time* sample — it is NOT a
+  // reusable send-time media id, and passing it as `{ id }` makes Meta
+  // reject the send. Only an explicit `headerMediaId` (a real /media
+  // upload id) is honored. But Meta's template-list API returns the
+  // sample media URL in `example.header_handle` for URL-sourced headers,
+  // so when the stored handle is a plain http(s) URL it IS a valid
+  // send-time link and is used as the last-resort fallback.
+  const link =
+    params.headerMediaUrl ??
+    template.header_media_url ??
+    (isPublicUrl(template.header_handle) ? template.header_handle : undefined);
   const id = params.headerMediaId;
   if (!link && !id) {
     throw new Error(

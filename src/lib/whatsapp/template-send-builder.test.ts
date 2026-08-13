@@ -143,6 +143,48 @@ describe('buildSendComponents — header', () => {
     });
   });
 
+  it('uses header_handle as the send-time link when it is a public URL', () => {
+    // Templates synced from Meta store the sample media URL in
+    // `header_handle` (header_media_url is NULL because Meta's list API
+    // never returns it). A URL-valued handle is a valid send-time link.
+    const components = buildSendComponents(
+      row({
+        header_type: 'image',
+        header_handle: 'https://scontent.whatsapp.net/img.jpg',
+      }),
+    );
+    expect(components[0]).toEqual({
+      type: 'header',
+      parameters: [
+        { type: 'image', image: { link: 'https://scontent.whatsapp.net/img.jpg' } },
+      ],
+    });
+  });
+
+  it('prefers header_media_url over a URL-valued header_handle', () => {
+    const components = buildSendComponents(
+      row({
+        header_type: 'image',
+        header_media_url: 'https://x.com/attached.jpg',
+        header_handle: 'https://scontent.whatsapp.net/sample.jpg',
+      }),
+    );
+    expect(components[0]).toEqual({
+      type: 'header',
+      parameters: [{ type: 'image', image: { link: 'https://x.com/attached.jpg' } }],
+    });
+  });
+
+  it('still throws for a resumable handle with no usable link', () => {
+    // A `4::…` handle is only valid at template-creation time; it must
+    // not be passed to Meta at send time.
+    expect(() =>
+      buildSendComponents(
+        row({ header_type: 'image', header_handle: '4::aW1gZQ==' }),
+      ),
+    ).toThrow(/requires a media link or id/);
+  });
+
   it('throws on media header with no link OR id available', () => {
     expect(() =>
       buildSendComponents(row({ header_type: 'image' })),

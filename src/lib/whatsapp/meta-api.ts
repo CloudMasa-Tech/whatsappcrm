@@ -373,6 +373,59 @@ export interface SendTemplateMessageArgs {
  *     The full components array is built from the row so media
  *     headers + URL buttons land correctly.
  */
+
+// ------------------------------------------------------------------
+// TEMPORARY DEBUG LOGGING for the "send returns 200 but nothing
+// arrives" investigation. Logs the raw Meta response after the send
+// POST. SAFE: never includes the access token / secrets; the recipient
+// is masked. Remove once the issue is confirmed fixed.
+// ------------------------------------------------------------------
+
+/** Mask a phone number — keep only the trailing 4 digits. */
+function maskPhone(phone: string): string {
+  const last4 = phone.replace(/\D/g, '').slice(-4)
+  const prefix = phone.startsWith('+') ? '+' : ''
+  return `${prefix}****${last4}`
+}
+
+interface LogMetaSendResponseArgs {
+  httpStatus: number
+  rawBody: string
+  recipient: string
+  templateName?: string
+  language?: string
+}
+
+function logMetaSendResponse(args: LogMetaSendResponseArgs): void {
+  let messageId: string | undefined
+  let metaErrorCode: number | undefined
+  let metaErrorMessage: string | undefined
+  try {
+    const data = JSON.parse(args.rawBody) as {
+      messages?: Array<{ id?: string }>
+      error?: { code?: number; message?: string }
+    }
+    messageId = data.messages?.[0]?.id
+    metaErrorCode = data.error?.code
+    metaErrorMessage = data.error?.message
+  } catch {
+    // Non-JSON body (e.g. HTML error page) — nothing structured to parse.
+  }
+  console.log(
+    [
+      '[WHATSAPP META RESPONSE]',
+      `HTTP status: ${args.httpStatus}`,
+      `Response body: ${args.rawBody}`,
+      `Message ID: ${messageId ?? 'N/A'}`,
+      `Recipient: ${maskPhone(args.recipient)}`,
+      `Template: ${args.templateName ?? 'N/A'}`,
+      `Language: ${args.language ?? 'N/A'}`,
+      `Meta error code: ${metaErrorCode ?? 'N/A'}`,
+      `Meta error message: ${metaErrorMessage ?? 'N/A'}`,
+    ].join('\n'),
+  )
+}
+
 export async function sendTemplateMessage(
   args: SendTemplateMessageArgs
 ): Promise<MetaSendResult> {
@@ -436,10 +489,29 @@ export async function sendTemplateMessage(
     },
     body: JSON.stringify(body),
   })
+
+  // TEMPORARY DEBUG LOGGING — log the exact Meta response before any
+  // handling, so a 200-with-error or a delivery failure is visible.
+  const rawBody = await response.text()
+  logMetaSendResponse({
+    httpStatus: response.status,
+    rawBody,
+    recipient: to,
+    templateName,
+    language,
+  })
+
   if (!response.ok) {
-    await throwMetaError(response, `Meta API error: ${response.status}`)
+    let message = `Meta API error: ${response.status}`
+    try {
+      const data = JSON.parse(rawBody) as MetaErrorResponse
+      if (data.error?.message) message = data.error.message
+    } catch {
+      // Non-JSON body — keep the fallback message.
+    }
+    throw new Error(message)
   }
-  const data = await response.json()
+  const data = JSON.parse(rawBody) as { messages: Array<{ id: string }> }
   return { messageId: data.messages[0].id }
 }
 

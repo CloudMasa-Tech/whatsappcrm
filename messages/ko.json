@@ -1389,6 +1389,7 @@
       "codePlaceholder": "예시 코드 (예: SUMMER20)",
 
       "cancel": "취소",
+      "save": "저장",
       "saving": "저장 중…",
       "submitting": "제출 중…",
       "saveResubmit": "저장 & 재제출",
@@ -1416,7 +1417,24 @@
       "toastInvalidImage": "헤더 이미지는 JPEG 또는 PNG여야 합니다.",
       "toastImageTooLarge": "이미지 크기가 {size}MB입니다 — Meta 제한은 5MB입니다.",
       "toastUploadSuccess": "이미지가 업로드되었습니다.",
-      "toastUploadFailed": "업로드에 실패했습니다."
+      "toastUploadFailed": "업로드에 실패했습니다.",
+
+      "attachMedia": "미디어 첨부",
+      "attachMediaAria": "이 템플릿을 전송할 때 사용할 미디어 설정",
+      "attachMediaTitle": "헤더 미디어 첨부",
+      "attachMediaDesc": "Meta에서 동기화한 템플릿에는 헤더 이미지, 동영상, 문서가 포함되지 않습니다. 여기서 한 번 설정하면 로컬에 저장되어 Meta에 다시 제출하지 않고 모든 전송에서 재사용됩니다.",
+      "attachMediaUrl": "공개 미디어 URL",
+      "attachMediaCurrent": "현재: {url}",
+      "uploadMedia": "파일 업로드",
+      "uploadVideoHint": "MP4 / 3GPP, 16MB 이하",
+      "uploadDocumentHint": "PDF, 16MB 이하",
+      "mediaRequired": "헤더 미디어가 없습니다 — 보내기 전에 첨부하세요.",
+      "mediaTypeMismatch": "{format} 헤더에 지원되지 않는 파일 형식입니다.",
+      "mediaTooLarge": "파일 크기가 {size}MB입니다 — 제한은 {max}MB입니다.",
+      "mediaUrlRequired": "먼저 파일을 업로드하거나 공개 URL을 입력하세요.",
+      "mediaInvalidUrl": "유효한 공개 URL(http:// 또는 https://)을 입력하세요.",
+      "toastMediaSaved": "헤더 미디어가 저장되었습니다.",
+      "toastMediaSaveFailed": "헤더 미디어를 저장하지 못했습니다."
     },
     "roles": {
       "admin": "관리자",

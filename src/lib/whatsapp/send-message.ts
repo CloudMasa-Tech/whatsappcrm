@@ -427,6 +427,18 @@ export async function sendMessageToConversation(
     const message =
       err instanceof Error ? err.message : 'Unknown Meta API error';
     console.error('[send-message] Meta send failed for all variants:', message);
+    // Meta #132001 — the template name/language does not exist on the
+    // connected WhatsApp number. Usually the local catalog is stale
+    // (the phone number or WABA was changed, or the template was renamed
+    // on Meta) — surface an actionable error instead of the raw Meta text
+    // so the user runs "Sync from Meta" rather than guessing.
+    if (/132001|does not exist in the translation/i.test(message)) {
+      throw new SendMessageError(
+        'template_not_found',
+        `Template "${templateName}" (${templateLanguage || 'en_US'}) is not available on your connected WhatsApp number. Run "Sync from Meta" in Settings → Templates, then choose the approved template to send.`,
+        400
+      );
+    }
     throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
   }
 
