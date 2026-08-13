@@ -34,13 +34,19 @@ export interface ResolvedConversation {
 
 /**
  * Find or create the contact + conversation for `phone` within
- * `accountId`. Throws `SendMessageError` (shared with the send core,
+ * `projectId`. Throws `SendMessageError` (shared with the send core,
  * so the route maps one error family) on a bad phone, a missing
- * WhatsApp config, or a DB failure.
+ * WhatsApp connection, or a DB failure.
+ *
+ * Scoped to the project, not the account: the same number in a sibling
+ * project is a different customer relationship, and reusing that
+ * contact would route the reply into the wrong inbox. `accountId` is
+ * still needed because domain rows carry both columns.
  */
 export async function resolveConversationByPhone(
   db: SupabaseClient,
   accountId: string,
+  projectId: string,
   phone: string,
   name?: string | null
 ): Promise<ResolvedConversation> {
@@ -53,19 +59,42 @@ export async function resolveConversationByPhone(
     );
   }
 
-  // Fail fast (and create nothing) when the account has no WhatsApp
-  // connected — the same error the send would raise anyway.
-  const { data: config } = await db
-    .from('whatsapp_config')
-    .select('id')
-    .eq('account_id', accountId)
+  // Fail fast (and create nothing) when the project has no WhatsApp
+  // connected — the same error the send would raise anyway. Which
+  // table holds that connection depends on the project's channel:
+  // whatsapp_config for Cloud API, whatsapp_sessions for QR.
+  const { data: project } = await db
+    .from('projects')
+    .select('channel_type')
+    .eq('id', projectId)
     .maybeSingle();
-  if (!config) {
-    throw new SendMessageError(
-      'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400
-    );
+
+  if (project?.channel_type === 'qr') {
+    const { data: session } = await db
+      .from('whatsapp_sessions')
+      .select('status')
+      .eq('project_id', projectId)
+      .maybeSingle();
+    if (session?.status !== 'connected') {
+      throw new SendMessageError(
+        'whatsapp_not_configured',
+        "This project's WhatsApp number is not connected. Pair it by scanning the QR code in Settings → Projects.",
+        400
+      );
+    }
+  } else {
+    const { data: config } = await db
+      .from('whatsapp_config')
+      .select('id')
+      .eq('project_id', projectId)
+      .maybeSingle();
+    if (!config) {
+      throw new SendMessageError(
+        'whatsapp_not_configured',
+        'WhatsApp not configured for this project. Please set up the integration first.',
+        400
+      );
+    }
   }
 
   // Audit user for created rows = the single account-wide default used
@@ -76,7 +105,7 @@ export async function resolveConversationByPhone(
   // the callers already handle.
   let ownerUserId: string;
   try {
-    ownerUserId = await resolveAuditUserId(db, accountId);
+    ownerUserId = await resolveAuditUserId(db, accountId, projectId);
   } catch (err) {
     if (err instanceof ContactError) {
       throw new SendMessageError('db_error', err.message, err.status);
@@ -88,7 +117,7 @@ export async function resolveConversationByPhone(
   let contactId: string;
   let contactCreated = false;
 
-  const existing = await findExistingContact(db, accountId, sanitized);
+  const existing = await findExistingContact(db, accountId, sanitized, projectId);
   if (existing) {
     contactId = existing.id;
     if (name && name !== existing.name) {
@@ -102,6 +131,7 @@ export async function resolveConversationByPhone(
       .from('contacts')
       .insert({
         account_id: accountId,
+        project_id: projectId,
         user_id: ownerUserId,
         phone: sanitized,
         name: name || sanitized,
@@ -113,7 +143,7 @@ export async function resolveConversationByPhone(
       // Lost a race against a concurrent inbound/API create — the
       // unique index (migration 022) rejected the duplicate. Re-resolve.
       if (isUniqueViolation(createErr)) {
-        const raced = await findExistingContact(db, accountId, sanitized);
+        const raced = await findExistingContact(db, accountId, sanitized, projectId);
         if (raced) {
           contactId = raced.id;
         } else {
@@ -137,7 +167,7 @@ export async function resolveConversationByPhone(
   }
 
   // ---- conversation -------------------------------------------
-  // One conversation per (account, contact) — same convention as the
+  // One conversation per (project, contact) — same convention as the
   // webhook. Order oldest-first and take one row rather than
   // `.maybeSingle()`, which errors on ≥2 rows: if duplicates predate the
   // unique index (migration 036), we resolve to the canonical survivor
@@ -145,6 +175,7 @@ export async function resolveConversationByPhone(
   const conversationId = await findOrCreateConversationRow(
     db,
     accountId,
+    projectId,
     contactId,
     ownerUserId
   );
@@ -154,20 +185,21 @@ export async function resolveConversationByPhone(
 
 /**
  * Find (oldest-first) or create the single conversation for
- * `(accountId, contactId)`. Handles the unique-index race the same way
+ * `(projectId, contactId)`. Handles the unique-index race the same way
  * the inbound webhook does: on a 23505 from a concurrent create,
  * re-resolve the winning row rather than failing the send.
  */
 async function findOrCreateConversationRow(
   db: SupabaseClient,
   accountId: string,
+  projectId: string,
   contactId: string,
   ownerUserId: string
 ): Promise<string> {
   const { data: existing, error: findErr } = await db
     .from('conversations')
     .select('id')
-    .eq('account_id', accountId)
+    .eq('project_id', projectId)
     .eq('contact_id', contactId)
     .order('created_at', { ascending: true })
     .limit(1);
@@ -185,6 +217,7 @@ async function findOrCreateConversationRow(
     .from('conversations')
     .insert({
       account_id: accountId,
+      project_id: projectId,
       user_id: ownerUserId,
       contact_id: contactId,
     })
@@ -196,7 +229,7 @@ async function findOrCreateConversationRow(
       const { data: raced } = await db
         .from('conversations')
         .select('id')
-        .eq('account_id', accountId)
+        .eq('project_id', projectId)
         .eq('contact_id', contactId)
         .order('created_at', { ascending: true })
         .limit(1);

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getCurrentProject } from '@/lib/auth/project'
 import { createClient } from '@/lib/supabase/server'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
@@ -41,12 +42,11 @@ export async function GET() {
   // whatsapp_config is one-row-per-account post-017. Resolve the
   // caller's account_id so a teammate who joined an existing account
   // sees the same registration state as the admin who set it up.
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('account_id')
-    .eq('user_id', user.id)
-    .maybeSingle()
-  const accountId = profile?.account_id as string | undefined
+  // Resolve the caller's account AND active project. Post-042 the
+  // project is the tenancy key on every domain row, and this route
+  // writes through the service-role client, so RLS will not catch a
+  // missing or wrong scope.
+  const { accountId, projectId } = await getCurrentProject();
   if (!accountId) {
     return NextResponse.json({
       live: false,
@@ -58,7 +58,7 @@ export async function GET() {
   const { data: config } = await supabase
     .from('whatsapp_config')
     .select('*')
-    .eq('account_id', accountId)
+    .eq('project_id', projectId)
     .maybeSingle()
 
   if (!config) {

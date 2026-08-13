@@ -228,6 +228,8 @@ export interface FlowRow {
   /** Account tenancy (NOT NULL post-017). The engine looks up active
    *  flows for inbound dispatch using this field. */
   account_id: string;
+  /** Project tenancy key — the isolation boundary (migration 042). */
+  project_id: string;
   /** Author. Used as a default sender-of-record on engine sends and
    *  preserved on flow_runs for log/audit display. */
   user_id: string;
@@ -260,6 +262,8 @@ export interface FlowRunRow {
   flow_id: string;
   /** Tenancy. Matches flows.account_id; NOT NULL post-017. */
   account_id: string;
+  /** Project tenancy key — the isolation boundary (migration 042). */
+  project_id: string;
   /** Audit. Matches the parent flow.user_id. */
   user_id: string;
   contact_id: string | null;
@@ -330,9 +334,13 @@ export type ParsedInbound =
     };
 
 export interface DispatchInboundInput {
-  /** Account tenancy key. Drives the lookup of active flows and the
-   *  idempotency check for previously-seen inbound message_ids. */
+  /** Organisation. Retained for org-level reads; tenancy is projectId. */
   accountId: string;
+  /** Project tenancy key (migration 042). Drives the lookup of active
+   *  flows and the idempotency check for previously-seen inbound
+   *  message ids — an account-wide lookup would let a sibling
+   *  project's flow answer this customer. */
+  projectId: string;
   /** Sender-of-record for the bot's outbound prompts on engine
    *  sends. Set by the webhook to the WhatsApp config owner. */
   userId: string;

@@ -37,6 +37,9 @@ interface SendTextEngineArgs {
    *  lookups so a flow authored by user A still sends through the
    *  WhatsApp number user B saved on the same account. */
   accountId: string
+  /** Project tenancy key — scopes the contact and connection
+   *  lookups, and selects the transport (Cloud API or QR). */
+  projectId: string
   /** Original author of the flow — used for INSERT audit columns
    *  and for resolving the agent's identity in logs. Not consulted
    *  for tenancy. */
@@ -71,7 +74,7 @@ export async function engineSendText(
     .from('contacts')
     .select('id, phone')
     .eq('id', args.contactId)
-    .eq('account_id', args.accountId)
+    .eq('project_id', args.projectId)
     .maybeSingle()
   if (contactErr || !contact?.phone) {
     throw new Error('contact not found for this account')
@@ -85,7 +88,7 @@ export async function engineSendText(
   const { data: config, error: configErr } = await db
     .from('whatsapp_config')
     .select('*')
-    .eq('account_id', args.accountId)
+    .eq('project_id', args.projectId)
     .single()
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
@@ -127,6 +130,8 @@ export async function engineSendText(
 
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: args.conversationId,
+    // NOT NULL post-042, and the column Realtime filters on.
+    project_id: args.projectId,
     sender_type: 'bot',
     content_type: 'text',
     content_text: args.text,
@@ -152,6 +157,9 @@ export async function engineSendText(
 
 interface SendMediaEngineArgs {
   accountId: string
+  /** Project tenancy key — scopes the contact and connection
+   *  lookups, and selects the transport (Cloud API or QR). */
+  projectId: string
   userId: string
   conversationId: string
   contactId: string
@@ -181,7 +189,7 @@ export async function engineSendMedia(
     .from('contacts')
     .select('id, phone')
     .eq('id', args.contactId)
-    .eq('account_id', args.accountId)
+    .eq('project_id', args.projectId)
     .maybeSingle()
   if (contactErr || !contact?.phone) {
     throw new Error('contact not found for this account')
@@ -195,7 +203,7 @@ export async function engineSendMedia(
   const { data: config, error: configErr } = await db
     .from('whatsapp_config')
     .select('*')
-    .eq('account_id', args.accountId)
+    .eq('project_id', args.projectId)
     .single()
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
@@ -245,6 +253,8 @@ export async function engineSendMedia(
   const preview = args.caption?.trim() || `[${args.kind}]`
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: args.conversationId,
+    // NOT NULL post-042, and the column Realtime filters on.
+    project_id: args.projectId,
     sender_type: 'bot',
     content_type: args.kind,
     content_text: args.caption ?? null,
@@ -269,6 +279,9 @@ export async function engineSendMedia(
 
 interface SendInteractiveButtonsEngineArgs {
   accountId: string
+  /** Project tenancy key — scopes the contact and connection
+   *  lookups, and selects the transport (Cloud API or QR). */
+  projectId: string
   userId: string
   conversationId: string
   contactId: string
@@ -280,6 +293,9 @@ interface SendInteractiveButtonsEngineArgs {
 
 interface SendInteractiveListEngineArgs {
   accountId: string
+  /** Project tenancy key — scopes the contact and connection
+   *  lookups, and selects the transport (Cloud API or QR). */
+  projectId: string
   userId: string
   conversationId: string
   contactId: string
@@ -333,7 +349,7 @@ async function sendInteractiveViaMeta(
     .from('contacts')
     .select('id, phone')
     .eq('id', input.contactId)
-    .eq('account_id', input.accountId)
+    .eq('project_id', input.projectId)
     .maybeSingle()
   if (contactErr || !contact?.phone) {
     throw new Error('contact not found for this account')
@@ -347,7 +363,7 @@ async function sendInteractiveViaMeta(
   const { data: config, error: configErr } = await db
     .from('whatsapp_config')
     .select('*')
-    .eq('account_id', input.accountId)
+    .eq('project_id', input.projectId)
     .single()
   if (configErr || !config) {
     throw new Error('WhatsApp not configured for this account')
@@ -437,6 +453,7 @@ async function sendInteractiveViaMeta(
 
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,
+    project_id: input.projectId,
     sender_type: 'bot',
     content_type: 'interactive',
     content_text: input.bodyText,

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { toErrorResponse } from '@/lib/auth/account'
+import { requireProjectRole } from '@/lib/auth/project'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
 
@@ -15,7 +16,7 @@ export async function PATCH(
   const { id } = await params
   let ctx
   try {
-    ctx = await requireRole('agent')
+    ctx = await requireProjectRole('agent')
   } catch (err) {
     return toErrorResponse(err)
   }
@@ -76,7 +77,7 @@ export async function PATCH(
     .from('quick_replies')
     .update(update)
     .eq('id', id)
-    .eq('account_id', ctx.accountId)
+    .eq('project_id', ctx.projectId)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }
@@ -88,7 +89,7 @@ export async function DELETE(
   const { id } = await params
   let ctx
   try {
-    ctx = await requireRole('agent')
+    ctx = await requireProjectRole('agent')
   } catch (err) {
     return toErrorResponse(err)
   }
@@ -97,7 +98,7 @@ export async function DELETE(
     .from('quick_replies')
     .delete()
     .eq('id', id)
-    .eq('account_id', ctx.accountId)
+    .eq('project_id', ctx.projectId)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }

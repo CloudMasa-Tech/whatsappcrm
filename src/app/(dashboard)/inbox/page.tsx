@@ -10,6 +10,7 @@ import {
 } from "@/lib/inbox/conversations";
 import type { Conversation, Message, Contact, ConversationStatus } from "@/types";
 import { useRealtime } from "@/hooks/use-realtime";
+import { useActiveProject } from "@/hooks/use-active-project";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
@@ -42,6 +43,11 @@ function InboxPageInner() {
    * automatically instead of showing the empty center panel.
    */
   const deepLinkConvId = searchParams.get("c");
+
+  // The active project scopes both the connection banner below and the
+  // realtime subscription further down — a member of several projects
+  // must not receive a sibling project's traffic in this inbox.
+  const { projectId: activeProjectId } = useActiveProject();
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversation, setActiveConversation] =
@@ -183,19 +189,12 @@ function InboxPageInner() {
 
       if (!user) return;
 
-      // whatsapp_config is one-row-per-account post-multi-user, so
-      // the previous `.eq('user_id', user.id)` would miss the row
-      // for any teammate who didn't personally save the config —
-      // the "WhatsApp not connected" banner would show in the
-      // shared inbox even though the admin had it configured.
-      // Resolve account_id via the profile and query by that.
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("account_id")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      const accountId = profile?.account_id as string | undefined;
-      if (!accountId) {
+      // whatsapp_config is one-row-per-PROJECT post-042 (it used to be
+      // one per account). Keying on the active project keeps the
+      // banner accurate for an organisation running several projects,
+      // where an account-wide query would match the wrong row — or
+      // several, which .maybeSingle() rejects outright.
+      if (!activeProjectId) {
         setWhatsappConnected(false);
         return;
       }
@@ -203,14 +202,14 @@ function InboxPageInner() {
       const { data } = await supabase
         .from("whatsapp_config")
         .select("status")
-        .eq("account_id", accountId)
+        .eq("project_id", activeProjectId)
         .maybeSingle();
 
       setWhatsappConnected(data?.status === "connected");
     };
 
     checkConnection();
-  }, []);
+  }, [activeProjectId]);
 
   // Handle realtime message events
   const handleMessageEvent = useCallback(
@@ -343,6 +342,7 @@ function InboxPageInner() {
   // throttle) are simply lost. We need a way to catch up.
   const { isConnected } = useRealtime({
     channelName: "inbox-realtime",
+    projectId: activeProjectId,
     onMessageEvent: handleMessageEvent,
     onConversationEvent: handleConversationEvent,
     enabled: true,

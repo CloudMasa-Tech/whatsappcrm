@@ -56,10 +56,10 @@ describe('findOrCreateContact', () => {
 
   it('rejects a non-E.164 phone with a 400 ContactError', async () => {
     await expect(
-      findOrCreateContact(noopDb, 'acc', 'user', { phone: 'not-a-number' })
+      findOrCreateContact(noopDb, 'acc', 'proj-1', 'user', { phone: 'not-a-number' })
     ).rejects.toMatchObject({ status: 400 });
     await expect(
-      findOrCreateContact(noopDb, 'acc', 'user', { phone: 'not-a-number' })
+      findOrCreateContact(noopDb, 'acc', 'proj-1', 'user', { phone: 'not-a-number' })
     ).rejects.toBeInstanceOf(ContactError);
   });
 });

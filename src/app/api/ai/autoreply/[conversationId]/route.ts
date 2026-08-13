@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { toErrorResponse } from '@/lib/auth/account'
+import { requireProjectRole } from '@/lib/auth/project'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 type Params = { params: Promise<{ conversationId: string }> }
@@ -26,7 +27,7 @@ type Params = { params: Promise<{ conversationId: string }> }
  */
 export async function POST(request: Request, { params }: Params) {
   try {
-    const { supabase, accountId, userId } = await requireRole('agent')
+    const { supabase, projectId, userId } = await requireProjectRole('agent')
 
     // Reuse the send bucket: this is a cheap per-user inbox action and
     // toggling it in a tight loop has no legitimate use.
@@ -49,7 +50,7 @@ export async function POST(request: Request, { params }: Params) {
       .from('conversations')
       .select('id')
       .eq('id', conversationId)
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .maybeSingle()
     if (convErr) {
       console.error('[ai/autoreply] conversation lookup error:', convErr)
@@ -87,7 +88,7 @@ export async function POST(request: Request, { params }: Params) {
       .from('conversations')
       .update(update)
       .eq('id', conversationId)
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
     if (upErr) {
       console.error('[ai/autoreply] update error:', upErr)
       return NextResponse.json(

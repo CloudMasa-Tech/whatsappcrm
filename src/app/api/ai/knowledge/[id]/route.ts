@@ -1,9 +1,6 @@
 import { NextResponse } from 'next/server'
-import {
-  getCurrentAccount,
-  requireRole,
-  toErrorResponse,
-} from '@/lib/auth/account'
+import { toErrorResponse } from '@/lib/auth/account'
+import { getCurrentProject, requireProjectRole } from '@/lib/auth/project'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { loadEmbeddingsKey } from '@/lib/ai/config'
 import { ingestDocument } from '@/lib/ai/knowledge'
@@ -16,12 +13,12 @@ type Params = { params: Promise<{ id: string }> }
  */
 export async function GET(_request: Request, { params }: Params) {
   try {
-    const { supabase, accountId } = await getCurrentAccount()
+    const { supabase, projectId } = await getCurrentProject()
     const { id } = await params
     const { data, error } = await supabase
       .from('ai_knowledge_documents')
       .select('id, title, content, updated_at')
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .eq('id', id)
       .maybeSingle()
     if (error) {
@@ -41,7 +38,7 @@ export async function GET(_request: Request, { params }: Params) {
  */
 export async function PATCH(request: Request, { params }: Params) {
   try {
-    const { supabase, accountId, userId } = await requireRole('admin')
+    const { supabase, accountId, projectId, userId } = await requireProjectRole('admin')
     const limit = checkRateLimit(`ai-kb:${userId}`, RATE_LIMITS.adminAction)
     if (!limit.success) return rateLimitResponse(limit)
 
@@ -66,7 +63,7 @@ export async function PATCH(request: Request, { params }: Params) {
     const { data: updated, error } = await supabase
       .from('ai_knowledge_documents')
       .update(update)
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .eq('id', id)
       .select('id')
       .maybeSingle()
@@ -80,9 +77,10 @@ export async function PATCH(request: Request, { params }: Params) {
       const { key: embeddingsApiKey, corrupt } = await loadEmbeddingsKey(
         supabase,
         accountId,
+        projectId,
       )
       try {
-        await ingestDocument(supabase, accountId, { embeddingsApiKey }, id, content)
+        await ingestDocument(supabase, accountId, projectId, { embeddingsApiKey }, id, content)
       } catch (err) {
         const message = err instanceof AiError ? err.message : 'indexing failed'
         console.error('[ai/knowledge/[id] PATCH] ingest error:', err)
@@ -114,12 +112,12 @@ export async function PATCH(request: Request, { params }: Params) {
  */
 export async function DELETE(_request: Request, { params }: Params) {
   try {
-    const { supabase, accountId } = await requireRole('admin')
+    const { supabase, projectId } = await requireProjectRole('admin')
     const { id } = await params
     const { error } = await supabase
       .from('ai_knowledge_documents')
       .delete()
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .eq('id', id)
     if (error) {
       console.error('[ai/knowledge/[id] DELETE] error:', error)

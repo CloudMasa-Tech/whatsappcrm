@@ -46,6 +46,7 @@ interface EndpointRow {
 export async function dispatchWebhookEvent(
   db: SupabaseClient,
   accountId: string,
+  projectId: string,
   event: WebhookEvent,
   data: unknown
 ): Promise<void> {
@@ -53,7 +54,7 @@ export async function dispatchWebhookEvent(
     const { data: rows, error } = await db
       .from('webhook_endpoints')
       .select('id, url, secret')
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .eq('is_active', true)
       .contains('events', [event]);
 
@@ -68,6 +69,7 @@ export async function dispatchWebhookEvent(
       event,
       occurred_at: new Date().toISOString(),
       account_id: accountId,
+      project_id: projectId,
       data,
     });
     const tsSeconds = Math.floor(Date.now() / 1000);

@@ -13,6 +13,22 @@ interface RealtimeEvent<T> {
 
 interface UseRealtimeOptions {
   channelName: string;
+  /**
+   * Restrict the stream to one project. RLS already keeps other
+   * ORGANISATIONS out, but a member of two projects in the same
+   * organisation would otherwise receive both projects' traffic on
+   * every screen — the inbox would flicker with conversations the user
+   * is not looking at, and a project they can read but have not opened
+   * would leak into the active view.
+   *
+   * `postgres_changes` filters can only test columns on the changed
+   * row, which is why migration 042 denormalises `project_id` onto
+   * `messages`.
+   *
+   * Omit it and the subscription stays account-wide (pre-projects
+   * behaviour).
+   */
+  projectId?: string | null;
   onMessageEvent?: (event: RealtimeEvent<Message>) => void;
   onConversationEvent?: (event: RealtimeEvent<Conversation>) => void;
   enabled?: boolean;
@@ -20,6 +36,7 @@ interface UseRealtimeOptions {
 
 export function useRealtime({
   channelName,
+  projectId,
   onMessageEvent,
   onConversationEvent,
   enabled = true,
@@ -44,11 +61,21 @@ export function useRealtime({
 
     const supabase = createClient();
 
+    const projectFilter = projectId ? `project_id=eq.${projectId}` : undefined;
+
+    // Channel name carries the project so switching projects tears the
+    // old subscription down and opens a distinct one, rather than
+    // reusing a channel that is still filtered to the previous project.
     const channel = supabase
-      .channel(channelName)
+      .channel(projectId ? `${channelName}-${projectId}` : channelName)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "messages" },
+        {
+          event: "*",
+          schema: "public",
+          table: "messages",
+          ...(projectFilter ? { filter: projectFilter } : {}),
+        },
         (payload) => {
           onMessageRef.current?.({
             eventType: payload.eventType as RealtimeEvent<Message>["eventType"],
@@ -59,7 +86,12 @@ export function useRealtime({
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "conversations" },
+        {
+          event: "*",
+          schema: "public",
+          table: "conversations",
+          ...(projectFilter ? { filter: projectFilter } : {}),
+        },
         (payload) => {
           onConversationRef.current?.({
             eventType: payload.eventType as RealtimeEvent<Conversation>["eventType"],
@@ -79,7 +111,7 @@ export function useRealtime({
       channelRef.current = null;
       setIsConnected(false);
     };
-  }, [channelName, enabled]);
+  }, [channelName, projectId, enabled]);
 
   const unsubscribe = useCallback(() => {
     if (channelRef.current) {

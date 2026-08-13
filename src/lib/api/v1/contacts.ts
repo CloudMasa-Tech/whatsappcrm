@@ -72,12 +72,13 @@ export function serializeContact(row: Record<string, unknown>): ApiContact {
  */
 export async function resolveAuditUserId(
   db: SupabaseClient,
-  accountId: string
+  accountId: string,
+  projectId: string
 ): Promise<string> {
   const { data: config } = await db
     .from('whatsapp_config')
     .select('user_id')
-    .eq('account_id', accountId)
+    .eq('project_id', projectId)
     .maybeSingle();
   const configOwner = config?.user_id as string | undefined;
   if (configOwner) return configOwner;
@@ -102,7 +103,7 @@ export interface ContactInput {
 }
 
 /**
- * Find (by fuzzy phone match) or create a contact in `accountId`.
+ * Find (by fuzzy phone match) or create a contact in `projectId`.
  * Returns the contact id and whether it was created. Reuses the shared
  * `findExistingContact` dedupe + unique-violation race backstop so an
  * API-created contact is indistinguishable from a webhook-created one.
@@ -110,6 +111,7 @@ export interface ContactInput {
 export async function findOrCreateContact(
   db: SupabaseClient,
   accountId: string,
+  projectId: string,
   auditUserId: string,
   input: ContactInput
 ): Promise<{ id: string; created: boolean }> {
@@ -121,13 +123,14 @@ export async function findOrCreateContact(
     );
   }
 
-  const existing = await findExistingContact(db, accountId, sanitized);
+  const existing = await findExistingContact(db, accountId, sanitized, projectId);
   if (existing) return { id: existing.id, created: false };
 
   const { data: created, error } = await db
     .from('contacts')
     .insert({
       account_id: accountId,
+      project_id: projectId,
       user_id: auditUserId,
       phone: sanitized,
       name: input.name ?? sanitized,
@@ -141,7 +144,7 @@ export async function findOrCreateContact(
     // Lost a race against a concurrent create — the unique index
     // rejected the duplicate. Re-resolve to the winner.
     if (isUniqueViolation(error)) {
-      const raced = await findExistingContact(db, accountId, sanitized);
+      const raced = await findExistingContact(db, accountId, sanitized, projectId);
       if (raced) return { id: raced.id, created: false };
     }
     console.error('[api/v1/contacts] create error:', error);
@@ -160,12 +163,14 @@ export async function findOrCreateContact(
 export async function setContactTags(
   db: SupabaseClient,
   accountId: string,
+  projectId: string,
   auditUserId: string,
   contactId: string,
   tagNames: string[]
 ): Promise<void> {
   const { tagIdByKey } = await resolveImportTagIds(db, {
     accountId,
+    projectId,
     userId: auditUserId,
     tagNames,
     canCreateTags: true,
@@ -205,6 +210,7 @@ export async function setContactTags(
         await addContactTagAndDispatch({
           db,
           accountId,
+          projectId,
           contactId,
           tagId,
         });
@@ -216,17 +222,18 @@ export async function setContactTags(
   }
 }
 
-/** Fetch + serialize a single contact scoped to the account, or null. */
+/** Fetch + serialize a single contact scoped to the project, or null. */
 export async function getContactById(
   db: SupabaseClient,
   accountId: string,
+  projectId: string,
   contactId: string
 ): Promise<ApiContact | null> {
   const { data, error } = await db
     .from('contacts')
     .select(CONTACT_SELECT)
     .eq('id', contactId)
-    .eq('account_id', accountId)
+    .eq('project_id', projectId)
     .maybeSingle();
   if (error || !data) return null;
   return serializeContact(data as Record<string, unknown>);

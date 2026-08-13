@@ -53,7 +53,7 @@ export async function GET(request: Request) {
     let query = ctx.supabase
       .from('contacts')
       .select(selectClause)
-      .eq('account_id', ctx.accountId);
+      .eq('project_id', ctx.projectId);
 
     if (search) {
       query = query.or(`name.ilike.*${search}*,phone.ilike.*${search}*`);
@@ -110,11 +110,9 @@ export async function POST(request: Request) {
       return fail('bad_request', "'phone' is required", 400);
     }
 
-    const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId);
+    const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId, ctx.projectId);
 
-    const { id, created } = await findOrCreateContact(
-      ctx.supabase,
-      ctx.accountId,
+    const { id, created } = await findOrCreateContact(ctx.supabase, ctx.accountId, ctx.projectId,
       auditUserId,
       {
         phone,
@@ -128,13 +126,14 @@ export async function POST(request: Request) {
       await setContactTags(
         ctx.supabase,
         ctx.accountId,
+        ctx.projectId,
         auditUserId,
         id,
         body.tags.filter((t): t is string => typeof t === 'string')
       );
     }
 
-    const contact = await getContactById(ctx.supabase, ctx.accountId, id);
+    const contact = await getContactById(ctx.supabase, ctx.accountId, ctx.projectId, id);
     return ok(contact, created ? 201 : 200);
   } catch (err) {
     if (err instanceof ContactError) {

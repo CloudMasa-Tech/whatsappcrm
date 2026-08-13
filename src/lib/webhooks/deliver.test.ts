@@ -72,6 +72,7 @@ describe('dispatchWebhookEvent', () => {
     await dispatchWebhookEvent(
       makeDb([{ id: 'a', url: 'https://a.test/hook', secret: 's1' }], calls),
       'acct-1',
+      'proj-1',
       'message.received',
       { x: 1 }
     );
@@ -95,6 +96,7 @@ describe('dispatchWebhookEvent', () => {
     await dispatchWebhookEvent(
       makeDb([{ id: 'b', url: 'https://b.test/hook', secret: 's2' }], calls),
       'acct-1',
+      'proj-1',
       'message.received',
       {}
     );
@@ -115,6 +117,7 @@ describe('dispatchWebhookEvent', () => {
     await dispatchWebhookEvent(
       makeDb([{ id: 'c', url: 'https://127.0.0.1/hook', secret: 's3' }], calls),
       'acct-1',
+      'proj-1',
       'message.received',
       {}
     );
@@ -127,7 +130,7 @@ describe('dispatchWebhookEvent', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     const calls = emptyCalls();
-    await dispatchWebhookEvent(makeDb([], calls), 'acct-1', 'message.received', {});
+    await dispatchWebhookEvent(makeDb([], calls), 'acct-1', 'proj-1', 'message.received', {});
     expect(fetchMock).not.toHaveBeenCalled();
     expect(calls.rpcs).toHaveLength(0);
     expect(calls.updates).toHaveLength(0);

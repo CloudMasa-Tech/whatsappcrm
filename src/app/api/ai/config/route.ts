@@ -1,9 +1,6 @@
 import { NextResponse } from 'next/server'
-import {
-  getCurrentAccount,
-  requireRole,
-  toErrorResponse,
-} from '@/lib/auth/account'
+import { toErrorResponse } from '@/lib/auth/account'
+import { getCurrentProject, requireProjectRole } from '@/lib/auth/project'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 import { validateAiCredentials } from '@/lib/ai/validate'
@@ -23,7 +20,7 @@ function bad(message: string) {
  */
 export async function GET() {
   try {
-    const { supabase, accountId } = await getCurrentAccount()
+    const { supabase, projectId } = await getCurrentProject()
 
     const { data, error } = await supabase
       .from('ai_configs')
@@ -32,7 +29,7 @@ export async function GET() {
       .select(
         'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, api_key, embeddings_api_key',
       )
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .maybeSingle()
 
     if (error) {
@@ -69,7 +66,7 @@ export async function GET() {
  */
 export async function POST(request: Request) {
   try {
-    const { supabase, accountId, userId } = await requireRole('admin')
+    const { supabase, accountId, projectId, userId } = await requireProjectRole('admin')
 
     const limit = checkRateLimit(`ai-config:${userId}`, RATE_LIMITS.adminAction)
     if (!limit.success) return rateLimitResponse(limit)
@@ -129,7 +126,7 @@ export async function POST(request: Request) {
     const { data: existing } = await supabase
       .from('ai_configs')
       .select('id, provider, model, api_key')
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .maybeSingle()
 
     let apiKeyPlain: string
@@ -219,7 +216,7 @@ export async function POST(request: Request) {
       const { error: upErr } = await supabase
         .from('ai_configs')
         .update(encryptedKey ? { ...shared, api_key: encryptedKey } : shared)
-        .eq('account_id', accountId)
+        .eq('project_id', projectId)
       if (upErr) {
         console.error('[ai/config POST] update error:', upErr)
         return NextResponse.json(
@@ -230,6 +227,7 @@ export async function POST(request: Request) {
     } else {
       const { error: insErr } = await supabase.from('ai_configs').insert({
         account_id: accountId,
+        project_id: projectId,
         created_by: userId,
         api_key: encryptedKey, // guaranteed non-null: rawKey required when no existing row
         ...shared,
@@ -257,11 +255,11 @@ export async function POST(request: Request) {
  */
 export async function DELETE() {
   try {
-    const { supabase, accountId } = await requireRole('admin')
+    const { supabase, projectId } = await requireProjectRole('admin')
     const { error } = await supabase
       .from('ai_configs')
       .delete()
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
     if (error) {
       console.error('[ai/config DELETE] error:', error)
       return NextResponse.json(

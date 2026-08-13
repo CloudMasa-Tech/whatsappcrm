@@ -30,7 +30,7 @@ export async function GET(
       .from('conversations')
       .select('id')
       .eq('id', id)
-      .eq('account_id', ctx.accountId)
+      .eq('project_id', ctx.projectId)
       .maybeSingle();
     if (!conv) return fail('not_found', 'Conversation not found', 404);
 

@@ -22,6 +22,7 @@ import {
 const base = {
   db: {} as never,
   accountId: 'account-1',
+  projectId: 'proj-1',
   contactId: 'contact-1',
   tagId: 'tag-1',
 };
@@ -44,6 +45,7 @@ describe('addContactTagAndDispatch', () => {
     expect(result).toEqual({ added: true, dispatched: true });
     expect(mocks.dispatch).toHaveBeenCalledWith({
       accountId: 'account-1',
+      projectId: 'proj-1',
       triggerType: 'tag_added',
       contactId: 'contact-1',
       context: {

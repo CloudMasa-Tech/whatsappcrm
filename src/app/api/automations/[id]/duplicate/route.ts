@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { toErrorResponse } from '@/lib/auth/account'
+import { requireProjectRole } from '@/lib/auth/project'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 
 export async function POST(
@@ -13,7 +14,7 @@ export async function POST(
   // (the service-role client below bypasses the agent-gated
   // automations_insert RLS).
   try {
-    await requireRole('agent')
+    await requireProjectRole('agent')
   } catch (err) {
     return toErrorResponse(err)
   }
@@ -37,9 +38,11 @@ export async function POST(
   const { data: copy, error: copyErr } = await admin
     .from('automations')
     .insert({
-      // Clone into the same account as the original. account_id is NOT
-      // NULL post-017, so the INSERT fails the constraint without it.
+      // Clone into the same account AND project as the original. Both
+      // are NOT NULL post-042, and cloning across projects would move a
+      // customer's automation into another team's workspace.
       account_id: original.account_id,
+      project_id: original.project_id,
       user_id: user.id,
       name: `${original.name} (Copy)`,
       description: original.description,

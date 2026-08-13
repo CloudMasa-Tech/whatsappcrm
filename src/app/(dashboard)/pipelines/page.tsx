@@ -50,7 +50,7 @@ export default function PipelinesPage() {
   const supabase = createClient();
   const canEditSettings = useCan("edit-settings");
   const canCreateDeals = useCan("send-messages");
-  const { accountId } = useAuth();
+  const { accountId, activeProjectId } = useAuth();
 
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>("");
@@ -120,7 +120,12 @@ export default function PipelinesPage() {
 
     const { data: pipeline, error } = await supabase
       .from("pipelines")
-      .insert({ user_id: user.id, account_id: accountId, name: "Sales Pipeline" })
+      .insert({
+        user_id: user.id,
+        account_id: accountId,
+        project_id: activeProjectId,
+        name: "Sales Pipeline",
+      })
       .select()
       .single();
 
@@ -138,7 +143,7 @@ export default function PipelinesPage() {
     await supabase.from("pipeline_stages").insert(stagesPayload);
 
     return pipeline as Pipeline;
-  }, [supabase, accountId]);
+  }, [supabase, accountId, activeProjectId]);
 
   // Initial load + seed-if-empty
   useEffect(() => {
@@ -269,7 +274,12 @@ export default function PipelinesPage() {
 
     const { data: pipeline, error } = await supabase
       .from("pipelines")
-      .insert({ user_id: user.id, account_id: accountId, name })
+      .insert({
+        user_id: user.id,
+        account_id: accountId,
+        project_id: activeProjectId,
+        name,
+      })
       .select()
       .single();
 

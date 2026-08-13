@@ -36,8 +36,15 @@ export function SettingsOverview({
 }: {
   onSelect: (section: SettingsSection) => void;
 }) {
-  const { user, profile, accountId, accountRole, defaultCurrency, canManageMembers } =
-    useAuth();
+  const {
+    user,
+    profile,
+    accountId,
+    activeProjectId,
+    accountRole,
+    defaultCurrency,
+    canManageMembers,
+  } = useAuth();
   const { mode, theme } = useTheme();
   const t = useTranslations('Settings.overview');
   const tRoles = useTranslations('Settings.roles');
@@ -53,11 +60,11 @@ export function SettingsOverview({
   const [whatsappLoading, setWhatsappLoading] = useState(true);
 
   useEffect(() => {
-    if (!user || !accountId) return;
+    if (!user || !accountId || !activeProjectId) return;
     let cancelled = false;
     const supabase = createClient();
     const userId = user.id;
-    const acctId = accountId;
+    const projId = activeProjectId;
 
     // Cheap counts — resolve fast, render immediately.
     (async () => {
@@ -124,7 +131,7 @@ export function SettingsOverview({
         supabase
           .from('whatsapp_config')
           .select('phone_number_id')
-          .eq('account_id', acctId)
+          .eq('project_id', projId)
           .maybeSingle(),
         fetch('/api/whatsapp/config', { cache: 'no-store' }).then((r) => r.json()),
       ]);
@@ -139,7 +146,7 @@ export function SettingsOverview({
     return () => {
       cancelled = true;
     };
-  }, [user?.id, accountId, canManageMembers]);
+  }, [user?.id, accountId, activeProjectId, canManageMembers]);
 
   const displayName = profile?.full_name || profile?.email || t('yourAccount');
   const initial = (profile?.full_name || profile?.email || 'U').charAt(0).toUpperCase();

@@ -9,7 +9,7 @@ const db = {} as SupabaseClient;
 describe('createBroadcast validation', () => {
   it('rejects a missing template_name', async () => {
     await expect(
-      createBroadcast(db, 'acc', 'user', {
+      createBroadcast(db, 'acc', 'proj', 'user', {
         templateName: '',
         recipients: [{ to: '+14155550123' }],
       })
@@ -18,7 +18,7 @@ describe('createBroadcast validation', () => {
 
   it('rejects an empty recipient list', async () => {
     await expect(
-      createBroadcast(db, 'acc', 'user', {
+      createBroadcast(db, 'acc', 'proj', 'user', {
         templateName: 'promo',
         recipients: [],
       })
@@ -30,7 +30,7 @@ describe('createBroadcast validation', () => {
       to: '+14155550123',
     }));
     await expect(
-      createBroadcast(db, 'acc', 'user', { templateName: 'promo', recipients })
+      createBroadcast(db, 'acc', 'proj', 'user', { templateName: 'promo', recipients })
     ).rejects.toMatchObject({ status: 400 });
   });
 });

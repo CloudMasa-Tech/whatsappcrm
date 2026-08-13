@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { toErrorResponse } from '@/lib/auth/account'
+import { requireProjectRole, getCurrentProject } from '@/lib/auth/project'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { getTemplate } from '@/lib/automations/templates'
 import { insertSteps, type BuilderStepInput } from '@/lib/automations/steps-tree'
@@ -29,7 +30,7 @@ export async function POST(request: Request) {
   // requires `agent`, but this route inserts via the service-role client
   // which bypasses RLS, so the role must be enforced here.
   try {
-    await requireRole('agent')
+    await requireProjectRole('agent')
   } catch (err) {
     return toErrorResponse(err)
   }
@@ -42,13 +43,11 @@ export async function POST(request: Request) {
 
   // Resolve the caller's account_id — `automations.account_id` is NOT
   // NULL post-017, so an INSERT without it trips the not-null constraint
-  // even though the admin client bypasses RLS.
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('account_id')
-    .eq('user_id', user.id)
-    .single()
-  const accountId = profile?.account_id as string | undefined
+  // Resolve the caller's account AND active project. Both columns
+  // are NOT NULL on the domain tables, and this route writes via the
+  // service-role client — so an INSERT missing either trips a
+  // constraint that RLS would otherwise have caught.
+  const { accountId, projectId } = await getCurrentProject()
   if (!accountId) {
     return NextResponse.json(
       { error: 'Your profile is not linked to an account.' },
@@ -110,6 +109,7 @@ export async function POST(request: Request) {
     .insert({
       user_id: user.id,
       account_id: accountId,
+      project_id: projectId,
       name: effectiveName,
       description: effectiveDescription ?? null,
       trigger_type: effectiveTriggerType,

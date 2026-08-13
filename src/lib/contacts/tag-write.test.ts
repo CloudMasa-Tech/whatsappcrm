@@ -53,6 +53,7 @@ function fakeDb(options: FakeOptions = {}): SupabaseClient {
 
 const input = {
   accountId: 'account-1',
+  projectId: 'proj-1',
   contactId: 'contact-1',
   tagId: 'tag-1',
 };

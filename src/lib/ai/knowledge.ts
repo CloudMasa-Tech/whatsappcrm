@@ -27,6 +27,7 @@ interface MatchRow {
 export async function ingestDocument(
   db: SupabaseClient,
   accountId: string,
+  projectId: string,
   config: Pick<AiConfig, 'embeddingsApiKey'>,
   documentId: string,
   content: string,
@@ -61,6 +62,7 @@ export async function ingestDocument(
   const rows = chunks.map((content, i) => ({
     document_id: documentId,
     account_id: accountId,
+    project_id: projectId,
     chunk_index: i,
     content,
     embedding: embeddings ? toVectorLiteral(embeddings[i]) : null,
@@ -84,6 +86,7 @@ export async function ingestDocument(
 export async function retrieveKnowledge(
   db: SupabaseClient,
   accountId: string,
+  projectId: string,
   config: Pick<AiConfig, 'embeddingsApiKey'>,
   queryText: string,
   k = 5,
@@ -99,7 +102,7 @@ export async function retrieveKnowledge(
     const { count, error } = await db
       .from('ai_knowledge_chunks')
       .select('id', { count: 'exact', head: true })
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
     if (error || !count) return []
   } catch {
     return []

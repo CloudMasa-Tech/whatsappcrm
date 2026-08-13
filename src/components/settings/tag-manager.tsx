@@ -45,7 +45,7 @@ const PRESET_COLORS = [
 export function TagManager() {
   const t = useTranslations('Settings.tagsAndFields');
   const supabase = createClient();
-  const { user, accountId, loading: authLoading } = useAuth();
+  const { user, accountId, activeProjectId, loading: authLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [tags, setTags] = useState<Tag[]>([]);
@@ -103,6 +103,7 @@ export function TagManager() {
       const { error } = await supabase.from('tags').insert({
         user_id: user.id,
         account_id: accountId,
+        project_id: activeProjectId,
         name: newTagName.trim(),
         color: selectedColor,
       });

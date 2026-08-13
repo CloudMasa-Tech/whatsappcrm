@@ -17,6 +17,8 @@ import { supabaseAdmin } from '@/lib/flows/admin-client';
 export interface ApiKeyRow {
   id: string;
   account_id: string;
+  /** The single project this key authorises. NOT NULL post-042. */
+  project_id: string;
   created_by: string | null;
   name: string;
   scopes: string[];
@@ -36,7 +38,7 @@ export async function findActiveKeyByHash(
 ): Promise<ApiKeyRow | null> {
   const { data, error } = await supabaseAdmin()
     .from('api_keys')
-    .select('id, account_id, created_by, name, scopes, expires_at, revoked_at')
+    .select('id, account_id, project_id, created_by, name, scopes, expires_at, revoked_at')
     .eq('key_hash', hash)
     .maybeSingle();
 

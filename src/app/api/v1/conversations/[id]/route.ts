@@ -24,7 +24,7 @@ export async function GET(
       .from('conversations')
       .select(CONVERSATION_SELECT)
       .eq('id', id)
-      .eq('account_id', ctx.accountId)
+      .eq('project_id', ctx.projectId)
       .maybeSingle();
 
     if (error) {

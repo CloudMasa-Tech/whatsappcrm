@@ -12,6 +12,10 @@ export class ContactTagWriteError extends Error {
 
 interface ContactTagWriteInput {
   accountId: string;
+  /** Project tenancy key. Both the contact and the tag must belong to
+   *  it — tagging across projects would join two tenants' data through
+   *  a shared tag id, and contact_tags has no scope of its own. */
+  projectId: string;
   contactId: string;
   tagId: string;
 }
@@ -25,13 +29,13 @@ async function assertContactAndTagOwnership(
       .from('contacts')
       .select('id')
       .eq('id', input.contactId)
-      .eq('account_id', input.accountId)
+      .eq('project_id', input.projectId)
       .maybeSingle(),
     db
       .from('tags')
       .select('id')
       .eq('id', input.tagId)
-      .eq('account_id', input.accountId)
+      .eq('project_id', input.projectId)
       .maybeSingle(),
   ]);
 

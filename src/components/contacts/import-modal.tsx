@@ -128,7 +128,7 @@ export function ImportModal({
 }: ImportModalProps) {
   const t = useTranslations('Contacts.importModal');
   const supabase = createClient();
-  const { accountId, canEditSettings } = useAuth();
+  const { accountId, activeProjectId, canEditSettings } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [file, setFile] = useState<File | null>(null);
@@ -188,11 +188,11 @@ export function ImportModal({
     setHasTagsColumn(csvHasTags);
     setHasCompanyColumn(csvHasCompany);
 
-    if (csvHasTags && accountId) {
+    if (csvHasTags && accountId && activeProjectId) {
       const { data: tags } = await supabase
         .from('tags')
         .select('name, color')
-        .eq('account_id', accountId);
+        .eq('project_id', activeProjectId);
 
       const colors = new Map<string, string>();
       for (const tag of tags ?? []) {
@@ -215,8 +215,8 @@ export function ImportModal({
       } = await supabase.auth.getSession();
       const user = session?.user;
       if (!user) throw new Error('Not authenticated');
-      if (!accountId)
-        throw new Error('Your profile is not linked to an account.');
+      if (!accountId || !activeProjectId)
+        throw new Error('No active project — reload the page and try again.');
 
       let imported = 0;
       let skipped = 0;
@@ -231,7 +231,7 @@ export function ImportModal({
       const { data: existingRows } = await supabase
         .from('contacts')
         .select('phone_normalized')
-        .eq('account_id', accountId);
+        .eq('project_id', activeProjectId);
       const existing = new Set(
         (existingRows ?? [])
           .map(
@@ -256,6 +256,7 @@ export function ImportModal({
       if (allTagNames.length > 0) {
         ({ tagIdByKey, skippedNames } = await resolveImportTagIds(supabase, {
           accountId,
+          projectId: activeProjectId,
           userId: user.id,
           tagNames: allTagNames,
           canCreateTags: canEditSettings,
@@ -274,6 +275,7 @@ export function ImportModal({
         const rows = chunk.map((row) => ({
           user_id: user.id,
           account_id: accountId,
+          project_id: activeProjectId,
           phone: row.phone,
           name: row.name || null,
           email: row.email || null,

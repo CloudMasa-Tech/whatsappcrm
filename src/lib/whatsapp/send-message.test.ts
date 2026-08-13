@@ -58,11 +58,25 @@ vi.mock('@/lib/flows/admin-client', () => ({
 const CONVERSATION = {
   id: 'cv-1',
   account_id: 'acct-1',
-  contact: { id: 'contact-1', account_id: 'acct-1', phone: '+15551234567' },
+  // The conversation's project decides the transport (042/044). These
+  // tests exercise the Cloud API path, so PROJECT below declares it.
+  project_id: 'proj-1',
+  contact: {
+    id: 'contact-1',
+    account_id: 'acct-1',
+    project_id: 'proj-1',
+    phone: '+15551234567',
+  },
+};
+const PROJECT = {
+  id: 'proj-1',
+  account_id: 'acct-1',
+  channel_type: 'cloud_api',
 };
 const CONFIG = {
   id: 'cfg-1',
   account_id: 'acct-1',
+  project_id: 'proj-1',
   phone_number_id: 'PNID-1',
   access_token: 'enc-token',
 };
@@ -74,6 +88,8 @@ function makeDb(): SupabaseClient {
       switch (table) {
         case 'conversations':
           return { data: CONVERSATION, error: null };
+        case 'projects':
+          return { data: PROJECT, error: null };
         case 'whatsapp_config':
           return { data: CONFIG, error: null };
         case 'message_templates':

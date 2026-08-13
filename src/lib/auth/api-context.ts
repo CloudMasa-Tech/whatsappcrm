@@ -12,7 +12,8 @@
 //   try {
 //     const ctx = await requireApiKey(request, "messages:send");
 //     // ctx.supabase   — service-role client (no user session exists)
-//     // ctx.accountId  — the key's account; scope every query by it
+//     // ctx.projectId  — the key's project; scope every query by it
+//     // ctx.accountId  — the owning organisation (rarely needed)
 //     // ctx.scopes     — granted scopes
 //     // ctx.keyId      — for logging / the rate-limit bucket
 //   } catch (err) {
@@ -21,10 +22,10 @@
 //
 // Why a service-role client: an API caller has no Supabase session,
 // so there's no `auth.uid()` for RLS to match. The key lookup itself
-// establishes the account; from there every downstream query MUST be
-// explicitly filtered by `ctx.accountId` (the same discipline the
-// dashboard's send route already follows). The key never escalates
-// past its own account because the account is fixed at lookup time.
+// establishes the key's project; from there every downstream query
+// MUST be explicitly filtered by `ctx.projectId`. The key never
+// escalates past its own project because both the project and the
+// account are fixed at lookup time.
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -43,6 +44,13 @@ export interface ApiKeyContext {
   supabase: SupabaseClient;
   /** The account this key belongs to. */
   accountId: string;
+  /**
+   * The PROJECT this key belongs to. Post-042 an API key authorises
+   * exactly one project, never a whole organisation — so every query
+   * a v1 route makes must filter on this, not on accountId. The
+   * service-role client bypasses RLS, so nothing else will catch it.
+   */
+  projectId: string;
   /** The key row id — for audit logging and the rate-limit bucket. */
   keyId: string;
   /** Scopes granted to this key. */
@@ -111,6 +119,7 @@ export async function requireApiKey(
     authType: 'api_key',
     supabase: supabaseAdmin(),
     accountId: row.account_id,
+    projectId: row.project_id,
     keyId: row.id,
     scopes: row.scopes,
     createdBy: row.created_by,

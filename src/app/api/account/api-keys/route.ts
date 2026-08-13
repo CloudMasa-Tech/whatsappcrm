@@ -9,7 +9,7 @@
 // RLS client. Listing is open to any member (viewer+) — the roster
 // is not secret; the secret (the key itself) is never in it. Minting
 // is admin+ (a key hands out capabilities), enforced by both
-// `requireRole('admin')` here and the `api_keys_insert` RLS policy.
+// `requireProjectRole('admin')` here and the `api_keys_insert` RLS policy.
 //
 // IMPORTANT: the plaintext key is returned exactly ONCE, in the POST
 // response. We persist only its SHA-256 hash, so neither GET nor any
@@ -19,11 +19,8 @@
 
 import { NextResponse } from 'next/server';
 
-import {
-  getCurrentAccount,
-  requireRole,
-  toErrorResponse,
-} from '@/lib/auth/account';
+import { toErrorResponse } from '@/lib/auth/account'
+import { getCurrentProject, requireProjectRole } from '@/lib/auth/project';
 import { generateApiKey } from '@/lib/api-keys/keys';
 import { normalizeScopes } from '@/lib/api-keys/scopes';
 import {
@@ -46,12 +43,12 @@ export async function GET() {
   try {
     // Any member can view the roster (RLS allows it); we just need a
     // resolved account context.
-    const ctx = await getCurrentAccount();
+    const ctx = await getCurrentProject();
 
     const { data, error } = await ctx.supabase
       .from('api_keys')
       .select(SAFE_COLUMNS)
-      .eq('account_id', ctx.accountId)
+      .eq('project_id', ctx.projectId)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -70,7 +67,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const ctx = await requireRole('admin');
+    const ctx = await requireProjectRole('admin');
 
     const limit = checkRateLimit(
       `admin:apiKeyCreate:${ctx.userId}`,
@@ -127,6 +124,7 @@ export async function POST(request: Request) {
       .from('api_keys')
       .insert({
         account_id: ctx.accountId,
+        project_id: ctx.projectId,
         created_by: ctx.userId,
         name: rawName,
         key_prefix: prefix,

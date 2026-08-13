@@ -12,6 +12,9 @@ export { MAX_TAG_CHAIN_DEPTH, getTagChainDepth } from './tag-chain';
 interface AddContactTagAndDispatchInput {
   db: SupabaseClient;
   accountId: string;
+  /** Project tenancy key — scopes the ownership guard and the
+   *  automations the tag dispatches. */
+  projectId: string;
   contactId: string;
   tagId: string;
   context?: AutomationContext;
@@ -32,6 +35,7 @@ export async function addContactTagAndDispatch(
 ): Promise<AddContactTagResult> {
   const added = await addContactTagIfAbsent(input.db, {
     accountId: input.accountId,
+    projectId: input.projectId,
     contactId: input.contactId,
     tagId: input.tagId,
   });
@@ -51,6 +55,7 @@ export async function addContactTagAndDispatch(
 
   await runAutomationsForTrigger({
     accountId: input.accountId,
+    projectId: input.projectId,
     triggerType: 'tag_added',
     contactId: input.contactId,
     context: {

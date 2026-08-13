@@ -80,6 +80,24 @@ interface AuthContextValue {
 
   /** Account id the current user belongs to. Null while loading. */
   accountId: string | null;
+  /**
+   * The ACTIVE project — the data boundary inside the organisation
+   * (migrations 041–045). Null while loading, or if the user has been
+   * assigned to no project.
+   *
+   * Client-side queries must filter on this, not on `accountId`: RLS
+   * admits every project the caller belongs to, so an account-scoped
+   * query returns a sibling project's rows too. Writes must set
+   * `project_id` for the same reason — plus the column is NOT NULL.
+   *
+   * It is NOT a permission signal. The server re-resolves the active
+   * project from an httpOnly cookie on every request and the database
+   * enforces membership; this is only here so the client can scope
+   * what it owns.
+   */
+  activeProjectId: string | null;
+  /** The active project's WhatsApp transport. Null while loading. */
+  activeProjectChannel: "qr" | "cloud_api" | null;
   /** Role within that account. Null while loading. */
   accountRole: AccountRole | null;
   /** Lightweight account meta — id + name + default_currency. Null while loading. */
@@ -115,6 +133,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [account, setAccount] = useState<AccountSummary | null>(null);
+  const [activeProject, setActiveProject] = useState<{
+    id: string;
+    channel_type: "qr" | "cloud_api";
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   // Tracked separately from `loading`. The session settles fast (one
   // local cookie read); the profile fetch crosses the network and
@@ -300,12 +322,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [fetchProfile]);
 
+  // Active project. Resolved server-side (the httpOnly cookie is
+  // re-validated against project membership on every request), so this
+  // only mirrors the answer for client-side query scoping. Fetched
+  // once the user is known — before that there is nothing to scope.
+  useEffect(() => {
+    let cancelled = false;
+
+    // Every state write lives inside the async body, including the
+    // signed-out reset. Setting state synchronously in an effect body
+    // triggers a cascading render (react-hooks/set-state-in-effect);
+    // deferring it by a microtask costs nothing here because no
+    // consumer can act on the project before it resolves anyway.
+    (async () => {
+      if (!user?.id) {
+        if (!cancelled) setActiveProject(null);
+        return;
+      }
+      try {
+        const response = await fetch("/api/projects", { cache: "no-store" });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (cancelled) return;
+        const active = (data.projects ?? []).find(
+          (p: { id: string }) => p.id === data.active_project_id,
+        );
+        setActiveProject(active ?? null);
+      } catch {
+        // Leave null. Consumers that need a project skip their query
+        // rather than running an unscoped one.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
   const signOut = useCallback(async () => {
     const supabase = createClient();
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);
     setAccount(null);
+    setActiveProject(null);
     window.location.href = "/login";
   }, []);
 
@@ -344,6 +404,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshProfile,
         account,
         defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
+        activeProjectId: activeProject?.id ?? null,
+        activeProjectChannel: activeProject?.channel_type ?? null,
         ...derived,
       }}
     >
@@ -375,6 +437,8 @@ export function useAuth(): AuthContextValue {
       account: null,
       defaultCurrency: DEFAULT_CURRENCY,
       accountId: null,
+      activeProjectId: null,
+      activeProjectChannel: null,
       accountRole: null,
       isOwner: false,
       isAdmin: false,

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getCurrentProject } from '@/lib/auth/project'
 import { createClient } from '@/lib/supabase/server'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
@@ -137,12 +138,11 @@ export async function POST() {
 
     // Resolve the caller's account_id — both whatsapp_config and
     // the message_templates we sync into are account-scoped.
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('account_id')
-      .eq('user_id', user.id)
-      .maybeSingle()
-    const accountId = profile?.account_id as string | undefined
+    // Resolve the caller's account AND active project. Post-042 the
+    // project is the tenancy key on every domain row, and this route
+    // writes through the service-role client, so RLS will not catch a
+    // missing or wrong scope.
+    const { accountId, projectId } = await getCurrentProject();
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
@@ -153,7 +153,7 @@ export async function POST() {
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
       .select('*')
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .single()
 
     if (configError || !config) {
@@ -237,6 +237,7 @@ export async function POST() {
         // route. account_id is NOT NULL on message_templates
         // post-017, so an INSERT without it errors.
         account_id: accountId,
+        project_id: projectId,
         user_id: user.id,
         name: t.name,
         category: normalizeCategory(t.category),
@@ -257,7 +258,7 @@ export async function POST() {
       const { data: existing, error: lookupErr } = await supabase
         .from('message_templates')
         .select('id')
-        .eq('account_id', accountId)
+        .eq('project_id', projectId)
         .eq('name', t.name)
         .eq('language', t.language)
         .maybeSingle()

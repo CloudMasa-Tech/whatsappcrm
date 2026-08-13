@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getCurrentProject } from '@/lib/auth/project'
 import { createClient } from '@/lib/supabase/server'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
@@ -83,12 +84,11 @@ export async function POST(request: Request) {
     // + broadcasts are all account-scoped post-multi-user, so the
     // old `.eq('user_id', user.id)` filters miss every row created
     // by a teammate.
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('account_id')
-      .eq('user_id', user.id)
-      .maybeSingle()
-    const accountId = profile?.account_id as string | undefined
+    // Resolve the caller's account AND active project. Post-042 the
+    // project is the tenancy key on every domain row, and this route
+    // writes through the service-role client, so RLS will not catch a
+    // missing or wrong scope.
+    const { accountId, projectId } = await getCurrentProject();
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
@@ -137,7 +137,7 @@ export async function POST(request: Request) {
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
       .select('*')
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .single()
 
     if (configError || !config) {
@@ -160,7 +160,7 @@ export async function POST(request: Request) {
     const { data: rawTemplateRow } = await supabase
       .from('message_templates')
       .select('*')
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .eq('name', template_name)
       .eq('language', template_language || 'en_US')
       .maybeSingle()

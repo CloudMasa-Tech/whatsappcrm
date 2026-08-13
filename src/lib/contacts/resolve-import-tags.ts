@@ -22,13 +22,17 @@ export async function resolveImportTagIds(
   supabase: SupabaseClient,
   params: {
     accountId: string;
+    /** Project tenancy key. Tags are per-project post-042, so a name
+     *  match must not reach a sibling project's tag — and a newly
+     *  created tag has to land in this project. */
+    projectId: string;
     userId: string;
     tagNames: string[];
     canCreateTags: boolean;
     defaultColor?: string;
   }
 ): Promise<ResolveImportTagsResult> {
-  const { accountId, userId, tagNames, canCreateTags } = params;
+  const { accountId, projectId, userId, tagNames, canCreateTags } = params;
   const defaultColor = params.defaultColor ?? DEFAULT_TAG_COLOR;
 
   const uniqueNames: string[] = [];
@@ -49,7 +53,7 @@ export async function resolveImportTagIds(
   const { data: existing, error: fetchError } = await supabase
     .from('tags')
     .select('id, name')
-    .eq('account_id', accountId);
+    .eq('project_id', projectId);
 
   if (fetchError) throw fetchError;
 
@@ -76,6 +80,7 @@ export async function resolveImportTagIds(
         toCreate.map((name) => ({
           user_id: userId,
           account_id: accountId,
+          project_id: projectId,
           name,
           color: defaultColor,
         }))

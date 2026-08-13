@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
-import { requireRole, toErrorResponse } from '@/lib/auth/account';
+import { toErrorResponse } from '@/lib/auth/account'
+import { requireProjectRole } from '@/lib/auth/project';
 import { addContactTagAndDispatch } from '@/lib/contacts/tag-events';
 import {
   ContactTagWriteError,
@@ -25,7 +26,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const ctx = await requireRole('agent');
+    const ctx = await requireProjectRole('agent');
     const { id: contactId } = await params;
     const tagId = await readTagId(request);
     if (!tagId) {
@@ -35,6 +36,7 @@ export async function POST(
     const result = await addContactTagAndDispatch({
       db: ctx.supabase,
       accountId: ctx.accountId,
+      projectId: ctx.projectId,
       contactId,
       tagId,
     });
@@ -53,7 +55,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const ctx = await requireRole('agent');
+    const ctx = await requireProjectRole('agent');
     const { id: contactId } = await params;
     const tagId = await readTagId(request);
     if (!tagId) {
@@ -62,6 +64,7 @@ export async function DELETE(
 
     await removeContactTag(ctx.supabase, {
       accountId: ctx.accountId,
+      projectId: ctx.projectId,
       contactId,
       tagId,
     });

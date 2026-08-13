@@ -94,7 +94,7 @@ export function decodeCursor(value: string | null): Cursor | null {
  * same-timestamp rows with a smaller id (the tie-breaker). Returns
  * null on the first page. Apply as:
  *
- *   let q = db.from('contacts').select('*').eq('account_id', accountId)
+ *   let q = db.from('contacts').select('*').eq('project_id', projectId)
  *     .order('created_at', { ascending: false })
  *     .order('id', { ascending: false })
  *     .limit(limit + 1)          // fetch one extra to detect a next page

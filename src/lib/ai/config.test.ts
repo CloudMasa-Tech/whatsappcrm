@@ -31,11 +31,11 @@ const ROW = {
 
 describe('loadAiConfig requireActive', () => {
   it('returns null for an inactive config by default', async () => {
-    expect(await loadAiConfig(dbReturning(ROW), 'acct')).toBeNull()
+    expect(await loadAiConfig(dbReturning(ROW), 'acct', 'proj-1')).toBeNull()
   })
 
   it('returns the config when requireActive is false (Playground path)', async () => {
-    const config = await loadAiConfig(dbReturning(ROW), 'acct', {
+    const config = await loadAiConfig(dbReturning(ROW), 'acct', 'proj-1', {
       requireActive: false,
     })
     expect(config).not.toBeNull()
@@ -45,7 +45,7 @@ describe('loadAiConfig requireActive', () => {
 
   it('returns null when there is no row', async () => {
     expect(
-      await loadAiConfig(dbReturning(null), 'acct', { requireActive: false }),
+      await loadAiConfig(dbReturning(null), 'acct', 'proj-1', { requireActive: false }),
     ).toBeNull()
   })
 })

@@ -24,7 +24,7 @@ const steps = [
 export default function NewBroadcastPage() {
   const router = useRouter();
   const t = useTranslations('Broadcasts.new');
-  const { accountId } = useAuth();
+  const { accountId, activeProjectId } = useAuth();
   const { createAndSendBroadcast, isProcessing, progress } = useBroadcastSending();
 
   const [currentStep, setCurrentStep] = useState(0);
@@ -104,6 +104,7 @@ export default function NewBroadcastPage() {
     const { error } = await supabase.from('broadcasts').insert({
       user_id: user.id,
       account_id: accountId,
+      project_id: activeProjectId,
       name: name.trim(),
       template_name: template.name,
       template_language: template.language ?? 'en_US',

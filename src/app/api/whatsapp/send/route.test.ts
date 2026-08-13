@@ -22,7 +22,16 @@ let createdConversation: Record<string, unknown> | null = null
 const CONTACT = {
   id: 'contact-1',
   account_id: 'acct-1',
+  project_id: 'proj-1',
   phone: '+15551234567',
+}
+
+// The conversation's project selects the transport (migration 044).
+// These tests exercise the Cloud API path.
+const PROJECT = {
+  id: 'proj-1',
+  account_id: 'acct-1',
+  channel_type: 'cloud_api',
 }
 
 // Chainable Supabase mock. A fresh builder per `.from()` call tracks whether
@@ -36,6 +45,8 @@ function makeSupabaseMock() {
       switch (table) {
         case 'profiles':
           return { data: { account_id: 'acct-1' }, error: null }
+        case 'projects':
+          return { data: PROJECT, error: null }
         case 'contacts':
           return { data: contactRow, error: null }
         case 'conversations':
@@ -47,6 +58,7 @@ function makeSupabaseMock() {
             data: {
               id: 'cfg-1',
               account_id: 'acct-1',
+              project_id: 'proj-1',
               phone_number_id: 'PNID-1',
               access_token: 'enc-token',
             },
@@ -66,6 +78,7 @@ function makeSupabaseMock() {
             data: {
               id: 'conv-new',
               account_id: 'acct-1',
+              project_id: 'proj-1',
               contact_id: 'contact-1',
               contact: CONTACT,
             },
@@ -93,6 +106,7 @@ function makeSupabaseMock() {
         createdConversation = {
           id: 'conv-new',
           account_id: 'acct-1',
+          project_id: 'proj-1',
           contact_id: 'contact-1',
           contact: CONTACT,
         }
@@ -122,6 +136,27 @@ let supabaseMock = makeSupabaseMock()
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => supabaseMock),
+}))
+
+// The route resolves its tenancy through the project context, which
+// reads cookies and re-validates membership against the database.
+// Neither belongs in a route unit test — stub the resolved answer.
+vi.mock('@/lib/auth/project', () => ({
+  getCurrentProject: vi.fn(async () => ({
+    supabase: supabaseMock,
+    userId: 'user-1',
+    accountId: 'acct-1',
+    projectId: 'proj-1',
+    role: 'admin',
+    account: { id: 'acct-1', name: 'Acme' },
+    project: {
+      id: 'proj-1',
+      name: 'Default',
+      slug: 'default',
+      channel_type: 'cloud_api',
+      archived_at: null,
+    },
+  })),
 }))
 
 vi.mock('@/lib/flows/admin-client', () => ({
@@ -226,6 +261,7 @@ describe('POST /api/whatsapp/send — contact_id template path', () => {
     existingConversation = {
       id: 'conv-existing',
       account_id: 'acct-1',
+      project_id: 'proj-1',
       contact_id: 'contact-1',
       contact: CONTACT,
     }

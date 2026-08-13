@@ -17,6 +17,9 @@ interface DispatchArgs {
   contactId: string
   /** The account's WhatsApp config owner, used for the outbound send's
    *  audit columns (mirrors how the flow runner passes it through). */
+  /** Project tenancy key — selects the AI config, the knowledge base
+   *  and the automations consulted before replying. */
+  projectId: string
   configOwnerUserId: string
 }
 
@@ -42,12 +45,12 @@ interface DispatchArgs {
 export async function dispatchInboundToAiReply(
   args: DispatchArgs,
 ): Promise<void> {
-  const { accountId, conversationId, contactId, configOwnerUserId } = args
+  const { accountId, projectId, conversationId, contactId, configOwnerUserId } = args
 
   try {
     const db = supabaseAdmin()
 
-    const config = await loadAiConfig(db, accountId)
+    const config = await loadAiConfig(db, accountId, projectId)
     if (!config || !config.autoReplyEnabled) return
 
     // Deterministic, user-configured responders win over the LLM — the
@@ -61,7 +64,7 @@ export async function dispatchInboundToAiReply(
     const { data: autoResponders } = await db
       .from('automations')
       .select('id')
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .eq('is_active', true)
       .in('trigger_type', ['new_message_received', 'keyword_match'])
       .limit(1)
@@ -102,6 +105,7 @@ export async function dispatchInboundToAiReply(
     const knowledge = await retrieveKnowledge(
       db,
       accountId,
+      projectId,
       config,
       latestUserMessage(messages),
     )
@@ -125,6 +129,7 @@ export async function dispatchInboundToAiReply(
     // way.
     void logAiUsage(db, {
       accountId,
+      projectId,
       conversationId,
       mode: 'auto_reply',
       provider: config.provider,
@@ -181,6 +186,7 @@ export async function dispatchInboundToAiReply(
 
     await engineSendText({
       accountId,
+      projectId,
       userId: configOwnerUserId,
       conversationId,
       contactId,

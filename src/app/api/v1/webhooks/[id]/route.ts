@@ -28,7 +28,7 @@ export async function GET(
       .from('webhook_endpoints')
       .select(WEBHOOK_PUBLIC_COLUMNS)
       .eq('id', id)
-      .eq('account_id', ctx.accountId)
+      .eq('project_id', ctx.projectId)
       .maybeSingle();
 
     if (error) {
@@ -101,7 +101,7 @@ export async function PATCH(
       .from('webhook_endpoints')
       .update(updates)
       .eq('id', id)
-      .eq('account_id', ctx.accountId)
+      .eq('project_id', ctx.projectId)
       .select(WEBHOOK_PUBLIC_COLUMNS)
       .maybeSingle();
 
@@ -129,7 +129,7 @@ export async function DELETE(
       .from('webhook_endpoints')
       .delete()
       .eq('id', id)
-      .eq('account_id', ctx.accountId)
+      .eq('project_id', ctx.projectId)
       .select('id')
       .maybeSingle();
 

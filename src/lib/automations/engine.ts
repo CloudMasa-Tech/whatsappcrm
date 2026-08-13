@@ -51,6 +51,11 @@ export interface DispatchInput {
    *  field; the per-automation user_id is read off each row when
    *  needed (sender identity for outbound messages, log audit). */
   accountId: string
+  /** Project tenancy key. Post-042 this — not accountId — decides
+   *  which automations fire: an organisation may run several projects
+   *  and each has its own automation set, contacts and conversations.
+   *  The service-role client bypasses RLS, so nothing else enforces it. */
+  projectId: string
   triggerType: AutomationTriggerType
   contactId?: string | null
   context?: AutomationContext
@@ -72,7 +77,7 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
     // POST /api/automations/engine entrypoint reads it straight from the
     // request body), and every step below runs through the service-role
     // client, which bypasses RLS. So before any step can touch the
-    // contact, verify it actually belongs to this account. A foreign or
+    // contact, verify it actually belongs to this project. A foreign or
     // forged id is refused silently — callers are fire-and-forget, and a
     // distinct error would leak whether a given contact UUID exists.
     if (input.contactId) {
@@ -80,14 +85,14 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
         .from('contacts')
         .select('id')
         .eq('id', input.contactId)
-        .eq('account_id', input.accountId)
+        .eq('project_id', input.projectId)
         .maybeSingle()
       if (ownErr) {
         console.error('[automations] contact ownership check failed:', ownErr)
         return
       }
       if (!owned) {
-        console.warn('[automations] contact not in account, refusing dispatch', input.contactId)
+        console.warn('[automations] contact not in project, refusing dispatch', input.contactId)
         return
       }
     }
@@ -95,7 +100,7 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
     const { data: automations, error } = await db
       .from('automations')
       .select('*')
-      .eq('account_id', input.accountId)
+      .eq('project_id', input.projectId)
       .eq('trigger_type', input.triggerType)
       .eq('is_active', true)
 
@@ -180,8 +185,10 @@ async function executeAutomation(automation: Automation, input: DispatchInput) {
     .from('automation_logs')
     .insert({
       automation_id: automation.id,
-      // Tenancy: matches automation.account_id (NOT NULL post-017).
+      // Tenancy: both columns mirror the automation row. project_id is
+      // the boundary (042); account_id remains for org-level reads.
       account_id: automation.account_id,
+      project_id: automation.project_id,
       // Audit: keeps the historical "author of this automation"
       // pointer so logs still attribute to the right user even
       // after teammates join the account.
@@ -283,6 +290,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         automation_id: args.automation.id,
         // Tenancy: account_id required NOT NULL post-017.
         account_id: args.automation.account_id,
+        project_id: args.automation.project_id,
         user_id: args.automation.user_id,
         contact_id: args.contactId,
         log_id: args.logId,
@@ -367,6 +375,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       const conversationId = await resolveConversationId(args)
       const { whatsapp_message_id } = await engineSendText({
         accountId: args.automation.account_id,
+        projectId: args.automation.project_id,
         userId: args.automation.user_id,
         conversationId,
         contactId: args.contactId,
@@ -387,6 +396,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       const conversationId = await resolveConversationId(args)
       const { whatsapp_message_id } = await engineSendInteractive({
         accountId: args.automation.account_id,
+        projectId: args.automation.project_id,
         userId: args.automation.user_id,
         conversationId,
         contactId: args.contactId,
@@ -420,6 +430,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         : []
       const { whatsapp_message_id } = await engineSendTemplate({
         accountId: args.automation.account_id,
+        projectId: args.automation.project_id,
         userId: args.automation.user_id,
         conversationId,
         contactId: args.contactId,
@@ -435,6 +446,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!args.contactId || !cfg.tag_id) throw new Error('add_tag needs contact + tag_id')
       const added = await addContactTagIfAbsent(db, {
         accountId: args.automation.account_id,
+        projectId: args.automation.project_id,
         contactId: args.contactId,
         tagId: cfg.tag_id,
       })
@@ -453,6 +465,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
 
       await runAutomationsForTrigger({
         accountId: args.automation.account_id,
+        projectId: args.automation.project_id,
         triggerType: 'tag_added',
         contactId: args.contactId,
         context: {
@@ -491,7 +504,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         const { data: profiles } = await db
           .from('profiles')
           .select('user_id')
-          .eq('account_id', args.automation.account_id)
+          .eq('project_id', args.automation.project_id)
           .limit(1)
         agentId = profiles?.[0]?.user_id
       }
@@ -499,7 +512,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       await db
         .from('conversations')
         .update({ assigned_agent_id: agentId })
-        .eq('account_id', args.automation.account_id)
+        .eq('project_id', args.automation.project_id)
         .eq('contact_id', args.contactId)
       return `assigned to ${agentId}`
     }
@@ -524,7 +537,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
           .from('custom_fields')
           .select('id')
           .eq('id', customFieldId)
-          .eq('account_id', args.automation.account_id)
+          .eq('project_id', args.automation.project_id)
           .maybeSingle()
         if (!field) {
           return `field ${cfg.field} not writable from automations`
@@ -552,7 +565,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         .from('contacts')
         .update({ [cfg.field]: value, updated_at: new Date().toISOString() })
         .eq('id', args.contactId)
-        .eq('account_id', args.automation.account_id)
+        .eq('project_id', args.automation.project_id)
       return `${cfg.field} updated`
     }
 
@@ -572,6 +585,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       await db.from('deals').insert({
         // Tenancy + audit, same split as automation_logs above.
         account_id: args.automation.account_id,
+        project_id: args.automation.project_id,
         user_id: args.automation.user_id,
         pipeline_id: cfg.pipeline_id,
         stage_id: cfg.stage_id,
@@ -614,7 +628,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       await db
         .from('conversations')
         .update({ status: 'closed', updated_at: new Date().toISOString() })
-        .eq('account_id', args.automation.account_id)
+        .eq('project_id', args.automation.project_id)
         .eq('contact_id', args.contactId)
       return 'conversation closed'
     }
@@ -642,7 +656,7 @@ async function resolveConversationId(args: ExecuteArgs): Promise<string> {
   const { data, error } = await supabaseAdmin()
     .from('conversations')
     .select('id')
-    .eq('account_id', args.automation.account_id)
+    .eq('project_id', args.automation.project_id)
     .eq('contact_id', args.contactId)
     .maybeSingle()
   if (error) throw new Error(`conversation lookup failed: ${error.message}`)
@@ -712,7 +726,7 @@ async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): P
         .from('contacts')
         .select(cfg.operand)
         .eq('id', args.contactId)
-        .eq('account_id', args.automation.account_id)
+        .eq('project_id', args.automation.project_id)
         .maybeSingle()
       const v = (data as Record<string, unknown> | null)?.[cfg.operand]
       return v != null && String(v) === String(cfg.value ?? '')

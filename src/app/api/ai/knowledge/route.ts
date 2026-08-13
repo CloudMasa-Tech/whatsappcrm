@@ -1,9 +1,6 @@
 import { NextResponse } from 'next/server'
-import {
-  getCurrentAccount,
-  requireRole,
-  toErrorResponse,
-} from '@/lib/auth/account'
+import { toErrorResponse } from '@/lib/auth/account'
+import { getCurrentProject, requireProjectRole } from '@/lib/auth/project'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { loadEmbeddingsKey } from '@/lib/ai/config'
 import { ingestDocument } from '@/lib/ai/knowledge'
@@ -16,11 +13,11 @@ import { AiError } from '@/lib/ai/types'
  */
 export async function GET() {
   try {
-    const { supabase, accountId } = await getCurrentAccount()
+    const { supabase, projectId } = await getCurrentProject()
     const { data, error } = await supabase
       .from('ai_knowledge_documents')
       .select('id, title, updated_at')
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .order('updated_at', { ascending: false })
     if (error) {
       console.error('[ai/knowledge GET] error:', error)
@@ -43,7 +40,7 @@ export async function GET() {
  */
 export async function POST(request: Request) {
   try {
-    const { supabase, accountId, userId } = await requireRole('admin')
+    const { supabase, accountId, projectId, userId } = await requireProjectRole('admin')
     const limit = checkRateLimit(`ai-kb:${userId}`, RATE_LIMITS.adminAction)
     if (!limit.success) return rateLimitResponse(limit)
 
@@ -59,7 +56,13 @@ export async function POST(request: Request) {
 
     const { data: doc, error } = await supabase
       .from('ai_knowledge_documents')
-      .insert({ account_id: accountId, created_by: userId, title, content })
+      .insert({
+        account_id: accountId,
+        project_id: projectId,
+        created_by: userId,
+        title,
+        content,
+      })
       .select('id')
       .single()
     if (error || !doc) {
@@ -73,11 +76,13 @@ export async function POST(request: Request) {
     const { key: embeddingsApiKey, corrupt } = await loadEmbeddingsKey(
       supabase,
       accountId,
+      projectId,
     )
     try {
       await ingestDocument(
         supabase,
         accountId,
+        projectId,
         { embeddingsApiKey },
         doc.id,
         content,

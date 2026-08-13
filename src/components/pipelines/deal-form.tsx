@@ -55,7 +55,7 @@ export function DealForm({
 }: DealFormProps) {
   const t = useTranslations("Pipelines.form");
   const supabase = createClient();
-  const { accountId, defaultCurrency } = useAuth();
+  const { accountId, activeProjectId, defaultCurrency } = useAuth();
 
   const [title, setTitle] = useState("");
   const [value, setValue] = useState("");
@@ -197,7 +197,13 @@ export function DealForm({
       }
       const { error } = await supabase
         .from("deals")
-        .insert({ ...payload, user_id: user.id, account_id: accountId, status: "open" });
+        .insert({
+          ...payload,
+          user_id: user.id,
+          account_id: accountId,
+          project_id: activeProjectId,
+          status: "open",
+        });
       if (error) {
         toast.error(t("toastFailedCreate"));
         setSaving(false);

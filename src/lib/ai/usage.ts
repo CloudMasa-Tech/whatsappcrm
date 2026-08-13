@@ -3,6 +3,8 @@ import type { AiProvider, AiUsage } from './types'
 
 export interface LogAiUsageArgs {
   accountId: string
+  /** Project tenancy key — spend is reported per project. */
+  projectId: string
   /** Null for a draft not tied to one thread, or when the row was
    *  deleted between generation and logging. */
   conversationId: string | null
@@ -34,6 +36,7 @@ export async function logAiUsage(
   try {
     const { error } = await db.from('ai_usage_log').insert({
       account_id: args.accountId,
+      project_id: args.projectId,
       conversation_id: args.conversationId,
       mode: args.mode,
       provider: args.provider,

@@ -148,7 +148,7 @@ async function fetchCustomValueIndex(
 }
 
 export function useBroadcastSending(): UseBroadcastSendingReturn {
-  const { accountId } = useAuth();
+  const { accountId, activeProjectId } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
 
@@ -262,6 +262,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       .map((phone) => ({
         user_id: user.id,
         account_id: accountId,
+        project_id: activeProjectId,
         phone,
         name: uniqueByPhone.get(phone)?.name ?? null,
       }));
@@ -358,6 +359,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         .insert({
           user_id: user.id,
           account_id: accountId,
+          project_id: activeProjectId,
           name: payload.name,
           template_name: payload.template.name,
           template_language: payload.template.language ?? 'en_US',

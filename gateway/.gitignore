@@ -1,0 +1,11 @@
+# The root .gitignore uses a rooted `/node_modules`, which does not
+# reach into this sub-package — hence a second file here.
+node_modules
+dist
+
+# Local secrets: the service-role key and ENCRYPTION_KEY. See .env.example.
+.env
+.env.*
+!.env.example
+
+*.tsbuildinfo

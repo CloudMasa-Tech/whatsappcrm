@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getCurrentProject } from '@/lib/auth/project'
 import { createClient } from '@/lib/supabase/server'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
@@ -67,12 +68,11 @@ export async function PATCH(
 
     // Resolve the caller's account_id so template + whatsapp_config
     // lookups work for teammates who didn't author the row.
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('account_id')
-      .eq('user_id', user.id)
-      .maybeSingle()
-    const accountId = profile?.account_id as string | undefined
+    // Resolve the caller's account AND active project. Post-042 the
+    // project is the tenancy key on every domain row, and this route
+    // writes through the service-role client, so RLS will not catch a
+    // missing or wrong scope.
+    const { accountId, projectId } = await getCurrentProject();
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
@@ -93,7 +93,7 @@ export async function PATCH(
       .from('message_templates')
       .select('id, name, status, meta_template_id, language')
       .eq('id', id)
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .maybeSingle()
     if (lookupErr || !existing) {
       return NextResponse.json({ error: 'Template not found.' }, { status: 404 })
@@ -141,7 +141,7 @@ export async function PATCH(
       const { data: config, error: configError } = await supabase
         .from('whatsapp_config')
         .select('*')
-        .eq('account_id', accountId)
+        .eq('project_id', projectId)
         .single()
       if (configError || !config) {
         return NextResponse.json(
@@ -254,12 +254,11 @@ export async function DELETE(
     // Same account-scoping rationale as the PATCH handler above —
     // teammates need to be able to operate on shared templates +
     // the shared whatsapp_config.
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('account_id')
-      .eq('user_id', user.id)
-      .maybeSingle()
-    const accountId = profile?.account_id as string | undefined
+    // Resolve the caller's account AND active project. Post-042 the
+    // project is the tenancy key on every domain row, and this route
+    // writes through the service-role client, so RLS will not catch a
+    // missing or wrong scope.
+    const { accountId, projectId } = await getCurrentProject();
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
@@ -271,7 +270,7 @@ export async function DELETE(
       .from('message_templates')
       .select('id, name, meta_template_id')
       .eq('id', id)
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .maybeSingle()
     if (lookupErr || !existing) {
       return NextResponse.json({ error: 'Template not found.' }, { status: 404 })
@@ -281,7 +280,7 @@ export async function DELETE(
       const { data: config, error: configError } = await supabase
         .from('whatsapp_config')
         .select('*')
-        .eq('account_id', accountId)
+        .eq('project_id', projectId)
         .single()
       if (configError || !config || !config.waba_id) {
         return NextResponse.json(

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getCurrentProject } from '@/lib/auth/project'
 import { createClient } from '@/lib/supabase/server';
 import { sendReactionMessage } from '@/lib/whatsapp/meta-api';
 import { decrypt } from '@/lib/whatsapp/encryption';
@@ -38,12 +39,11 @@ export async function POST(request: Request) {
 
     // Resolve the caller's account_id so conversation + whatsapp_config
     // lookups work for teammates who didn't author the rows directly.
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('account_id')
-      .eq('user_id', user.id)
-      .maybeSingle();
-    const accountId = profile?.account_id as string | undefined;
+    // Resolve the caller's account AND active project. Post-042 the
+    // project is the tenancy key on every domain row, and this route
+    // writes through the service-role client, so RLS will not catch a
+    // missing or wrong scope.
+    const { accountId, projectId } = await getCurrentProject();
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
       .from('conversations')
       .select('id, account_id, contact:contacts(phone)')
       .eq('id', targetMessage.conversation_id)
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .maybeSingle();
 
     if (convError || !conversation) {
@@ -112,7 +112,7 @@ export async function POST(request: Request) {
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
       .select('phone_number_id, access_token')
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .single();
 
     if (configError || !config) {

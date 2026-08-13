@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getCurrentProject } from '@/lib/auth/project'
 import { createClient } from '@/lib/supabase/server'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
@@ -35,12 +36,11 @@ export async function GET(
     // account post-multi-user, so a teammate fetching media for a
     // conversation in the shared inbox needs the account's config,
     // not their personal (non-existent) row.
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('account_id')
-      .eq('user_id', user.id)
-      .maybeSingle()
-    const accountId = profile?.account_id as string | undefined
+    // Resolve the caller's account AND active project. Post-042 the
+    // project is the tenancy key on every domain row, and this route
+    // writes through the service-role client, so RLS will not catch a
+    // missing or wrong scope.
+    const { accountId, projectId } = await getCurrentProject();
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
@@ -52,7 +52,7 @@ export async function GET(
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
       .select('*')
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .single()
 
     if (configError || !config) {

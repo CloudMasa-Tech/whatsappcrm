@@ -13,6 +13,7 @@ describe('logAiUsage', () => {
     const { db, insert, from } = fakeDb()
     await logAiUsage(db, {
       accountId: 'acct-1',
+      projectId: 'proj-1',
       conversationId: 'conv-1',
       mode: 'auto_reply',
       provider: 'anthropic',
@@ -22,6 +23,7 @@ describe('logAiUsage', () => {
     expect(from).toHaveBeenCalledWith('ai_usage_log')
     expect(insert).toHaveBeenCalledWith({
       account_id: 'acct-1',
+      project_id: 'proj-1',
       conversation_id: 'conv-1',
       mode: 'auto_reply',
       provider: 'anthropic',
@@ -36,6 +38,7 @@ describe('logAiUsage', () => {
     const { db, from } = fakeDb()
     await logAiUsage(db, {
       accountId: 'acct-1',
+      projectId: 'proj-1',
       conversationId: null,
       mode: 'draft',
       provider: 'openai',
@@ -51,6 +54,7 @@ describe('logAiUsage', () => {
     await expect(
       logAiUsage(db, {
         accountId: 'acct-1',
+        projectId: 'proj-1',
         conversationId: 'conv-1',
         mode: 'draft',
         provider: 'openai',

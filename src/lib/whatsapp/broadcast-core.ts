@@ -85,6 +85,7 @@ const MAX_RECIPIENTS = 1000;
 export async function createBroadcast(
   db: SupabaseClient,
   accountId: string,
+  projectId: string,
   auditUserId: string,
   params: CreateBroadcastParams
 ): Promise<BroadcastPlan> {
@@ -114,7 +115,7 @@ export async function createBroadcast(
   const { data: config, error: configError } = await db
     .from('whatsapp_config')
     .select('*')
-    .eq('account_id', accountId)
+    .eq('project_id', projectId)
     .single();
   if (configError || !config) {
     throw new BroadcastError(
@@ -130,7 +131,7 @@ export async function createBroadcast(
   const { data: rawTemplateRow } = await db
     .from('message_templates')
     .select('*')
-    .eq('account_id', accountId)
+    .eq('project_id', projectId)
     .eq('name', templateName)
     .eq('language', templateLanguage)
     .maybeSingle();
@@ -153,7 +154,7 @@ export async function createBroadcast(
       rejected++;
       continue;
     }
-    const { id } = await findOrCreateContact(db, accountId, auditUserId, {
+    const { id } = await findOrCreateContact(db, accountId, projectId, auditUserId, {
       phone: sanitized,
     });
     resolved.push({
@@ -197,6 +198,7 @@ export async function createBroadcast(
     .from('broadcasts')
     .insert({
       account_id: accountId,
+      project_id: projectId,
       user_id: auditUserId,
       name: name || `API broadcast (${templateName})`,
       template_name: templateName,

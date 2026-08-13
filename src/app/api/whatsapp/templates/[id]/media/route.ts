@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getCurrentProject } from '@/lib/auth/project'
 import { createClient } from '@/lib/supabase/server';
 
 /**
@@ -54,20 +55,11 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Account-scoping mirrors the sibling /templates/[id] and /submit
-    // routes so teammates can attach media to shared templates.
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('account_id')
-      .eq('user_id', user.id)
-      .maybeSingle();
-    const accountId = profile?.account_id as string | undefined;
-    if (!accountId) {
-      return NextResponse.json(
-        { error: 'Your profile is not linked to an account.' },
-        { status: 403 }
-      );
-    }
+    // Project-scoping mirrors the sibling /templates/[id] and /submit
+    // routes so teammates can attach media to the project's templates —
+    // and only that project's.
+    const { accountId, projectId } = await getCurrentProject();
+    void accountId;
 
     let headerMediaUrl: string;
     try {
@@ -91,7 +83,7 @@ export async function POST(
       .from('message_templates')
       .select('id, header_type, header_media_url')
       .eq('id', id)
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .maybeSingle();
     if (lookupErr || !existing) {
       return NextResponse.json(

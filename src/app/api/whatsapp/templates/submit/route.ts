@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getCurrentProject } from '@/lib/auth/project'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { decrypt } from '@/lib/whatsapp/encryption'
@@ -18,6 +19,7 @@ import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
  */
 function buildUpsertRow(
   accountId: string,
+  projectId: string,
   userId: string,
   payload: TemplatePayload,
   extras: {
@@ -27,10 +29,12 @@ function buildUpsertRow(
   },
 ) {
   return {
-    // Account tenancy — required NOT NULL on message_templates as
-    // of migration 017. Without this an INSERT throws on the
-    // not-null constraint.
+    // Tenancy — both NOT NULL on message_templates (017, then 042).
+    // project_id is the isolation boundary: two projects in one
+    // organisation each keep their own template catalogue against
+    // their own WhatsApp number.
     account_id: accountId,
+    project_id: projectId,
     // Original author — kept as audit only. The unique index is
     // still on (user_id, name, language) — see the upsert helper
     // for the cross-teammate dedup follow-up.
@@ -99,12 +103,11 @@ export async function POST(request: Request) {
 
     // Resolve the caller's account_id — whatsapp_config + the
     // message_templates row are account-scoped post-multi-user.
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('account_id')
-      .eq('user_id', user.id)
-      .maybeSingle()
-    const accountId = profile?.account_id as string | undefined
+    // Resolve the caller's account AND active project. Post-042 the
+    // project is the tenancy key on every domain row, and this route
+    // writes through the service-role client, so RLS will not catch a
+    // missing or wrong scope.
+    const { accountId, projectId } = await getCurrentProject();
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
@@ -152,7 +155,7 @@ export async function POST(request: Request) {
       const { data: config, error: configError } = await supabase
         .from('whatsapp_config')
         .select('*')
-        .eq('account_id', accountId)
+        .eq('project_id', projectId)
         .single()
       if (configError || !config) {
         return NextResponse.json(
@@ -203,7 +206,10 @@ export async function POST(request: Request) {
         // until they fix and re-submit.
         await upsertTemplateRow(
           supabase,
-          buildUpsertRow(accountId, user.id, payload, {
+          buildUpsertRow(
+    accountId,
+    projectId,
+    user.id, payload, {
             status: 'DRAFT',
             metaTemplateId: null,
             submissionError: message,
@@ -223,7 +229,10 @@ export async function POST(request: Request) {
 
     const { data: row, error: upsertErr } = await upsertTemplateRow(
       supabase,
-      buildUpsertRow(accountId, user.id, payload, {
+      buildUpsertRow(
+    accountId,
+    projectId,
+    user.id, payload, {
         status: normalizeStatus(metaStatus),
         metaTemplateId,
         submissionError: null,

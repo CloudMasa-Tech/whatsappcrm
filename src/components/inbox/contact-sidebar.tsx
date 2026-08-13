@@ -29,7 +29,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const tSidebar = useTranslations("Inbox.sidebar");
   const tThread = useTranslations("Inbox.messageThread");
 
-  const { accountId } = useAuth();
+  const { accountId, activeProjectId } = useAuth();
   const [copied, setCopied] = useState(false);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
@@ -106,6 +106,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
       .insert({
         contact_id: contact.id,
         account_id: accountId,
+        project_id: activeProjectId,
         user_id: user?.id,
         note_text: newNote.trim(),
       })
@@ -117,7 +118,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
       setNewNote("");
     }
     setAddingNote(false);
-  }, [contact, newNote, accountId]);
+  }, [contact, newNote, accountId, activeProjectId]);
 
   if (!contact) {
     return (

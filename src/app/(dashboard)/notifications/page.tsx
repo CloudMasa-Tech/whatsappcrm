@@ -19,7 +19,7 @@ const TYPE_ICON: Record<Notification["type"], typeof Bell> = {
 
 export default function NotificationsPage() {
   const router = useRouter();
-  const { accountId } = useAuth();
+  const { accountId, activeProjectId } = useAuth();
   const [notifications, setNotifications] = useState<Notification[] | null>(
     null,
   );
@@ -32,7 +32,7 @@ export default function NotificationsPage() {
     const { data, error: fetchErr } = await supabase
       .from("notifications")
       .select("*")
-      .eq("account_id", accountId)
+      .eq('project_id', activeProjectId)
       .order("created_at", { ascending: false })
       .limit(100);
     if (fetchErr) {
@@ -40,7 +40,7 @@ export default function NotificationsPage() {
       return;
     }
     setNotifications((data ?? []) as Notification[]);
-  }, [accountId]);
+  }, [accountId, activeProjectId]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect

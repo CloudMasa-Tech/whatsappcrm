@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { toErrorResponse } from '@/lib/auth/account'
+import { requireProjectRole } from '@/lib/auth/project'
 import { daysAgoStart, lastNDayKeys, localDayKey } from '@/lib/dashboard/date-utils'
 
 // Rows are aggregated in-process over a bounded window. An active
@@ -30,7 +31,7 @@ interface UsageRow {
  */
 export async function GET(request: Request) {
   try {
-    const { supabase, accountId } = await requireRole('admin')
+    const { supabase, projectId } = await requireProjectRole('admin')
 
     const url = new URL(request.url)
     const rawDays = Number(url.searchParams.get('days'))
@@ -56,7 +57,7 @@ export async function GET(request: Request) {
       .select(
         'created_at, mode, provider, model, prompt_tokens, completion_tokens, total_tokens',
       )
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .gte('created_at', since.toISOString())
       .order('created_at', { ascending: false })
       .limit(MAX_ROWS + 1)

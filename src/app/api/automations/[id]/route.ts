@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { toErrorResponse } from '@/lib/auth/account'
+import { requireProjectRole } from '@/lib/auth/project'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import {
   loadStepsTree,
@@ -53,7 +54,7 @@ export async function PATCH(
   // requires `agent`, but this route mutates via the service-role client
   // which bypasses RLS, so enforce the role here.
   try {
-    await requireRole('agent')
+    await requireProjectRole('agent')
   } catch (err) {
     return toErrorResponse(err)
   }
@@ -140,7 +141,7 @@ export async function DELETE(
   // Deleting an automation is a write — enforce `agent` (the service-role
   // client below bypasses the agent-gated automations_delete RLS).
   try {
-    await requireRole('agent')
+    await requireProjectRole('agent')
   } catch (err) {
     return toErrorResponse(err)
   }

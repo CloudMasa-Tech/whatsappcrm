@@ -1,0 +1,70 @@
+# Runs the CRM and the QR gateway side by side — the shape a
+# single-VPS deployment (Hostinger KVM, Hetzner, DigitalOcean) wants.
+#
+# The gateway is deliberately NOT published to the host: only the web
+# container needs to reach it, over the internal network. Its API is
+# server-to-server and has no business being exposed.
+
+services:
+  web:
+    build:
+      context: .
+      # NEXT_PUBLIC_* are compiled into the browser bundle, so they must
+      # be present when the image is BUILT, not just when it runs. Change
+      # any of these and you must rebuild, not just restart.
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-${NEXT_PUBLIC_SITE_URL}}
+        NEXT_PUBLIC_APP_LOCALE: ${NEXT_PUBLIC_APP_LOCALE:-en}
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      META_APP_SECRET: ${META_APP_SECRET}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
+      # Reached over the compose network, not the public internet.
+      WHATSAPP_GATEWAY_URL: http://gateway:8088
+      WHATSAPP_GATEWAY_TOKEN: ${GATEWAY_API_TOKEN}
+      WHATSAPP_GATEWAY_SIGNING_SECRET: ${GATEWAY_SIGNING_SECRET}
+      WHATSAPP_GATEWAY_WEBHOOK_SECRET: ${GATEWAY_WEBHOOK_SECRET}
+    depends_on:
+      - gateway
+
+  gateway:
+    build: ./gateway
+    restart: unless-stopped
+    # No `ports:` — see the note at the top.
+    expose:
+      - "8088"
+    environment:
+      PORT: 8088
+      GATEWAY_INSTANCE_ID: ${GATEWAY_INSTANCE_ID:-gateway-1}
+      SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      # MUST match the web container's value exactly — both sides read
+      # and write the same encrypted session credentials.
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      GATEWAY_API_TOKEN: ${GATEWAY_API_TOKEN}
+      GATEWAY_SIGNING_SECRET: ${GATEWAY_SIGNING_SECRET}
+      CRM_URL: http://web:3000
+      GATEWAY_WEBHOOK_SECRET: ${GATEWAY_WEBHOOK_SECRET}
+      GATEWAY_MEDIA_BUCKET: ${GATEWAY_MEDIA_BUCKET:-chat-media}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8088/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # A WhatsApp session is ~60-100 MB. Cap the container so a burst of
+    # inbound media cannot take the web app down with it.
+    deploy:
+      resources:
+        limits:
+          memory: ${GATEWAY_MEMORY_LIMIT:-2g}

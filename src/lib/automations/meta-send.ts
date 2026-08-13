@@ -12,6 +12,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import { sendViaQrIfApplicable } from '@/lib/channels/engine-send'
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -25,10 +26,14 @@ import { supabaseAdmin } from './admin-client'
 // ------------------------------------------------------------
 
 interface SendTextArgs {
-  /** Account-level tenancy key. Drives contact + whatsapp_config
-   *  lookups so an automation authored by user A still sends through
-   *  the WhatsApp number user B saved on the same account. */
+  /** Account-level key. Retained for org-level reads; tenancy is
+   *  projectId below. */
   accountId: string
+  /** Project tenancy key. Drives the contact + connection lookups so
+   *  an automation authored by user A still sends through the number
+   *  saved on that PROJECT — and never reaches a contact belonging to
+   *  a sibling project. Also selects the transport (Cloud API or QR). */
+  projectId: string
   /** Original author of the automation/flow — used for INSERT audit
    *  columns (messages.sender_id-ish) and for resolving the agent's
    *  identity in logs. Not consulted for tenancy. */
@@ -40,6 +45,7 @@ interface SendTextArgs {
 
 interface SendTemplateArgs {
   accountId: string
+  projectId: string
   userId: string
   conversationId: string
   contactId: string
@@ -60,6 +66,7 @@ export async function engineSendTemplate(
 
 interface SendInteractiveArgs {
   accountId: string
+  projectId: string
   userId: string
   conversationId: string
   contactId: string
@@ -80,8 +87,8 @@ interface SendInteractiveArgs {
 export async function engineSendInteractive(
   args: SendInteractiveArgs,
 ): Promise<{ whatsapp_message_id: string }> {
-  const { payload, accountId, userId, conversationId, contactId } = args
-  const common = { accountId, userId, conversationId, contactId }
+  const { payload, accountId, projectId, userId, conversationId, contactId } = args
+  const common = { accountId, projectId, userId, conversationId, contactId }
   if (payload.kind === 'buttons') {
     return engineSendInteractiveButtons({
       ...common,
@@ -108,22 +115,22 @@ type SendInput =
 async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
 
-  // Scope the contact + config lookups by account_id, not user_id.
-  // The engine uses the service-role client (bypassing RLS); without
-  // this filter, an authenticated user could fire their own
-  // automations against another tenant's contact UUID and send via
-  // their own WhatsApp config to that contact's phone. The 017
-  // migration moved both tables to account-scoped tenancy, so the
-  // check is the same defense-in-depth as before, just keyed on the
-  // new tenancy column.
+  // Scope the contact + connection lookups by project_id. The engine
+  // uses the service-role client (bypassing RLS); without this filter,
+  // an authenticated user could fire their own automations against
+  // another tenant's contact UUID and send via their own WhatsApp
+  // connection to that contact's phone. 042 moved the tenancy boundary
+  // from the account to the project, so the same defence-in-depth check
+  // now keys on project_id — an account_id filter would let a sibling
+  // project's contact through.
   const { data: contact, error: contactErr } = await db
     .from('contacts')
     .select('id, phone')
     .eq('id', input.contactId)
-    .eq('account_id', input.accountId)
+    .eq('project_id', input.projectId)
     .maybeSingle()
   if (contactErr || !contact?.phone) {
-    throw new Error('contact not found for this account')
+    throw new Error('contact not found in this project')
   }
 
   const sanitized = sanitizePhoneForMeta(contact.phone)
@@ -131,13 +138,27 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
+  // QR projects have no whatsapp_config row — the gateway holds the
+  // socket. Hand off there and skip the whole Graph API path.
+  const qrMessageId = await sendViaQrIfApplicable({
+    db,
+    projectId: input.projectId,
+    to: sanitized,
+    kind: 'text',
+    text: input.kind === 'text' ? input.text : null,
+  })
+  if (qrMessageId) {
+    await persistEngineMessage(db, input, qrMessageId)
+    return { whatsapp_message_id: qrMessageId }
+  }
+
   const { data: config, error: configErr } = await db
     .from('whatsapp_config')
     .select('*')
-    .eq('account_id', input.accountId)
+    .eq('project_id', input.projectId)
     .single()
   if (configErr || !config) {
-    throw new Error('WhatsApp not configured for this account')
+    throw new Error('WhatsApp not configured for this project')
   }
 
   const accessToken = decrypt(config.access_token)
@@ -188,15 +209,31 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
   }
 
-  // Persist the sent message so it appears in the inbox with a real
-  // Meta message id. sender_type='bot' distinguishes automation sends
-  // from manual agent sends.
+  await persistEngineMessage(db, input, waMessageId)
+
+  return { whatsapp_message_id: waMessageId }
+}
+
+/**
+ * Persist an engine-sent message and refresh the conversation preview.
+ *
+ * Shared by the Cloud API and QR paths so the inbox looks identical
+ * whichever transport carried it. `sender_type='bot'` distinguishes
+ * automation sends from manual agent sends.
+ */
+async function persistEngineMessage(
+  db: ReturnType<typeof supabaseAdmin>,
+  input: SendInput,
+  waMessageId: string,
+): Promise<void> {
   const content_type = input.kind === 'template' ? 'template' : 'text'
   const content_text = input.kind === 'text' ? input.text : null
   const template_name = input.kind === 'template' ? input.templateName : null
 
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,
+    // NOT NULL post-042, and the column Realtime filters on.
+    project_id: input.projectId,
     sender_type: 'bot',
     content_type,
     content_text,
@@ -205,9 +242,9 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     status: 'sent',
   })
   if (msgErr) {
-    // Meta already has the message; record the DB error but don't pretend
-    // the send failed. The engine wraps this in a log line.
-    throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`)
+    // WhatsApp already has the message; record the DB error but don't
+    // pretend the send failed. The engine wraps this in a log line.
+    throw new Error(`sent but DB insert failed: ${msgErr.message}`)
   }
 
   await db
@@ -219,6 +256,4 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       updated_at: new Date().toISOString(),
     })
     .eq('id', input.conversationId)
-
-  return { whatsapp_message_id: waMessageId }
 }

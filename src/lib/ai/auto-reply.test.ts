@@ -61,6 +61,7 @@ import { dispatchInboundToAiReply } from './auto-reply'
 
 const ARGS = {
   accountId: 'acct-1',
+  projectId: 'proj-1',
   conversationId: 'conv-1',
   contactId: 'contact-1',
   configOwnerUserId: 'user-1',

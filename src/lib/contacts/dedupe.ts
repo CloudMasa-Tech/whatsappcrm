@@ -27,26 +27,43 @@ export interface ExistingContact {
 }
 
 /**
- * Find an existing contact in `accountId` whose phone matches `phone`,
- * or null. Pre-filters in SQL by the last-8-digit suffix (so we don't
- * pull every contact), then applies the strict `phonesMatch` in JS on
- * the small candidate set — the exact approach the webhook has used.
+ * Find an existing contact matching `phone`, or null. Pre-filters in
+ * SQL by the last-8-digit suffix (so we don't pull every contact),
+ * then applies the strict `phonesMatch` in JS on the small candidate
+ * set — the exact approach the webhook has used.
+ *
+ * Scope: pass `projectId` and the search is confined to that project,
+ * which is what any post-042 caller wants. The same phone number in
+ * two projects of one organisation is deliberately two independent
+ * contacts — that is what project isolation means — so an
+ * account-wide search would hand project B the contact row belonging
+ * to project A, and every message after it would land in the wrong
+ * inbox.
+ *
+ * Omitting `projectId` keeps the legacy account-wide behaviour, which
+ * is still correct for callers that genuinely operate across an
+ * organisation (the contact form's duplicate warning, for instance).
  */
 export async function findExistingContact(
   db: SupabaseClient,
   accountId: string,
   phone: string,
+  projectId?: string,
 ): Promise<ExistingContact | null> {
   const normalized = normalizePhone(phone);
   if (!normalized) return null;
 
   const suffix = normalized.length >= 8 ? normalized.slice(-8) : normalized;
 
-  const { data, error } = await db
+  let query = db
     .from("contacts")
     .select("*")
     .eq("account_id", accountId)
     .like("phone", `%${suffix}`);
+
+  if (projectId) query = query.eq("project_id", projectId);
+
+  const { data, error } = await query;
 
   if (error || !data) return null;
 

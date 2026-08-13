@@ -44,7 +44,7 @@ export function WhatsAppConfig() {
   // context and key every read off it — so a teammate who just
   // joined an account sees the inviter's saved config without
   // having to re-enter anything.
-  const { user, accountId, loading: authLoading, profileLoading } = useAuth();
+  const { user, accountId, activeProjectId, loading: authLoading, profileLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -61,7 +61,7 @@ export function WhatsAppConfig() {
   // `user` object, profileLoading flips true/false) when the browser
   // tab regains focus. Without this, that churn calls fetchConfig()
   // again and overwrites whatever the user typed but hadn't saved yet.
-  const loadedAccountIdRef = useRef<string | null>(null);
+  const loadedProjectIdRef = useRef<string | null>(null);
 
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [wabaId, setWabaId] = useState('');
@@ -94,19 +94,19 @@ export function WhatsAppConfig() {
       ? `${window.location.origin}/api/whatsapp/webhook`
       : '';
 
-  const fetchConfig = useCallback(async (acctId: string) => {
+  const fetchConfig = useCallback(async (projId: string) => {
     setLoading(true);
     try {
       // Load form values from Supabase (shows what's in DB).
-      // Switched from `user_id` (which would only match the row's
-      // original author) to `account_id` so every member of the
-      // account sees the same saved configuration. UNIQUE(account_id)
-      // on the table guarantees the .maybeSingle() return type
-      // remains accurate.
+      // Keyed on project_id: post-042 the table is UNIQUE(project_id),
+      // not UNIQUE(account_id), so an organisation with two Cloud API
+      // projects would match several rows here and .maybeSingle()
+      // would throw. Every member of the project still sees the same
+      // saved configuration.
       const { data, error } = await supabase
         .from('whatsapp_config')
         .select('*')
-        .eq('account_id', acctId)
+        .eq('project_id', projId)
         .maybeSingle();
 
       if (error) {
@@ -166,21 +166,22 @@ export function WhatsAppConfig() {
   }, [supabase]);
 
   useEffect(() => {
-    // Need both the auth session (`!authLoading`) AND the profile
-    // (`!profileLoading`, which carries `accountId`). Without the
-    // second guard, the effect would fire with `accountId === null`
-    // for the first render window and bail without ever retrying
-    // once the profile arrives.
+    // Need the auth session (`!authLoading`), the profile
+    // (`!profileLoading`, which carries `accountId`) AND the resolved
+    // active project — the config row is keyed on the project now.
+    // Without all three guards the effect fires with a null id during
+    // the first render window and bails without ever retrying.
     if (authLoading || profileLoading) return;
-    if (!user || !accountId) {
-      loadedAccountIdRef.current = null;
+    if (!user || !accountId || !activeProjectId) {
+      loadedProjectIdRef.current = null;
       setLoading(false);
       return;
     }
-    if (loadedAccountIdRef.current === accountId) return;
-    loadedAccountIdRef.current = accountId;
-    fetchConfig(accountId);
-  }, [authLoading, profileLoading, user?.id, accountId, fetchConfig]);
+    // Re-fetch when the user switches project, not just on mount.
+    if (loadedProjectIdRef.current === activeProjectId) return;
+    loadedProjectIdRef.current = activeProjectId;
+    fetchConfig(activeProjectId);
+  }, [authLoading, profileLoading, user?.id, accountId, activeProjectId, fetchConfig]);
 
   async function handleSave() {
     if (!phoneNumberId.trim()) {
@@ -268,7 +269,7 @@ export function WhatsAppConfig() {
         setPin('');
       }
 
-      if (accountId) await fetchConfig(accountId);
+      if (activeProjectId) await fetchConfig(activeProjectId);
     } catch (err) {
       console.error('Save error:', err);
       toast.error('Failed to save configuration');
@@ -324,7 +325,7 @@ export function WhatsAppConfig() {
           { duration: 8000 },
         );
       }
-      if (accountId) await fetchConfig(accountId);
+      if (activeProjectId) await fetchConfig(activeProjectId);
     } catch (err) {
       console.error('verify-registration failed:', err);
       toast.error('Could not reach the verification endpoint.');

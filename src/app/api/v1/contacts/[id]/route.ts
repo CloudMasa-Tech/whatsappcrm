@@ -24,7 +24,7 @@ export async function GET(
   try {
     const ctx = await requireApiKey(request, 'contacts:read');
     const { id } = await params;
-    const contact = await getContactById(ctx.supabase, ctx.accountId, id);
+    const contact = await getContactById(ctx.supabase, ctx.accountId, ctx.projectId, id);
     if (!contact) return fail('not_found', 'Contact not found', 404);
     return ok(contact);
   } catch (err) {
@@ -49,7 +49,7 @@ export async function PATCH(
     }
 
     // Verify the contact is in this account before mutating anything.
-    const existing = await getContactById(ctx.supabase, ctx.accountId, id);
+    const existing = await getContactById(ctx.supabase, ctx.accountId, ctx.projectId, id);
     if (!existing) return fail('not_found', 'Contact not found', 404);
 
     // Build a partial update from the provided scalar fields. A field
@@ -73,7 +73,7 @@ export async function PATCH(
         .from('contacts')
         .update(updates)
         .eq('id', id)
-        .eq('account_id', ctx.accountId);
+        .eq('project_id', ctx.projectId);
       if (error) {
         console.error('[api/v1/contacts] update error:', error);
         return fail('internal', 'Failed to update contact', 500);
@@ -81,17 +81,18 @@ export async function PATCH(
     }
 
     if (Array.isArray(body.tags)) {
-      const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId);
+      const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId, ctx.projectId);
       await setContactTags(
         ctx.supabase,
         ctx.accountId,
+        ctx.projectId,
         auditUserId,
         id,
         body.tags.filter((t): t is string => typeof t === 'string')
       );
     }
 
-    const contact = await getContactById(ctx.supabase, ctx.accountId, id);
+    const contact = await getContactById(ctx.supabase, ctx.accountId, ctx.projectId, id);
     return ok(contact);
   } catch (err) {
     if (err instanceof ContactError) {

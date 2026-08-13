@@ -30,7 +30,12 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed
+# env files — these hold the service-role key, ENCRYPTION_KEY and the
+# Meta app secret. Never commit them; use .env.example as the template.
+.env
+.env.*
+!.env.example
+
 # vercel
 .vercel
 

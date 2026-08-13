@@ -63,7 +63,15 @@ function makeDb(script: Script): SupabaseClient {
         ? (script.contactCandidatesByCall[likeCalls] ?? [])
         : (script.contactCandidates ?? []);
       likeCalls++;
-      return Promise.resolve({ data, error: null });
+      // Chainable AND thenable: the contact lookup appends
+      // `.eq('project_id', …)` after `.like()` now that contacts are
+      // project-scoped, so `.like()` can no longer be terminal.
+      const pending: Record<string, unknown> = {
+        eq: () => pending,
+        then: (resolve: (v: unknown) => unknown) =>
+          resolve({ data, error: null }),
+      };
+      return pending;
     },
     maybeSingle: () => {
       if (table === 'whatsapp_config')
@@ -117,20 +125,20 @@ describe('resolveConversationByPhone', () => {
       },
     } as unknown as SupabaseClient;
     await expect(
-      resolveConversationByPhone(db, 'acct', 'not-a-phone')
+      resolveConversationByPhone(db, 'acct', 'proj', 'not-a-phone')
     ).rejects.toBeInstanceOf(SendMessageError);
   });
 
   it('fails with whatsapp_not_configured when no config owner exists', async () => {
     const db = makeDb({ config: null });
-    await resolveConversationByPhone(db, 'acct', '+14155550123').catch(
+    await resolveConversationByPhone(db, 'acct', 'proj', '+14155550123').catch(
       (e: SendMessageError) => {
         expect(e.code).toBe('whatsapp_not_configured');
         expect(e.status).toBe(400);
       }
     );
     await expect(
-      resolveConversationByPhone(db, 'acct', '+14155550123')
+      resolveConversationByPhone(db, 'acct', 'proj', '+14155550123')
     ).rejects.toBeInstanceOf(SendMessageError);
   });
 
@@ -140,9 +148,7 @@ describe('resolveConversationByPhone', () => {
       contactCandidates: [{ id: 'c1', phone: '14155550123' }],
       existingConversation: { id: 'cv1' },
     });
-    const res = await resolveConversationByPhone(
-      db,
-      'acct',
+    const res = await resolveConversationByPhone(db, 'acct', 'proj',
       '+1 (415) 555-0123'
     );
     expect(res).toEqual({
@@ -160,9 +166,7 @@ describe('resolveConversationByPhone', () => {
       existingConversation: null,
       insertedConversationId: 'cv2',
     });
-    const res = await resolveConversationByPhone(
-      db,
-      'acct',
+    const res = await resolveConversationByPhone(db, 'acct', 'proj',
       '+14155550199',
       'Jane'
     );
@@ -183,7 +187,7 @@ describe('resolveConversationByPhone', () => {
       insertContactError: { code: '23505' },
       existingConversation: { id: 'cv-raced' },
     });
-    const res = await resolveConversationByPhone(db, 'acct', '+14155550123');
+    const res = await resolveConversationByPhone(db, 'acct', 'proj', '+14155550123');
     expect(res.contactId).toBe('c-raced');
     expect(res.contactCreated).toBe(false);
     expect(res.conversationId).toBe('cv-raced');
@@ -200,7 +204,7 @@ describe('resolveConversationByPhone', () => {
       existingConversationByCall: [null, { id: 'cv-raced' }],
       insertConversationError: { code: '23505' },
     });
-    const res = await resolveConversationByPhone(db, 'acct', '+14155550123');
+    const res = await resolveConversationByPhone(db, 'acct', 'proj', '+14155550123');
     expect(res).toEqual({
       conversationId: 'cv-raced',
       contactId: 'c1',

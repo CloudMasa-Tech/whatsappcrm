@@ -44,6 +44,13 @@ import {
 } from '@/lib/whatsapp/phone-utils';
 import type { MessageTemplate } from '@/types';
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
+import { GatewayError, sendViaGateway } from '@/lib/channels/gateway';
+import { resolveProjectChannel } from '@/lib/channels/resolve';
+import {
+  supportsMessageKind,
+  unsupportedReason,
+  type ChannelType,
+} from '@/lib/channels/types';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
@@ -217,7 +224,11 @@ export async function sendMessageToConversation(
 
   const isMediaKind = (MEDIA_KINDS as readonly string[]).includes(messageType);
 
-  // Conversation + contact, account-scoped.
+  // Conversation + contact. Scoped by account_id, not project_id, and
+  // deliberately so: the conversation row is where the project comes
+  // FROM (read just below), so filtering on it here would be circular.
+  // The account filter is the isolation check at this point; the
+  // project it yields then scopes everything downstream.
   const { data: conversation, error: convError } = await db
     .from('conversations')
     .select('*, contact:contacts(*)')
@@ -247,17 +258,79 @@ export async function sendMessageToConversation(
     );
   }
 
-  // WhatsApp config, account-scoped.
+  // The project owning this conversation decides the transport. Taken
+  // from the conversation row rather than a caller argument: it is the
+  // authoritative value, and it means no call site can send a message
+  // into project A over project B's connection.
+  const projectId: string | null = conversation.project_id ?? null;
+  if (!projectId) {
+    throw new SendMessageError(
+      'project_missing',
+      'This conversation is not linked to a project. Re-run the database migrations (042_project_scoping.sql).',
+      500
+    );
+  }
+
+  const channel = await resolveProjectChannel(db, projectId);
+  const channelType: ChannelType = channel?.channelType ?? 'cloud_api';
+
+  // Refuse transport-impossible sends up front with an explanation,
+  // instead of letting them fail deep inside a provider call.
+  if (!supportsMessageKind(channelType, messageType)) {
+    throw new SendMessageError(
+      'unsupported_on_channel',
+      unsupportedReason(channelType, messageType),
+      400
+    );
+  }
+
+  // ---- QR channel ------------------------------------------------
+  // Hands off to the gateway, then falls through to the shared
+  // persistence below so a QR message lands in the inbox looking
+  // exactly like a Cloud API one.
+  if (channelType === 'qr') {
+    const { externalId } = await sendViaQrChannel({
+      projectId,
+      to: sanitizedPhone,
+      messageType,
+      contentText,
+      mediaUrl,
+      filename,
+      replyToMessageId,
+      conversationId,
+      db,
+    });
+    return persistSentMessage({
+      db,
+      accountId,
+      projectId,
+      conversationId,
+      contactId: contact.id,
+      messageType,
+      contentText,
+      mediaUrl,
+      templateName,
+      interactivePayload,
+      replyToMessageId,
+      waMessageId: externalId,
+    });
+  }
+
+  // ---- Cloud API channel ------------------------------------------
+  // WhatsApp config is per PROJECT post-042 (it used to be one row per
+  // account). Scoping by account_id alone would hit multiple rows the
+  // moment an organisation has two Cloud API projects, and `.single()`
+  // would throw PGRST116.
   const { data: config, error: configError } = await db
     .from('whatsapp_config')
     .select('*')
-    .eq('account_id', accountId)
+    .eq('project_id', projectId)
     .single();
 
   if (configError || !config) {
     throw new SendMessageError(
       'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
+      'WhatsApp not configured for this project. Connect a number in Settings first.',
       400
     );
   }
@@ -315,7 +388,9 @@ export async function sendMessageToConversation(
     const { data } = await db
       .from('message_templates')
       .select('*')
-      .eq('account_id', accountId)
+      // Project-scoped post-042: two projects in one organisation may
+      // each hold a template of the same name against their own number.
+      .eq('project_id', projectId)
       .eq('name', templateName)
       .eq('language', templateLanguage || 'en_US')
       .maybeSingle();
@@ -452,8 +527,63 @@ export async function sendMessageToConversation(
       .eq('id', contact.id);
   }
 
-  // Persist the sent message. Field names MUST match the messages
-  // schema (see 001_initial_schema.sql).
+  return persistSentMessage({
+    db,
+    accountId,
+    projectId,
+    conversationId,
+    contactId: contact.id,
+    messageType,
+    contentText,
+    mediaUrl,
+    templateName,
+    interactivePayload,
+    replyToMessageId,
+    waMessageId,
+  });
+}
+
+// ------------------------------------------------------------
+// Shared post-send persistence
+//
+// Extracted so the Cloud API and QR paths cannot drift: whichever
+// transport carried the message, the inbox row, the conversation
+// preview and the flow-pause behave identically. The only difference
+// between the two is what `waMessageId` means — a Meta wamid or a
+// Baileys key id — and nothing downstream cares which.
+// ------------------------------------------------------------
+interface PersistSentMessageArgs {
+  db: SupabaseClient;
+  accountId: string;
+  projectId: string;
+  conversationId: string;
+  contactId: string;
+  messageType: string;
+  contentText?: string | null;
+  mediaUrl?: string | null;
+  templateName?: string | null;
+  interactivePayload?: InteractiveMessagePayload | null;
+  replyToMessageId?: string | null;
+  waMessageId: string;
+}
+
+async function persistSentMessage(
+  args: PersistSentMessageArgs
+): Promise<SendMessageResult> {
+  const {
+    db,
+    projectId,
+    conversationId,
+    contactId,
+    messageType,
+    contentText,
+    mediaUrl,
+    templateName,
+    interactivePayload,
+    replyToMessageId,
+    waMessageId,
+  } = args;
+
   // Interactive messages persist the body as content_text (so the
   // conversation-list preview reads sensibly) plus the full structured
   // payload so the thread can re-render the buttons / rows.
@@ -464,6 +594,9 @@ export async function sendMessageToConversation(
     .from('messages')
     .insert({
       conversation_id: conversationId,
+      // NOT NULL post-042, and the column Realtime filters on — a
+      // message without it would be invisible to the live inbox.
+      project_id: projectId,
       sender_type: 'agent',
       content_type: messageType,
       content_text: interactiveBody ?? contentText ?? null,
@@ -482,7 +615,7 @@ export async function sendMessageToConversation(
     console.error('[send-message] error inserting sent message:', msgError);
     throw new SendMessageError(
       'db_error',
-      `Message sent to Meta but failed to save to DB: ${msgError.message}`,
+      `Message was sent but failed to save to DB: ${msgError.message}`,
       500
     );
   }
@@ -503,6 +636,12 @@ export async function sendMessageToConversation(
 
   // Pause any active Flow run for this contact — the agent stepping in
   // is the strongest "yield, human is here" signal. Best-effort.
+  //
+  // Scoped by project_id, not account_id: the admin client bypasses
+  // RLS, so an account-wide filter would pause a run belonging to a
+  // sibling project that happens to share a contact id. (It cannot
+  // today — contacts are project-scoped — but the filter must not
+  // depend on that holding.)
   try {
     const { error: pauseErr } = await supabaseAdmin()
       .from('flow_runs')
@@ -511,8 +650,8 @@ export async function sendMessageToConversation(
         ended_at: new Date().toISOString(),
         end_reason: 'agent_replied',
       })
-      .eq('account_id', accountId)
-      .eq('contact_id', contact.id)
+      .eq('project_id', projectId)
+      .eq('contact_id', contactId)
       .eq('status', 'active');
     if (pauseErr) {
       console.error('[flows] pause-on-agent-send failed:', pauseErr.message);
@@ -525,4 +664,84 @@ export async function sendMessageToConversation(
   }
 
   return { messageId: messageRecord.id, whatsappMessageId: waMessageId };
+}
+
+// ------------------------------------------------------------
+// QR transport
+//
+// Everything Meta-specific (templates, interactive payloads, the
+// phone-variant retry, token decryption) is absent here by design: a
+// QR session sends to the number as typed, and the capability check
+// above has already rejected the kinds this channel cannot express.
+// ------------------------------------------------------------
+interface QrSendArgs {
+  db: SupabaseClient;
+  projectId: string;
+  conversationId: string;
+  to: string;
+  messageType: string;
+  contentText?: string | null;
+  mediaUrl?: string | null;
+  filename?: string | null;
+  replyToMessageId?: string | null;
+}
+
+async function sendViaQrChannel(
+  args: QrSendArgs
+): Promise<{ externalId: string }> {
+  const {
+    db,
+    projectId,
+    conversationId,
+    to,
+    messageType,
+    contentText,
+    mediaUrl,
+    filename,
+    replyToMessageId,
+  } = args;
+
+  // Resolve the quoted message to its transport id, with the same
+  // same-conversation guard the Cloud API path uses — otherwise a
+  // caller could quote messages they cannot see by guessing UUIDs.
+  let quotedExternalId: string | null = null;
+  if (replyToMessageId) {
+    const { data: parent } = await db
+      .from('messages')
+      .select('message_id')
+      .eq('id', replyToMessageId)
+      .eq('conversation_id', conversationId)
+      .maybeSingle();
+    quotedExternalId = parent?.message_id ?? null;
+  }
+
+  try {
+    const result = await sendViaGateway({
+      projectId,
+      to,
+      kind: messageType as 'text' | 'image' | 'video' | 'document' | 'audio',
+      text: contentText ?? null,
+      mediaUrl: mediaUrl ?? null,
+      filename: filename ?? null,
+      quotedExternalId,
+    });
+    if (!result?.externalId) {
+      throw new SendMessageError(
+        'gateway_error',
+        'The WhatsApp gateway accepted the message but returned no id.',
+        502
+      );
+    }
+    return result;
+  } catch (err) {
+    if (err instanceof SendMessageError) throw err;
+    if (err instanceof GatewayError) {
+      // Pass the gateway's own code through: the UI distinguishes
+      // "this project is not paired yet" from "the gateway is down",
+      // and they need different fixes.
+      throw new SendMessageError(err.code, err.message, err.status);
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    throw new SendMessageError('gateway_error', message, 502);
+  }
 }

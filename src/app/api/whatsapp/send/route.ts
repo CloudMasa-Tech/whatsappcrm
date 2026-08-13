@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getCurrentProject } from '@/lib/auth/project'
 import { createClient } from '@/lib/supabase/server'
 import {
   checkRateLimit,
@@ -47,12 +48,11 @@ export async function POST(request: Request) {
     // (conversation, whatsapp_config, message_templates) is account-
     // scoped post-multi-user, so the previous `user_id` filters
     // returned nothing for teammates who didn't author the row.
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('account_id')
-      .eq('user_id', user.id)
-      .maybeSingle()
-    const accountId = profile?.account_id as string | undefined
+    // Resolve the caller's account AND active project. Post-042 the
+    // project is the tenancy key on every domain row, and this route
+    // writes through the service-role client, so RLS will not catch a
+    // missing or wrong scope.
+    const { accountId, projectId } = await getCurrentProject();
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
@@ -118,7 +118,7 @@ export async function POST(request: Request) {
         .from('conversations')
         .select('id')
         .eq('id', conversationIdInput)
-        .eq('account_id', accountId)
+        .eq('project_id', projectId)
         .single()
 
       if (convError || !data) {
@@ -135,7 +135,7 @@ export async function POST(request: Request) {
         .from('contacts')
         .select('id')
         .eq('id', contact_id)
-        .eq('account_id', accountId)
+        .eq('project_id', projectId)
         .maybeSingle()
 
       if (contactErr || !contactRow) {
@@ -148,6 +148,7 @@ export async function POST(request: Request) {
       const resolved = await findOrCreateConversation(
         supabase,
         accountId,
+        projectId,
         user.id,
         contact_id
       )
@@ -212,22 +213,24 @@ export async function POST(request: Request) {
 type SendSupabase = Awaited<ReturnType<typeof createClient>>
 
 /**
- * Return the contact's conversation id in this account, creating one if
- * it doesn't exist yet. Mirrors the webhook's find-or-create so an
- * inbound-then-outbound (or outbound-first) sequence converges on a single
- * thread per contact. Runs under the caller's RLS — the conversations_insert
- * policy requires account agent membership, which the caller already is.
+ * Return the contact's conversation id in this project, creating one
+ * if it doesn't exist yet. Mirrors the webhook's find-or-create so an
+ * inbound-then-outbound (or outbound-first) sequence converges on a
+ * single thread per contact. Runs under the caller's RLS — the
+ * conversations_insert policy requires agent membership of the
+ * project, which the caller already has.
  */
 async function findOrCreateConversation(
   supabase: SendSupabase,
   accountId: string,
+  projectId: string,
   userId: string,
   contactId: string,
 ): Promise<string | null> {
   const { data: existing } = await supabase
     .from('conversations')
     .select('id')
-    .eq('account_id', accountId)
+    .eq('project_id', projectId)
     .eq('contact_id', contactId)
     .maybeSingle()
 
@@ -237,6 +240,7 @@ async function findOrCreateConversation(
     .from('conversations')
     .insert({
       account_id: accountId,
+      project_id: projectId,
       user_id: userId,
       contact_id: contactId,
     })

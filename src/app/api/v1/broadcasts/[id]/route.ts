@@ -25,7 +25,7 @@ export async function GET(
         'id, name, template_name, template_language, status, total_recipients, sent_count, delivered_count, read_count, replied_count, failed_count, created_at, updated_at'
       )
       .eq('id', id)
-      .eq('account_id', ctx.accountId)
+      .eq('project_id', ctx.projectId)
       .maybeSingle();
 
     if (error) {

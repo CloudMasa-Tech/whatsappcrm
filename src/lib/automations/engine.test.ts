@@ -108,6 +108,7 @@ import { runAutomationsForTrigger, triggerMatches } from "./engine";
 import type { Automation } from "@/types";
 
 const ACCOUNT = "acct-1";
+const PROJECT = "proj-1";
 
 beforeEach(() => {
   h.state.owned = null;
@@ -131,6 +132,7 @@ describe("runAutomationsForTrigger — tenant isolation", () => {
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
+      projectId: PROJECT,
       triggerType: "new_message_received",
       contactId: "victim-contact-uuid",
       context: { message_text: "manual trigger" },
@@ -148,6 +150,7 @@ describe("runAutomationsForTrigger — tenant isolation", () => {
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
+      projectId: PROJECT,
       triggerType: "new_message_received",
       contactId: "c1",
       context: {},
@@ -156,13 +159,14 @@ describe("runAutomationsForTrigger — tenant isolation", () => {
     expect(h.state.fromCalls).toContain("automations");
   });
 
-  it("scopes the update_contact_field write to the automation's account", async () => {
+  it("scopes the update_contact_field write to the automation's project", async () => {
     h.state.owned = { id: "c1" };
     h.state.automations = [automationWithUpdateStep()];
     h.state.steps = [updateStep()];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
+      projectId: PROJECT,
       triggerType: "new_message_received",
       contactId: "c1",
       context: {},
@@ -171,7 +175,7 @@ describe("runAutomationsForTrigger — tenant isolation", () => {
     expect(h.state.updateCalls).toHaveLength(1);
     const filters = h.state.updateCalls[0].filters;
     expect(filters).toContainEqual(["eq", "id", "c1"]);
-    expect(filters).toContainEqual(["eq", "account_id", ACCOUNT]);
+    expect(filters).toContainEqual(["eq", "project_id", PROJECT]);
   });
 });
 
@@ -183,6 +187,7 @@ describe("automation_logs — status is seeded pessimistically (issue #409)", ()
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
+      projectId: PROJECT,
       triggerType: "new_message_received",
       contactId: "c1",
       context: {},
@@ -204,6 +209,7 @@ describe("automation_logs — status is seeded pessimistically (issue #409)", ()
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
+      projectId: PROJECT,
       triggerType: "new_message_received",
       contactId: "c1",
       context: {},
@@ -225,6 +231,7 @@ describe("update_contact_field — custom fields", () => {
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
+      projectId: PROJECT,
       triggerType: "new_message_received",
       contactId: "c1",
       context: {},
@@ -248,6 +255,7 @@ describe("update_contact_field — custom fields", () => {
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
+      projectId: PROJECT,
       triggerType: "new_message_received",
       contactId: "c1",
       context: { vars: { source: "WhatsApp Ad" } },
@@ -267,6 +275,7 @@ describe("update_contact_field — custom fields", () => {
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
+      projectId: PROJECT,
       triggerType: "new_message_received",
       contactId: "c1",
       context: {},
@@ -289,6 +298,7 @@ describe("send_webhook — SSRF guard (GHSA-8jqh-598v-rfxc)", () => {
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
+      projectId: PROJECT,
       triggerType: "new_message_received",
       contactId: "c1",
       context: {},
@@ -319,6 +329,7 @@ function automationWithUpdateStep() {
   return {
     id: "a1",
     account_id: ACCOUNT,
+    project_id: PROJECT,
     user_id: "u1",
     trigger_type: "new_message_received",
     trigger_config: {},
@@ -353,6 +364,7 @@ describe("triggerMatches — interactive_reply", () => {
     return {
       id: "a1",
       account_id: ACCOUNT,
+      project_id: PROJECT,
       user_id: "u1",
       name: "menu step",
       trigger_type: "interactive_reply",
@@ -393,6 +405,7 @@ describe("triggerMatches — tag_added", () => {
     return {
       id: "a1",
       account_id: ACCOUNT,
+      project_id: PROJECT,
       user_id: "u1",
       name: "tag follow-up",
       trigger_type: "tag_added",
@@ -422,6 +435,7 @@ describe("tag_added — conversation policy", () => {
     h.state.automations = [{
       id: "a1",
       account_id: ACCOUNT,
+      project_id: PROJECT,
       user_id: "u1",
       name: "tag outreach",
       trigger_type: "tag_added",
@@ -439,6 +453,7 @@ describe("tag_added — conversation policy", () => {
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
+      projectId: PROJECT,
       triggerType: "tag_added",
       contactId: "c1",
       context: { tag_id: "tag-a" },

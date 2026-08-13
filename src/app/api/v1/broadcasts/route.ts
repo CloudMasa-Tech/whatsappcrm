@@ -59,9 +59,9 @@ export async function POST(request: Request) {
       typeof body.template_name === 'string' ? body.template_name : '';
     const recipients = Array.isArray(body.recipients) ? body.recipients : [];
 
-    const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId);
+    const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId, ctx.projectId);
 
-    const plan = await createBroadcast(ctx.supabase, ctx.accountId, auditUserId, {
+    const plan = await createBroadcast(ctx.supabase, ctx.accountId, ctx.projectId, auditUserId, {
       name: typeof body.name === 'string' ? body.name : null,
       templateName,
       templateLanguage:

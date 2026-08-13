@@ -1,5 +1,7 @@
+import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { ACTIVE_PROJECT_COOKIE } from '@/lib/auth/project'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import {
   registerPhoneNumber,
@@ -9,26 +11,69 @@ import {
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 
 /**
- * Resolve the caller's account_id from their profile. Inlined here
- * (rather than going through `@/lib/auth/account.getCurrentAccount`)
- * because the GET handler wants to return shaped 200s for every
- * non-auth failure mode, not throw — keeping the helper minimal lets
- * the existing response branches stay as-is.
+ * Resolve the caller's account AND active project.
  *
- * Returns null if the user has no profile or no account; callers
- * should treat that the same as "not connected".
+ * Post-042 `whatsapp_config` is UNIQUE(project_id), not
+ * UNIQUE(account_id): one organisation can hold several Cloud API
+ * numbers, one per project. Every query below therefore keys on
+ * project_id — an account_id filter would match several rows the
+ * moment a second project exists, and the `.single()` calls would
+ * throw PGRST116.
+ *
+ * Inlined rather than going through `@/lib/auth/project` because the
+ * GET handler returns shaped 200s for every non-auth failure mode
+ * instead of throwing, and that keeps the existing response branches
+ * intact.
+ *
+ * Returns null when the user has no profile, no account, or no
+ * accessible project; callers treat that as "not connected".
  */
-async function resolveAccountId(
+async function resolveScope(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
-): Promise<string | null> {
-  const { data, error } = await supabase
+): Promise<{ accountId: string; projectId: string; channelType: string } | null> {
+  const { data: profile, error } = await supabase
     .from('profiles')
     .select('account_id')
     .eq('user_id', userId)
     .maybeSingle()
-  if (error || !data?.account_id) return null
-  return data.account_id as string
+  if (error || !profile?.account_id) return null
+
+  const cookieStore = await cookies()
+  const requested = cookieStore.get(ACTIVE_PROJECT_COOKIE)?.value
+
+  // RLS (projects_select) is the authorisation here: a cookie naming
+  // another tenant's project simply returns no row, and we fall back
+  // to the caller's first accessible project rather than erroring.
+  if (requested) {
+    const { data } = await supabase
+      .from('projects')
+      .select('id, channel_type')
+      .eq('id', requested)
+      .maybeSingle()
+    if (data) {
+      return {
+        accountId: profile.account_id as string,
+        projectId: data.id as string,
+        channelType: data.channel_type as string,
+      }
+    }
+  }
+
+  const { data: fallback } = await supabase
+    .from('projects')
+    .select('id, channel_type')
+    .is('archived_at', null)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  if (!fallback) return null
+
+  return {
+    accountId: profile.account_id as string,
+    projectId: fallback.id as string,
+    channelType: fallback.channel_type as string,
+  }
 }
 
 // Lazy-initialised service-role client. We need it to detect a
@@ -73,13 +118,28 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const accountId = await resolveAccountId(supabase, user.id)
-    if (!accountId) {
+    const scope = await resolveScope(supabase, user.id)
+    if (!scope) {
       return NextResponse.json(
         {
           connected: false,
           reason: 'no_account',
-          message: 'Your profile is not linked to an account.',
+          message: 'Your profile is not linked to an account with a project.',
+        },
+        { status: 200 },
+      )
+    }
+
+    if (scope.channelType !== 'cloud_api') {
+      // A QR project has no Meta credentials to check. Say so plainly
+      // rather than reporting "not connected", which would send the
+      // user hunting for a token they are never meant to enter.
+      return NextResponse.json(
+        {
+          connected: false,
+          reason: 'wrong_channel',
+          message:
+            'The active project connects WhatsApp by QR code. Pair it under Settings → Projects instead.',
         },
         { status: 200 },
       )
@@ -88,7 +148,7 @@ export async function GET() {
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
       .select('phone_number_id, access_token, status')
-      .eq('account_id', accountId)
+      .eq('project_id', scope.projectId)
       .maybeSingle()
 
     if (configError) {
@@ -176,13 +236,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const accountId = await resolveAccountId(supabase, user.id)
-    if (!accountId) {
+    const scope = await resolveScope(supabase, user.id)
+    if (!scope) {
       return NextResponse.json(
-        { error: 'Your profile is not linked to an account.' },
+        { error: 'Your profile is not linked to an account with a project.' },
         { status: 403 },
       )
     }
+    if (scope.channelType !== 'cloud_api') {
+      return NextResponse.json(
+        {
+          error:
+            'The active project connects WhatsApp by QR code. Switch to a Cloud API project, or create one, before saving Meta credentials.',
+        },
+        { status: 409 },
+      )
+    }
+    const accountId = scope.accountId
+    const projectId = scope.projectId
 
     const body = await request.json()
     const { phone_number_id, waba_id, access_token, verify_token, pin } = body
@@ -212,9 +283,12 @@ export async function POST(request: Request) {
     // all share one config; the conflict is between accounts.
     const { data: claimed, error: claimedError } = await supabaseAdmin()
       .from('whatsapp_config')
-      .select('account_id')
+      .select('project_id')
       .eq('phone_number_id', phone_number_id)
-      .neq('account_id', accountId)
+      // Scoped by project now that a number is bound per project: an
+      // organisation may legitimately connect different numbers to
+      // different projects, but no two PROJECTS anywhere may share one.
+      .neq('project_id', projectId)
       .maybeSingle()
 
     if (claimedError) {
@@ -229,7 +303,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            'This WhatsApp phone number is already linked to another account on this instance. Each phone number can only be connected to one wacrm user.',
+            'This WhatsApp phone number is already linked to another project on this instance. Each phone number can only be connected to one project.',
         },
         { status: 409 }
       )
@@ -275,7 +349,7 @@ export async function POST(request: Request) {
     const { data: existing } = await supabase
       .from('whatsapp_config')
       .select('id, registered_at, phone_number_id')
-      .eq('account_id', accountId)
+      .eq('project_id', projectId)
       .maybeSingle()
 
     const sameNumber =
@@ -370,7 +444,7 @@ export async function POST(request: Request) {
       const { error: updateError } = await supabase
         .from('whatsapp_config')
         .update(baseRow)
-        .eq('account_id', accountId)
+        .eq('project_id', projectId)
 
       if (updateError) {
         console.error('Error updating whatsapp_config:', updateError)
@@ -388,6 +462,7 @@ export async function POST(request: Request) {
         .from('whatsapp_config')
         .insert({
           account_id: accountId,
+          project_id: projectId,
           user_id: user.id,
           ...baseRow,
         })
@@ -451,10 +526,10 @@ export async function DELETE() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const accountId = await resolveAccountId(supabase, user.id)
-    if (!accountId) {
+    const scope = await resolveScope(supabase, user.id)
+    if (!scope) {
       return NextResponse.json(
-        { error: 'Your profile is not linked to an account.' },
+        { error: 'Your profile is not linked to an account with a project.' },
         { status: 403 },
       )
     }
@@ -462,7 +537,7 @@ export async function DELETE() {
     const { error: deleteError } = await supabase
       .from('whatsapp_config')
       .delete()
-      .eq('account_id', accountId)
+      .eq('project_id', scope.projectId)
 
     if (deleteError) {
       console.error('Error deleting whatsapp_config:', deleteError)

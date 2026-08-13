@@ -31,13 +31,14 @@ const CONFIG_COLUMNS =
 export async function loadAiConfig(
   db: SupabaseClient,
   accountId: string,
+  projectId: string,
   opts: { requireActive?: boolean } = {},
 ): Promise<AiConfig | null> {
   const { requireActive = true } = opts
   const { data, error } = await db
     .from('ai_configs')
     .select(CONFIG_COLUMNS)
-    .eq('account_id', accountId)
+    .eq('project_id', projectId)
     .maybeSingle()
 
   if (error) throw error
@@ -96,11 +97,12 @@ export async function loadAiConfig(
 export async function loadEmbeddingsKey(
   db: SupabaseClient,
   accountId: string,
+  projectId: string,
 ): Promise<{ key: string | null; corrupt: boolean }> {
   const { data, error } = await db
     .from('ai_configs')
     .select('embeddings_api_key')
-    .eq('account_id', accountId)
+    .eq('project_id', projectId)
     .maybeSingle()
   if (error || !data?.embeddings_api_key) return { key: null, corrupt: false }
   try {

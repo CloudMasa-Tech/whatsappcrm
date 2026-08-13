@@ -1,16 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  requireRole: vi.fn(),
+  requireProjectRole: vi.fn(),
   add: vi.fn(),
   remove: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/account', () => ({
-  requireRole: mocks.requireRole,
   toErrorResponse: vi.fn(() =>
     Response.json({ error: 'auth failed' }, { status: 403 })
   ),
+}));
+
+vi.mock('@/lib/auth/project', () => ({
+  requireProjectRole: mocks.requireProjectRole,
 }));
 
 vi.mock('@/lib/contacts/tag-events', () => ({
@@ -33,6 +36,7 @@ import { DELETE, POST } from './route';
 const context = {
   supabase: { name: 'scoped-client' },
   accountId: 'account-1',
+  projectId: 'proj-1',
   userId: 'user-1',
   role: 'agent',
   account: { id: 'account-1', name: 'Acme' },
@@ -49,10 +53,10 @@ function request(method: 'POST' | 'DELETE', body: unknown) {
 const params = { params: Promise.resolve({ id: 'contact-1' }) };
 
 beforeEach(() => {
-  mocks.requireRole.mockReset();
+  mocks.requireProjectRole.mockReset();
   mocks.add.mockReset();
   mocks.remove.mockReset();
-  mocks.requireRole.mockResolvedValue(context);
+  mocks.requireProjectRole.mockResolvedValue(context);
 });
 
 describe('/api/contacts/[id]/tags', () => {
@@ -62,10 +66,11 @@ describe('/api/contacts/[id]/tags', () => {
     const response = await POST(request('POST', { tag_id: 'tag-1' }), params);
 
     expect(response.status).toBe(200);
-    expect(mocks.requireRole).toHaveBeenCalledWith('agent');
+    expect(mocks.requireProjectRole).toHaveBeenCalledWith('agent');
     expect(mocks.add).toHaveBeenCalledWith({
       db: context.supabase,
       accountId: 'account-1',
+      projectId: 'proj-1',
       contactId: 'contact-1',
       tagId: 'tag-1',
     });
@@ -77,7 +82,7 @@ describe('/api/contacts/[id]/tags', () => {
     expect(mocks.add).not.toHaveBeenCalled();
   });
 
-  it('removes a tag through the same account-scoped route', async () => {
+  it('removes a tag through the same project-scoped route', async () => {
     mocks.remove.mockResolvedValue(undefined);
 
     const response = await DELETE(
@@ -88,6 +93,7 @@ describe('/api/contacts/[id]/tags', () => {
     expect(response.status).toBe(200);
     expect(mocks.remove).toHaveBeenCalledWith(context.supabase, {
       accountId: 'account-1',
+      projectId: 'proj-1',
       contactId: 'contact-1',
       tagId: 'tag-1',
     });

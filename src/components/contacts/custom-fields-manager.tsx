@@ -57,7 +57,7 @@ export function CustomFieldsManager({
 export function CustomFieldsPanel() {
   const t = useTranslations('Contacts.customFields');
   const supabase = createClient();
-  const { user, accountId } = useAuth();
+  const { user, accountId, activeProjectId } = useAuth();
 
   const [fields, setFields] = useState<CustomField[]>([]);
   const [loading, setLoading] = useState(true);
@@ -112,6 +112,7 @@ export function CustomFieldsPanel() {
       field_type: 'text',
       user_id: user.id,
       account_id: accountId,
+      project_id: activeProjectId,
     });
     setCreating(false);
 

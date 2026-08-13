@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { toErrorResponse } from '@/lib/auth/account'
+import { requireProjectRole } from '@/lib/auth/project'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { loadAiConfig } from '@/lib/ai/config'
 import { retrieveKnowledge } from '@/lib/ai/knowledge'
@@ -23,7 +24,7 @@ const MAX_TURNS = 20
  */
 export async function POST(request: Request) {
   try {
-    const { supabase, accountId, userId } = await requireRole('agent')
+    const { supabase, accountId, projectId, userId } = await requireProjectRole('agent')
 
     const limit = checkRateLimit(`ai-playground:${userId}`, RATE_LIMITS.aiDraft)
     if (!limit.success) return rateLimitResponse(limit)
@@ -53,7 +54,7 @@ export async function POST(request: Request) {
       )
     }
 
-    const config = await loadAiConfig(supabase, accountId, {
+    const config = await loadAiConfig(supabase, accountId, projectId, {
       requireActive: false,
     }).catch((err) => {
       console.error('[ai/playground] loadAiConfig error:', err)
@@ -75,6 +76,7 @@ export async function POST(request: Request) {
     const knowledge = await retrieveKnowledge(
       supabase,
       accountId,
+      projectId,
       config,
       latestUserMessage(messages),
     )

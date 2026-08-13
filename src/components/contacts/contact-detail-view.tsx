@@ -57,7 +57,7 @@ export function ContactDetailView({
 }: ContactDetailViewProps) {
   const t = useTranslations('Contacts.detailView');
   const supabase = createClient();
-  const { accountId, defaultCurrency } = useAuth();
+  const { accountId, activeProjectId, defaultCurrency } = useAuth();
 
   const [contact, setContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(false);
@@ -263,6 +263,7 @@ export function ContactDetailView({
     const { error } = await supabase.from('contact_notes').insert({
       contact_id: contactId,
       account_id: accountId,
+      project_id: activeProjectId,
       user_id: user.id,
       note_text: newNote.trim(),
     });

@@ -48,7 +48,7 @@ export function ContactForm({
 }: ContactFormProps) {
   const t = useTranslations('Contacts.form');
   const supabase = createClient();
-  const { accountId } = useAuth();
+  const { accountId, activeProjectId } = useAuth();
   const isEdit = !!contact;
 
   const [name, setName] = useState('');
@@ -167,6 +167,7 @@ export function ContactForm({
           .insert({
             user_id: user.id,
             account_id: accountId,
+            project_id: activeProjectId,
             name: name.trim() || null,
             phone: phone.trim(),
             email: email.trim() || null,

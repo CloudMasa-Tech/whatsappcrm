@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { toErrorResponse } from '@/lib/auth/account'
+import { requireProjectRole } from '@/lib/auth/project'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { loadAiConfig } from '@/lib/ai/config'
 import { buildConversationContext } from '@/lib/ai/context'
@@ -22,7 +23,7 @@ import { AiError } from '@/lib/ai/types'
  */
 export async function POST(request: Request) {
   try {
-    const { supabase, accountId, userId } = await requireRole('agent')
+    const { supabase, accountId, projectId, userId } = await requireProjectRole('agent')
 
     const userLimit = checkRateLimit(`ai-draft:${userId}`, RATE_LIMITS.aiDraft)
     if (!userLimit.success) return rateLimitResponse(userLimit)
@@ -58,7 +59,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Conversation not found' }, { status: 404 })
     }
 
-    const config = await loadAiConfig(supabase, accountId).catch((err) => {
+    const config = await loadAiConfig(supabase, accountId, projectId).catch((err) => {
       // Decrypt failure — surface distinctly from "not configured".
       console.error('[ai/draft] loadAiConfig error:', err)
       throw new AiError('Stored API key could not be decrypted.', {
@@ -94,6 +95,7 @@ export async function POST(request: Request) {
     const knowledge = await retrieveKnowledge(
       supabase,
       accountId,
+      projectId,
       config,
       latestUserMessage(messages),
     )
@@ -116,6 +118,7 @@ export async function POST(request: Request) {
     try {
       void logAiUsage(supabaseAdmin(), {
         accountId,
+        projectId,
         conversationId,
         mode: 'draft',
         provider: config.provider,

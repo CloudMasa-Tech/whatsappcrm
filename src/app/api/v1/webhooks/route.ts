@@ -25,7 +25,7 @@ export async function GET(request: Request) {
     const { data, error } = await ctx.supabase
       .from('webhook_endpoints')
       .select(WEBHOOK_PUBLIC_COLUMNS)
-      .eq('account_id', ctx.accountId)
+      .eq('project_id', ctx.projectId)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -78,6 +78,7 @@ export async function POST(request: Request) {
       .from('webhook_endpoints')
       .insert({
         account_id: ctx.accountId,
+        project_id: ctx.projectId,
         created_by: ctx.createdBy,
         url,
         secret: encrypt(secret),

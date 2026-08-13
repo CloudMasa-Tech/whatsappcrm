@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { getCurrentAccount, requireRole, toErrorResponse } from '@/lib/auth/account'
+import { toErrorResponse } from '@/lib/auth/account'
+import { getCurrentProject, requireProjectRole } from '@/lib/auth/project'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
 
@@ -10,7 +11,7 @@ import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
 
 export async function GET() {
   try {
-    const { supabase } = await getCurrentAccount()
+    const { supabase } = await getCurrentProject()
     // RLS (quick_replies_select) scopes to the caller's account.
     const { data, error } = await supabase
       .from('quick_replies')
@@ -26,7 +27,7 @@ export async function GET() {
 export async function POST(request: Request) {
   let ctx
   try {
-    ctx = await requireRole('agent')
+    ctx = await requireProjectRole('agent')
   } catch (err) {
     return toErrorResponse(err)
   }
@@ -64,6 +65,7 @@ export async function POST(request: Request) {
     .from('quick_replies')
     .insert({
       account_id: ctx.accountId,
+      project_id: ctx.projectId,
       user_id: ctx.userId,
       title,
       kind,

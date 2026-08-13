@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ModeToggle } from "@/components/layout/mode-toggle";
+import { ProjectSwitcher } from "@/components/projects/project-switcher";
 
 const pageTitles: Record<string, string> = {
   "/dashboard": "dashboard",
@@ -71,6 +72,11 @@ export function Header({ onOpenSidebar }: HeaderProps) {
         <h1 className="truncate text-base font-semibold text-foreground sm:text-lg">
           {t(titleKey as string)}
         </h1>
+        {/* Renders nothing when the account has a single project, so
+            single-project installs see no change. */}
+        <div className="hidden sm:block">
+          <ProjectSwitcher />
+        </div>
       </div>
 
       <div className="flex items-center gap-1 sm:gap-2">

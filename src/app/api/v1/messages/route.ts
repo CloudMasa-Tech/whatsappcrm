@@ -101,6 +101,7 @@ export async function POST(request: Request) {
     const resolved = await resolveConversationByPhone(
       ctx.supabase,
       ctx.accountId,
+      ctx.projectId,
       to,
       typeof body.name === 'string' ? body.name : null
     );

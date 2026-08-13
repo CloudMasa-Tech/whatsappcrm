@@ -34,6 +34,7 @@ function row(overrides: Partial<ApiKeyRow> = {}): ApiKeyRow {
   return {
     id: "key-1",
     account_id: "acct-1",
+    project_id: "proj-1",
     created_by: "user-1",
     name: "Test key",
     scopes: ["messages:send"],
