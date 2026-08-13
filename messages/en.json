@@ -10,9 +10,7 @@
     "forgotPassword": "Forgot password?",
     "passwordPlaceholder": "Enter your password",
     "signingIn": "Signing in...",
-    "signIn": "Sign in",
-    "noAccount": "Don't have an account?",
-    "createAccount": "Create account"
+    "signIn": "Sign in"
   },
   "Sidebar": {
     "title": "CRM Template for WhatsApp",

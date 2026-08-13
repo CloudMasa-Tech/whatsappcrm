@@ -10,9 +10,7 @@
     "forgotPassword": "비밀번호를 잊으셨나요?",
     "passwordPlaceholder": "비밀번호를 입력하세요",
     "signingIn": "로그인 중...",
-    "signIn": "로그인",
-    "noAccount": "계정이 없으신가요?",
-    "createAccount": "계정 만들기"
+    "signIn": "로그인"
   },
   "Sidebar": {
     "title": "WhatsApp용 CRM 템플릿",

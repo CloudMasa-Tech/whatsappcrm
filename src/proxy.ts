@@ -42,6 +42,17 @@ export async function proxy(request: NextRequest) {
     return response
   }
 
+  // Public self-service signup is disabled. Bounce every attempt to
+  // reach /signup — typed directly, or via a stale /signup link — to
+  // /login. Query params are preserved (e.g. ?invite=...) so the
+  // login page's invite forwarding logic below still routes signed-in
+  // users on to /join/<token>.
+  if (request.nextUrl.pathname === '/signup') {
+    const url = request.nextUrl.clone()
+    url.pathname = '/login'
+    return withRefreshedCookies(NextResponse.redirect(url))
+  }
+
   // Auth pages - redirect to dashboard if already logged in.
   // Exception: when an invite token is in the query string we
   // send the already-signed-in user to /join/<token> instead so
@@ -50,16 +61,11 @@ export async function proxy(request: NextRequest) {
   // would silently drop them on /dashboard.
   if (user && (
     request.nextUrl.pathname === '/login' ||
-    request.nextUrl.pathname === '/signup' ||
     request.nextUrl.pathname === '/forgot-password'
   )) {
     const url = request.nextUrl.clone()
     const inviteToken = request.nextUrl.searchParams.get('invite')
-    if (
-      inviteToken &&
-      (request.nextUrl.pathname === '/login' ||
-        request.nextUrl.pathname === '/signup')
-    ) {
+    if (inviteToken && request.nextUrl.pathname === '/login') {
       url.pathname = `/join/${encodeURIComponent(inviteToken)}`
       url.search = ''
     } else {
