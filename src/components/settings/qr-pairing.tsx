@@ -15,10 +15,15 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
+  PAIRING_POLL_MS,
+  PAIRING_STUCK_AFTER_MS,
+  PAIRING_WINDOW_MS,
   POLL_MS,
   STALENESS_TICK_MS,
   STALE_AFTER_MS,
   deriveSessionStatus,
+  isPairingStatus,
+  isRotatingQr,
   type DisplaySessionStatus,
   type StoredSessionStatus,
 } from "@/lib/channels/session-status";
@@ -41,19 +46,35 @@ import { createClient } from "@/lib/supabase/client";
 // RLS on whatsapp_sessions restricts the subscription to projects the
 // viewer belongs to, and the filter below narrows it to this one.
 //
-// Realtime is the fast path, not the only path. Two ways it can fail
-// silently, both of which used to leave this screen asserting a status
-// that was no longer true:
+// Realtime is the fast path, NEVER the only path. Three ways it fails,
+// and the third is why the QR could go missing entirely:
 //
 //   1. The table may not be published. Migration 044 adds
 //      whatsapp_sessions to `supabase_realtime` inside a block that
 //      DOWNGRADES a privilege error to a warning (deliberately — an
 //      abort would roll back the whole migration), so a SQL-editor run
 //      by a non-owner leaves Realtime off and the migration green.
+//      Migration 051 repairs that, but a deployment that has not run it
+//      still has to work.
 //   2. The socket can drop or the subscription can error at any time.
+//   3. **An unpublished table still reports SUBSCRIBED.** `subscribe()`
+//      resolves against the Realtime server, which accepts the
+//      subscription whether or not the WAL will ever carry a row for
+//      that table. So `realtimeOk` is NOT evidence that events are
+//      arriving, and a poll gated behind `!realtimeOk` never ran: the
+//      screen sat on "Contacting WhatsApp…" forever and no QR appeared.
 //
-// So the subscription state is tracked, and a poll takes over whenever
-// it is not healthy. See POLL_MS below.
+// So there are two polls, and the one that matters does not consult
+// `realtimeOk` at all:
+//
+//   - a PAIRING poll (PAIRING_POLL_MS) that runs unconditionally while a
+//     pairing is in flight, because that is when a missing update is
+//     indistinguishable from a broken feature;
+//   - a slow fallback poll (POLL_MS) while the subscription is not
+//     confirmed, to keep a settled status honest.
+//
+// The pairing window is bounded so a dead gateway cannot leave a
+// forgotten tab polling forever — see PAIRING_WINDOW_MS.
 // ============================================================
 
 interface SessionRow {
@@ -108,6 +129,18 @@ export function QrPairing({ projectId, projectName, canManage }: QrPairingProps)
   const [realtimeOk, setRealtimeOk] = useState<boolean | null>(null);
   /** Advances on its own so heartbeat staleness is re-derived over time. */
   const [now, setNow] = useState(() => Date.now());
+  /**
+   * False when the deployment has no gateway wired up at all. Reported
+   * by the GET route; worth saying out loud, because without it the
+   * screen just never produces a code and looks broken rather than
+   * unconfigured.
+   */
+  const [gatewayConfigured, setGatewayConfigured] = useState(true);
+  /**
+   * When the current wait began — set by Connect, restarted by every
+   * live QR that lands, cleared once paired. Drives the stuck warning.
+   */
+  const [pairingSince, setPairingSince] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -117,7 +150,30 @@ export function QrPairing({ projectId, projectName, canManage }: QrPairingProps)
       );
       if (!response.ok) return;
       const data = await response.json();
-      setSession(data.session ?? null);
+      const row = (data.session ?? null) as SessionRow | null;
+      setSession(row);
+      setGatewayConfigured(data.gateway_configured !== false);
+
+      // Keep the pairing window in step with what the row actually says.
+      // This is also what makes a page reload mid-pairing resume polling
+      // instead of freezing on whatever it loaded.
+      const at = Date.now();
+      if (row?.status === "connected") {
+        // Paired. Nothing left to wait for.
+        setPairingSince(null);
+      } else if (isRotatingQr(row?.status, row?.qr_expires_at, at)) {
+        // Real progress: a code the gateway is still refreshing. Restart
+        // both clocks so the window outlives a slow scan and the stuck
+        // warning stays away.
+        setPairingSince(at);
+      } else if (isPairingStatus(row?.status)) {
+        // Mid-pairing, but nothing new — open the window if it is shut,
+        // without resetting a stuck clock that is already running.
+        setPairingSince((prev) => prev ?? at);
+      }
+      // Deliberately no `else`: a row still reading 'disconnected' right
+      // after Connect must not slam the window shut on the reply to our
+      // own first refresh.
     } finally {
       setLoading(false);
     }
@@ -150,10 +206,14 @@ export function QrPairing({ projectId, projectName, canManage }: QrPairingProps)
         },
       )
       .subscribe((status) => {
-        // SUBSCRIBED is the only state that actually delivers rows.
-        // CHANNEL_ERROR is what an unpublished table looks like from
-        // here; TIMED_OUT / CLOSED are a dropped socket. Anything but
-        // SUBSCRIBED hands over to the poll below.
+        // SUBSCRIBED is necessary for rows to arrive, but NOT
+        // sufficient: Realtime accepts a subscription to a table that
+        // is not in the publication, then delivers nothing. TIMED_OUT /
+        // CLOSED / CHANNEL_ERROR are a dropped or rejected socket.
+        //
+        // So this only decides whether the SLOW fallback poll runs. The
+        // pairing poll ignores it entirely — that is the difference
+        // between a QR that shows up and one that never does.
         setRealtimeOk(status === "SUBSCRIBED");
       });
 
@@ -162,16 +222,49 @@ export function QrPairing({ projectId, projectName, canManage }: QrPairingProps)
     };
   }, [projectId]);
 
-  // Fallback poll. Runs until Realtime confirms it is subscribed, and
-  // resumes if it ever stops being. Without this, a deployment whose
-  // whatsapp_sessions table never made it into the `supabase_realtime`
-  // publication shows the state from page load forever — including
-  // "Connected" for a session that has since died.
+  // The pairing window, derived rather than stored.
+  //
+  // Opened by Connect and by finding a transient status on load,
+  // extended by every live QR that lands (see `load`), and closed once
+  // it ages out — so a gateway that died mid-connect cannot leave a
+  // background tab polling for the rest of the day.
+  //
+  // It rides the `now` tick below rather than its own timer, which
+  // means it shuts up to STALENESS_TICK_MS late. That is irrelevant at
+  // a three-minute scale, and it keeps this a pure derivation instead
+  // of a second piece of state to hold in step.
+  //
+  // `pairingSince` is deliberately NOT cleared when the window shuts:
+  // the stuck warning needs to know how long the wait has really been,
+  // and "Check again" reopens the window by restamping it.
+  const pairingWindowOpen =
+    pairingSince !== null && now - pairingSince < PAIRING_WINDOW_MS;
+
+  // Pairing poll — deliberately NOT gated on `realtimeOk`.
+  //
+  // This is the fix for a QR that never arrives: a subscription to an
+  // unpublished table reports SUBSCRIBED and then delivers nothing, so
+  // trusting `realtimeOk` here is what left this screen empty. While a
+  // pairing is in flight we re-read the row on our own regardless, and
+  // the GET route returns `qr_code` in full — Realtime only ever makes
+  // it arrive sooner.
   useEffect(() => {
-    if (realtimeOk) return;
+    if (!pairingWindowOpen) return;
+    const id = setInterval(() => void load(), PAIRING_POLL_MS);
+    return () => clearInterval(id);
+  }, [pairingWindowOpen, load]);
+
+  // Slow fallback poll, for the settled states. Runs until Realtime
+  // confirms it is subscribed, and resumes if it ever stops being.
+  // Without this, a deployment whose whatsapp_sessions table never made
+  // it into the `supabase_realtime` publication shows the state from
+  // page load forever — including "Connected" for a session that has
+  // since died. Stands down while the pairing poll has it covered.
+  useEffect(() => {
+    if (realtimeOk || pairingWindowOpen) return;
     const id = setInterval(() => void load(), POLL_MS);
     return () => clearInterval(id);
-  }, [realtimeOk, load]);
+  }, [realtimeOk, pairingWindowOpen, load]);
 
   // Local clock tick, so a heartbeat going stale is noticed without any
   // inbound event. Cheap: it only re-derives one status string.
@@ -193,6 +286,11 @@ export function QrPairing({ projectId, projectName, canManage }: QrPairingProps)
         toast.error(data.error ?? "Could not start pairing");
         return;
       }
+      // Open the pairing window and read the row straight back. Without
+      // this refresh nothing re-read the session at all when Realtime
+      // was silent — the whole reason a QR could never turn up.
+      setPairingSince(Date.now());
+      void load();
       toast.success("Pairing started — the QR code will appear shortly.");
     } catch {
       toast.error("Could not reach the server");
@@ -221,6 +319,7 @@ export function QrPairing({ projectId, projectName, canManage }: QrPairingProps)
         return;
       }
       toast.success("Disconnected");
+      setPairingSince(null);
       void load();
     } catch {
       toast.error("Could not reach the server");
@@ -244,6 +343,17 @@ export function QrPairing({ projectId, projectName, canManage }: QrPairingProps)
   const status = deriveSessionStatus(session?.status, session?.heartbeat_at, now);
   const copy = STATUS_COPY[status];
   const showQr = status === "qr_pending" && session?.qr_code;
+
+  // Waiting on 'connecting' with no code for far longer than the gateway
+  // takes to issue one. Every cause is server-side and invisible to the
+  // browser — an unreachable gateway, an incomplete gateway environment,
+  // or a `whatsapp_sessions` write that is failing — so say so instead
+  // of spinning indefinitely.
+  const stuck =
+    !showQr &&
+    status === "connecting" &&
+    pairingSince !== null &&
+    now - pairingSince > PAIRING_STUCK_AFTER_MS;
 
   return (
     <div className="space-y-4">
@@ -301,6 +411,16 @@ export function QrPairing({ projectId, projectName, canManage }: QrPairingProps)
         )}
       </div>
 
+      {!gatewayConfigured && (
+        <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          This deployment has no WhatsApp gateway configured, so no QR code
+          can be issued. Set <code>WHATSAPP_GATEWAY_URL</code>,{" "}
+          <code>WHATSAPP_GATEWAY_TOKEN</code> and{" "}
+          <code>WHATSAPP_GATEWAY_SIGNING_SECRET</code> on the web service,
+          and make sure the gateway is running.
+        </p>
+      )}
+
       {status === "stale" && (
         <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           The last heartbeat from the gateway was over{" "}
@@ -342,9 +462,37 @@ export function QrPairing({ projectId, projectName, canManage }: QrPairingProps)
       )}
 
       {status === "connecting" && !showQr && (
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-4 py-6 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Contacting WhatsApp…
+        <div className="space-y-3 rounded-lg border border-border bg-muted/30 px-4 py-6">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Contacting WhatsApp…
+          </div>
+
+          {stuck && (
+            <div className="space-y-2 border-t border-border pt-3">
+              <p className="text-sm text-destructive">
+                No QR code after{" "}
+                {Math.round(PAIRING_STUCK_AFTER_MS / 1000)} seconds. The
+                gateway normally issues one within a second or two, so it is
+                probably unreachable or missing part of its environment —
+                check <code>docker compose logs gateway</code>.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  // Restamping reopens the pairing window, so this both
+                  // re-reads the row now and resumes polling.
+                  setPairingSince(Date.now());
+                  void load();
+                }}
+                disabled={busy}
+              >
+                <RefreshCw className="mr-1.5 h-4 w-4" />
+                Check again
+              </Button>
+            </div>
+          )}
         </div>
       )}
 

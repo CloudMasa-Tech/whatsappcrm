@@ -101,6 +101,75 @@ export function deriveSessionStatus(
 export const POLL_MS = 5_000;
 
 /**
+ * Poll interval while a pairing is actually IN FLIGHT.
+ *
+ * Faster than POLL_MS because the thing being waited on is a QR code
+ * that WhatsApp rotates every ~20s, and a user is staring at an empty
+ * box until it lands.
+ */
+export const PAIRING_POLL_MS = 2_000;
+
+/**
+ * How long a pairing window stays open — i.e. how long we keep polling
+ * unconditionally after someone presses Connect.
+ *
+ * Bounded on purpose. The alternative ("poll while status is
+ * transient") never terminates when the gateway dies mid-connect: it
+ * leaves the row on 'connecting' forever, and a forgotten tab would
+ * poll every 2s until it was closed. Three minutes is long enough to
+ * find a phone and scan; after that the screen says what is wrong and
+ * offers a manual retry, which reopens the window.
+ *
+ * A window that sees a LIVE, rotating QR extends itself — see
+ * `isRotatingQr`.
+ */
+export const PAIRING_WINDOW_MS = 3 * 60_000;
+
+/**
+ * How long 'connecting' may sit with no QR before we call it stuck.
+ *
+ * The gateway emits a QR within a second or two of opening its socket,
+ * so anything past this is a real fault — most often that the gateway
+ * is unreachable or its environment is incomplete, neither of which
+ * produces an error the browser can see.
+ */
+export const PAIRING_STUCK_AFTER_MS = 30_000;
+
+/**
+ * True while the session is mid-transition, in either direction.
+ *
+ * These are the two states that need a live feed: 'connecting' is
+ * waiting for a QR, 'qr_pending' is waiting for a scan. Everything
+ * else is terminal until a human acts.
+ */
+export function isPairingStatus(
+  status: StoredSessionStatus | DisplaySessionStatus | null | undefined,
+): boolean {
+  return status === "connecting" || status === "qr_pending";
+}
+
+/**
+ * True when the row holds a QR the gateway is still actively rotating.
+ *
+ * This is the signal that a pairing is making real progress, as opposed
+ * to a `qr_pending` row left behind by a gateway that has since died.
+ * The gateway stamps `qr_expires_at` ~20s ahead on every QR it issues,
+ * so a lapsed stamp means nothing is refreshing it any more.
+ *
+ * `now` is injected for the same reason as in `deriveSessionStatus`.
+ */
+export function isRotatingQr(
+  status: StoredSessionStatus | DisplaySessionStatus | null | undefined,
+  qrExpiresAt: string | null | undefined,
+  now: number,
+): boolean {
+  if (status !== "qr_pending" || !qrExpiresAt) return false;
+  const expires = new Date(qrExpiresAt).getTime();
+  if (Number.isNaN(expires)) return false;
+  return expires > now;
+}
+
+/**
  * How often a client should re-derive staleness with no inbound event.
  * A lapsing heartbeat is the *absence* of a write, so nothing can push
  * it — only the local clock advancing reveals it.
