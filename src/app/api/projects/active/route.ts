@@ -28,7 +28,12 @@ export async function POST(request: Request) {
 
   let project
   try {
-    project = await resolveProject(account.supabase, projectId)
+    project = await resolveProject(
+      account.supabase,
+      projectId,
+      account.userId,
+      account.platformRole,
+    )
   } catch (err) {
     return toErrorResponse(err)
   }

@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, AlertTriangle } from 'lucide-react';
+import { Instagram } from '@/components/icons/instagram';
 import { useTranslations } from 'next-intl';
 
 interface ContactFormProps {
@@ -55,6 +56,7 @@ export function ContactForm({
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [company, setCompany] = useState('');
+  const [instagramUsername, setInstagramUsername] = useState('');
   const [saving, setSaving] = useState(false);
 
   // Duplicate-phone detection for NEW contacts. `exact` (same digits)
@@ -76,6 +78,7 @@ export function ContactForm({
       setPhone(contact?.phone ?? '');
       setEmail(contact?.email ?? '');
       setCompany(contact?.company ?? '');
+      setInstagramUsername(contact?.instagram_username ?? '');
       setSelectedTagIds(contactTags.map((ct) => ct.tag_id));
       setDupMatch(null);
       fetchTags();
@@ -157,11 +160,13 @@ export function ContactForm({
             phone: phone.trim(),
             email: email.trim() || null,
             company: company.trim() || null,
+            instagram_username: instagramUsername.trim().replace(/^@/, '') || null,
             updated_at: new Date().toISOString(),
           })
           .eq('id', contactId);
         if (error) throw error;
       } else {
+        const cleanIg = instagramUsername.trim().replace(/^@/, '');
         const { data, error } = await supabase
           .from('contacts')
           .insert({
@@ -169,9 +174,11 @@ export function ContactForm({
             account_id: accountId,
             project_id: activeProjectId,
             name: name.trim() || null,
-            phone: phone.trim(),
+            phone: phone.trim() || (cleanIg ? `ig_${cleanIg}` : ''),
             email: email.trim() || null,
             company: company.trim() || null,
+            instagram_username: cleanIg || null,
+            channel: cleanIg && !phone.trim() ? 'instagram' : 'whatsapp',
           })
           .select('id')
           .single();
@@ -322,6 +329,22 @@ export function ContactForm({
               placeholder={t('companyPlaceholder')}
               className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="cf-instagram" className="text-muted-foreground flex items-center gap-1.5">
+              <Instagram className="h-3.5 w-3.5 text-pink-500" /> Instagram Username
+            </Label>
+            <div className="relative">
+              <div className="absolute left-3 top-2.5 text-muted-foreground font-medium text-xs">@</div>
+              <Input
+                id="cf-instagram"
+                value={instagramUsername}
+                onChange={(e) => setInstagramUsername(e.target.value)}
+                placeholder="username (e.g. johndoe)"
+                className="bg-muted border-border text-foreground placeholder:text-muted-foreground pl-7"
+              />
+            </div>
           </div>
 
           <div className="space-y-2">

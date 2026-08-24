@@ -118,6 +118,28 @@ export function PipelineSettings({
       position: i,
     }));
 
+    try {
+      const res = await fetch(`/api/pipelines/${pipeline.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: name.trim(),
+          stages: stageRows,
+        }),
+      });
+
+      if (res.ok) {
+        setSaving(false);
+        onOpenChange(false);
+        onPipelinesChanged();
+        onStagesChanged();
+        toast.success(t("toastSaved"));
+        return;
+      }
+    } catch {
+      // Fall back to client query
+    }
+
     const [renameRes, stagesRes] = await Promise.all([
       supabase
         .from("pipelines")
@@ -184,6 +206,21 @@ export function PipelineSettings({
 
   async function handleDeletePipeline() {
     setDeleting(true);
+    try {
+      const res = await fetch(`/api/pipelines/${pipeline.id}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setDeleting(false);
+        onOpenChange(false);
+        onPipelinesChanged();
+        toast.success(t("toastDeleted"));
+        return;
+      }
+    } catch {
+      // Fallback
+    }
+
     // ON DELETE CASCADE handles deals + stages.
     const { error } = await supabase
       .from("pipelines")

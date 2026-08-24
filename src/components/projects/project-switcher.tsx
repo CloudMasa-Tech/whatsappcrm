@@ -111,11 +111,9 @@ export function ProjectSwitcher() {
         {projects.map((project) => (
           <DropdownMenuItem
             key={project.id}
-            onSelect={(event) => {
-              event.preventDefault();
-              void switchTo(project.id);
-            }}
-            className="flex items-center justify-between gap-2"
+            onClick={() => void switchTo(project.id)}
+            onSelect={() => void switchTo(project.id)}
+            className="flex cursor-pointer items-center justify-between gap-2"
           >
             <span className="flex min-w-0 items-center gap-2">
               <span className="truncate">{project.name}</span>
@@ -143,7 +141,11 @@ export function ProjectSwitcher() {
         ))}
 
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => router.push("/settings?tab=projects")}>
+        <DropdownMenuItem
+          onClick={() => router.push("/settings?tab=projects")}
+          onSelect={() => router.push("/settings?tab=projects")}
+          className="cursor-pointer"
+        >
           Manage projects
         </DropdownMenuItem>
       </DropdownMenuContent>

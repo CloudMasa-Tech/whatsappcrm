@@ -9,7 +9,10 @@ import {
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
-import { Search, ChevronDown, X } from "lucide-react";
+import { Search, ChevronDown, X, MessageCircle, Plus } from "lucide-react";
+import { Instagram } from "@/components/icons/instagram";
+import { Button } from "@/components/ui/button";
+import { NewChatDialog } from "@/components/inbox/new-chat-dialog";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
@@ -42,9 +45,8 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
   closed: "bg-muted-foreground",
 };
 
-
-
 type InboxFilter = ConversationStatus | "all" | "unread";
+type ChannelFilter = "all" | "whatsapp" | "instagram";
 
 export function ConversationList({
   activeConversationId,
@@ -65,6 +67,7 @@ export function ConversationList({
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
+  const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
   const [loading, setLoading] = useState(true);
   // Contact-based filters (issue #272). Tags use OR logic (a conversation
   // matches if its contact carries any selected tag), consistent with
@@ -72,6 +75,7 @@ export function ConversationList({
   const [tags, setTags] = useState<Tag[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
+  const [newChatOpen, setNewChatOpen] = useState(false);
 
   // Keep the latest callback in a ref so the fetch effect below can
   // have a stable, empty-dep identity. Previously the fetch useCallback
@@ -167,6 +171,16 @@ export function ConversationList({
       result = result.filter((c) => c.status === filter);
     }
 
+    if (channelFilter === "instagram") {
+      result = result.filter(
+        (c) => c.channel === "instagram" || c.contact?.channel === "instagram",
+      );
+    } else if (channelFilter === "whatsapp") {
+      result = result.filter(
+        (c) => (c.channel ?? "whatsapp") === "whatsapp" && c.contact?.channel !== "instagram",
+      );
+    }
+
     // Contact-based filters (tags via OR logic, exact company match).
     if (selectedTagIds.length > 0 || selectedCompany !== null) {
       result = result.filter((c) =>
@@ -182,13 +196,14 @@ export function ConversationList({
       result = result.filter((c) => {
         const name = c.contact?.name?.toLowerCase() ?? "";
         const phone = c.contact?.phone?.toLowerCase() ?? "";
+        const igUser = c.contact?.instagram_username?.toLowerCase() ?? "";
         const lastMsg = c.last_message_text?.toLowerCase() ?? "";
-        return name.includes(q) || phone.includes(q) || lastMsg.includes(q);
+        return name.includes(q) || phone.includes(q) || igUser.includes(q) || lastMsg.includes(q);
       });
     }
 
     return result;
-  }, [conversations, filter, search, selectedTagIds, selectedCompany]);
+  }, [conversations, filter, channelFilter, search, selectedTagIds, selectedCompany]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -224,19 +239,32 @@ export function ConversationList({
     // the single pane showing; fixed 320px on desktop where it shares the
     // row with the thread + contact sidebar.
     <div className="flex h-full w-full flex-col border-r border-border bg-card lg:w-80">
-      {/* Search + Filter */}
+      {/* Search + Filter + New Chat */}
       <div className="space-y-2 border-b border-border p-3">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={handleSearchChange}
-            placeholder={t("searchPlaceholder")}
-            className="border-border bg-muted pl-9 text-sm text-foreground placeholder-muted-foreground focus:border-primary/50"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={handleSearchChange}
+              placeholder={t("searchPlaceholder")}
+              className="border-border bg-muted pl-9 text-sm text-foreground placeholder-muted-foreground focus:border-primary/50"
+            />
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => setNewChatOpen(true)}
+            className="h-9 px-2.5 bg-primary text-primary-foreground hover:bg-primary/90 shrink-0 font-medium flex items-center gap-1 shadow-sm"
+            title="Start New Conversation (Instagram or WhatsApp)"
+          >
+            <Plus className="h-4 w-4" />
+            <span className="hidden sm:inline text-xs">New</span>
+          </Button>
         </div>
 
         <div className="flex flex-wrap items-center gap-1">
+          {/* Status Filter */}
           <DropdownMenu>
             <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
                 {activeFilter?.label ?? t("filterAll")}
@@ -260,6 +288,44 @@ export function ConversationList({
                   {opt.label}
                 </DropdownMenuItem>
               ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* Channel Filter */}
+          <DropdownMenu>
+            <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
+              {channelFilter === "all" ? (
+                "Channels"
+              ) : channelFilter === "instagram" ? (
+                <span className="flex items-center gap-1 text-pink-500 font-medium">
+                  <Instagram className="h-3 w-3" /> Instagram
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-emerald-500 font-medium">
+                  <MessageCircle className="h-3 w-3" /> WhatsApp
+                </span>
+              )}
+              <ChevronDown className="h-3 w-3" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="border-border bg-popover">
+              <DropdownMenuItem
+                onClick={() => setChannelFilter("all")}
+                className={cn("text-sm", channelFilter === "all" && "text-primary")}
+              >
+                All Channels
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setChannelFilter("whatsapp")}
+                className={cn("text-sm flex items-center gap-2", channelFilter === "whatsapp" && "text-primary")}
+              >
+                <MessageCircle className="h-3.5 w-3.5 text-emerald-500" /> WhatsApp
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setChannelFilter("instagram")}
+                className={cn("text-sm flex items-center gap-2", channelFilter === "instagram" && "text-primary")}
+              >
+                <Instagram className="h-3.5 w-3.5 text-pink-500" /> Instagram
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -419,6 +485,30 @@ export function ConversationList({
           </div>
         )}
       </ScrollArea>
+
+      <NewChatDialog
+        open={newChatOpen}
+        onOpenChange={setNewChatOpen}
+        onConversationCreated={async (newId) => {
+          const supabase = createClient();
+          const { data } = await supabase
+            .from("conversations")
+            .select(CONVERSATION_SELECT)
+            .eq("id", newId)
+            .maybeSingle();
+
+          if (data) {
+            const normalized = normalizeConversations([data])[0];
+            if (normalized) {
+              onConversationsLoadedRef.current([
+                normalized,
+                ...conversations.filter((c) => c.id !== normalized.id),
+              ]);
+              onSelect(normalized);
+            }
+          }
+        }}
+      />
     </div>
   );
 }
@@ -450,6 +540,9 @@ function ConversationItem({
       })
     : "";
 
+  const isInstagram =
+    conversation.channel === "instagram" || contact?.channel === "instagram";
+
   return (
     <button
       onClick={handleClick}
@@ -458,8 +551,8 @@ function ConversationItem({
         isActive && "border-l-2 border-primary bg-muted/70"
       )}
     >
-      {/* Avatar */}
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
+      {/* Avatar with Channel Overlay Badge */}
+      <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
         {contact?.avatar_url ? (
           <img
             src={contact.avatar_url}
@@ -469,14 +562,36 @@ function ConversationItem({
         ) : (
           initials
         )}
+        {isInstagram ? (
+          <div
+            className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 text-white shadow-sm ring-1 ring-background"
+            title="Instagram Direct"
+          >
+            <Instagram className="h-2.5 w-2.5" />
+          </div>
+        ) : (
+          <div
+            className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm ring-1 ring-background"
+            title="WhatsApp"
+          >
+            <MessageCircle className="h-2.5 w-2.5" />
+          </div>
+        )}
       </div>
 
       {/* Content */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-medium text-foreground">
-            {displayName}
-          </span>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="truncate text-sm font-medium text-foreground">
+              {displayName}
+            </span>
+            {isInstagram && contact?.instagram_username && (
+              <span className="text-[11px] text-pink-500 font-mono truncate">
+                @{contact.instagram_username}
+              </span>
+            )}
+          </div>
           <span className="shrink-0 text-[10px] text-muted-foreground">{timeAgo}</span>
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">

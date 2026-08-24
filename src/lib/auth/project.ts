@@ -41,7 +41,8 @@ import {
   UnauthorizedError,
   type AccountContext,
 } from "./account";
-import { hasMinRole, type AccountRole } from "./roles";
+import { hasMinRole, type AccountRole, type PlatformRole } from "./roles";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 /** Cookie holding the caller's active project id. */
 export const ACTIVE_PROJECT_COOKIE = "wacrm_project";
@@ -92,25 +93,64 @@ function toSummary(row: Record<string, unknown>): ProjectSummary {
 const PROJECT_COLUMNS = "id, name, slug, channel_type, allowed_channels, archived_at";
 
 /**
- * Every project the caller can reach, newest last. Reads through RLS,
- * so the list is already filtered to their organisation and (for
- * agents/viewers) their assigned projects — there is no client-side
- * filtering to forget.
+ * Every project the caller can reach, newest last.
+ * - Super Admins: all projects across the platform.
+ * - Project Admins and Agents: ONLY projects they are explicitly assigned to (via project_members).
  */
 export async function listProjects(
   supabase: SupabaseClient,
+  userId?: string,
+  platformRole?: PlatformRole,
 ): Promise<ProjectSummary[]> {
+  // 1. Platform Super Admin reaches all projects across the platform
+  if (platformRole === "super_admin") {
+    const { data, error } = await supabaseAdmin()
+      .from("projects")
+      .select(PROJECT_COLUMNS)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("[listProjects super_admin] fetch error:", error);
+      throw new ForbiddenError("Could not load projects");
+    }
+    return (data ?? []).map(toSummary);
+  }
+
+  // 2. Explicit user ID provided: filter strictly by project_members assignment
+  if (userId) {
+    const { data: memberships, error: memErr } = await supabaseAdmin()
+      .from("project_members")
+      .select("project_id")
+      .eq("user_id", userId);
+
+    if (memErr) {
+      console.error("[listProjects project_members] fetch error:", memErr);
+      throw new ForbiddenError("Could not load projects");
+    }
+
+    const projectIds = (memberships ?? []).map((m) => m.project_id).filter(Boolean);
+    if (projectIds.length === 0) {
+      return [];
+    }
+
+    const { data, error } = await supabaseAdmin()
+      .from("projects")
+      .select(PROJECT_COLUMNS)
+      .in("id", projectIds)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("[listProjects assigned] fetch error:", error);
+      throw new ForbiddenError("Could not load projects");
+    }
+    return (data ?? []).map(toSummary);
+  }
+
+  // 3. Fallback through user's own RLS client
   const { data, error } = await supabase
     .from("projects")
     .select(PROJECT_COLUMNS)
     .order("created_at", { ascending: true });
-
-  console.log(JSON.stringify({
-    _diag: 'listProjects',
-    error: error ? { message: error.message, code: error.code, details: error.details } : null,
-    rowCount: data?.length ?? 0,
-    rows: data?.map((r: any) => ({ id: r.id, name: r.name, account_id: r.account_id })) ?? [],
-  }));
 
   if (error) {
     console.error("[listProjects] fetch error:", error);
@@ -121,17 +161,52 @@ export async function listProjects(
 
 /**
  * Authorise a specific project id for the caller.
- *
- * The SELECT runs under the user's own client, so `projects_select`
- * (which delegates to `is_project_member`) does the authorisation:
- * a project the caller cannot reach simply returns no row, and we
- * turn that into a 403. There is no code path where an id supplied
- * by a client reaches a query without passing through here.
+ * - Super Admins: authorised for any project.
+ * - Non-Super Admins: authorised ONLY if they belong to project_members.
  */
 export async function resolveProject(
   supabase: SupabaseClient,
   projectId: string,
+  userId?: string,
+  platformRole?: PlatformRole,
 ): Promise<ProjectSummary> {
+  if (platformRole === "super_admin") {
+    const { data, error } = await supabaseAdmin()
+      .from("projects")
+      .select(PROJECT_COLUMNS)
+      .eq("id", projectId)
+      .maybeSingle();
+
+    if (error || !data) {
+      throw new ForbiddenError("Project not found or not accessible");
+    }
+    return toSummary(data);
+  }
+
+  if (userId) {
+    const { data: member, error: memberErr } = await supabaseAdmin()
+      .from("project_members")
+      .select("project_id")
+      .eq("project_id", projectId)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (memberErr || !member) {
+      throw new ForbiddenError("Project not found or not accessible");
+    }
+
+    const { data, error } = await supabaseAdmin()
+      .from("projects")
+      .select(PROJECT_COLUMNS)
+      .eq("id", projectId)
+      .maybeSingle();
+
+    if (error || !data) {
+      throw new ForbiddenError("Project not found or not accessible");
+    }
+    return toSummary(data);
+  }
+
   const { data, error } = await supabase
     .from("projects")
     .select(PROJECT_COLUMNS)
@@ -143,9 +218,6 @@ export async function resolveProject(
     throw new ForbiddenError("Could not load project");
   }
   if (!data) {
-    // Deliberately the same error for "does not exist" and "not
-    // yours": distinguishing them would confirm the existence of
-    // another tenant's project to anyone probing ids.
     throw new ForbiddenError("Project not found or not accessible");
   }
   return toSummary(data);
@@ -155,16 +227,8 @@ export async function resolveProject(
  * Resolve the caller's account, then their ACTIVE project.
  *
  * Selection order:
- *   1. the `wacrm_project` cookie, if it names a project they may use
- *   2. otherwise their first accessible project
- *
- * A stale or tampered cookie silently falls back to (2) rather than
- * erroring — a user removed from a project should land somewhere
- * usable, not on a broken dashboard.
- *
- * Throws `ForbiddenError` when the caller has no accessible project
- * at all. Post-042 every account has at least one, so this means an
- * agent/viewer with an empty roster: an admin must assign them.
+ *   1. the `wacrm_project` cookie, if it names a project they are allocated to
+ *   2. otherwise their first allocated project
  */
 export async function getCurrentProject(): Promise<ProjectContext> {
   const account = await getCurrentAccount();
@@ -174,46 +238,30 @@ export async function getCurrentProject(): Promise<ProjectContext> {
 
   if (requested) {
     try {
-      const project = await resolveProject(account.supabase, requested);
+      const project = await resolveProject(
+        account.supabase,
+        requested,
+        account.userId,
+        account.platformRole,
+      );
       return { ...account, projectId: project.id, project };
     } catch (err) {
       if (!(err instanceof ForbiddenError)) throw err;
-      // Fall through to the default project below.
+      // Fall through to default assigned project
     }
   }
 
-  const projects = await listProjects(account.supabase);
-
-  if (process.env.NODE_ENV !== 'production') {
-    console.log(JSON.stringify({
-      _diag: 'getCurrentProject',
-      userId: account.userId,
-      accountId: account.accountId,
-      accountRole: account.role,
-      requestedCookie: requested ?? null,
-      projectsReturned: projects.length,
-      projectIds: projects.map(p => p.id),
-    }));
-  }
+  const projects = await listProjects(
+    account.supabase,
+    account.userId,
+    account.platformRole,
+  );
 
   const first = projects.find((p) => !p.archived_at) ?? projects[0];
   if (!first) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.error(JSON.stringify({
-        _diag: 'getCurrentProject_NO_PROJECTS',
-        userId: account.userId,
-        accountId: account.accountId,
-        accountRole: account.role,
-        requestedCookie: requested ?? null,
-        projectsReturned: 0,
-      }));
-    }
-    throw new ForbiddenError("No project assigned to this account");
+    throw new ForbiddenError("No project assigned to this user");
   }
 
-  // Persist the resolved project in the cookie so subsequent requests
-  // skip the listProjects query. Also update when the cookie was stale
-  // (present but pointing to a deleted/unassigned project).
   cookieStore.set(ACTIVE_PROJECT_COOKIE, first.id, {
     httpOnly: true,
     sameSite: "lax",

@@ -99,24 +99,14 @@ export async function PATCH(
       return NextResponse.json({ error: 'Template not found.' }, { status: 404 })
     }
 
-    if (!existing.meta_template_id) {
-      return NextResponse.json(
-        {
-          error:
-            'This template was never submitted to Meta — use New Template to submit it instead.',
-        },
-        { status: 400 },
-      )
-    }
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('platform_role, role')
+      .eq('user_id', user.id)
+      .single();
 
-    if (!EDITABLE_STATUSES.has(existing.status)) {
-      return NextResponse.json(
-        {
-          error: `Templates in status ${existing.status} cannot be edited. Allowed: APPROVED, REJECTED, PAUSED.`,
-        },
-        { status: 400 },
-      )
-    }
+    const isSuperAdmin = profile?.platform_role === 'super_admin';
+    const nextStatus = isSuperAdmin ? 'APPROVED' : 'PENDING';
 
     if (payload.category === 'Authentication') {
       return NextResponse.json(
@@ -125,68 +115,55 @@ export async function PATCH(
             'AUTHENTICATION templates are not editable here — manage them in Meta WhatsApp Manager.',
         },
         { status: 400 },
-      )
+      );
     }
 
     try {
-      validateTemplatePayload(payload)
+      validateTemplatePayload(payload);
     } catch (e) {
       return NextResponse.json(
         { error: e instanceof Error ? e.message : 'Validation failed.' },
         { status: 400 },
-      )
+      );
     }
 
-    if (!isDryRun()) {
-      const { data: config, error: configError } = await supabase
+    if (existing.meta_template_id && !isDryRun()) {
+      const { data: config } = await supabase
         .from('whatsapp_config')
         .select('*')
         .eq('project_id', projectId)
-        .single()
-      if (configError || !config) {
-        return NextResponse.json(
-          { error: 'WhatsApp not configured.' },
-          { status: 400 },
-        )
-      }
-      const accessToken = decrypt(config.access_token)
+        .maybeSingle();
 
-      // Image headers need a fresh Resumable-Upload handle on every edit
-      // (Meta replaces components wholesale). Derive from header_media_url.
-      try {
-        await ensureImageHeaderHandle(payload, accessToken)
-      } catch (e) {
-        return NextResponse.json(
-          { error: e instanceof Error ? e.message : 'Header image upload failed.' },
-          { status: 400 },
-        )
-      }
-
-      const metaPayload = buildMetaTemplatePayload(payload)
-      try {
-        await editMessageTemplate({
-          metaTemplateId: existing.meta_template_id,
-          accessToken,
-          components: metaPayload.components,
-        })
-      } catch (e) {
-        const message = e instanceof Error ? e.message : 'Meta edit failed.'
-        await supabase
-          .from('message_templates')
-          .update({
-            submission_error: message,
-            last_submitted_at: new Date().toISOString(),
-          })
-          .eq('id', id)
-        return NextResponse.json({ error: message }, { status: 502 })
+      if (config?.access_token) {
+        const accessToken = decrypt(config.access_token);
+        try {
+          await ensureImageHeaderHandle(payload, accessToken);
+          const metaPayload = buildMetaTemplatePayload(payload);
+          await editMessageTemplate({
+            metaTemplateId: existing.meta_template_id,
+            accessToken,
+            components: metaPayload.components,
+          });
+        } catch (e) {
+          const message = e instanceof Error ? e.message : 'Meta edit failed.';
+          await supabase
+            .from('message_templates')
+            .update({
+              submission_error: message,
+              last_submitted_at: new Date().toISOString(),
+            })
+            .eq('id', id);
+          console.warn('Meta edit warning:', message);
+        }
       }
     }
 
-    // Meta accepted the edit — status flips back to PENDING for review.
+    // Status flips to PENDING for Super Admin review (or APPROVED if Super Admin)
     const { data: row, error: updErr } = await supabase
       .from('message_templates')
       .update({
         category: payload.category,
+        language: payload.language || existing.language || 'en_US',
         header_type: payload.header_type ?? null,
         header_content: payload.header_content ?? null,
         header_media_url: payload.header_media_url ?? null,
@@ -195,14 +172,14 @@ export async function PATCH(
         footer_text: payload.footer_text ?? null,
         buttons: payload.buttons ?? null,
         sample_values: payload.sample_values ?? null,
-        status: 'PENDING',
+        status: nextStatus,
         submission_error: null,
         rejection_reason: null,
         last_submitted_at: new Date().toISOString(),
       })
       .eq('id', id)
       .select()
-      .single()
+      .single();
 
     if (updErr) {
       return NextResponse.json(

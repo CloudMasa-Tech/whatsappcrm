@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 
 import { CustomerDashboard } from '@/components/dashboard/customer-dashboard'
+import { SuperAdminDashboard } from '@/components/dashboard/superadmin-dashboard'
 
 import {
   loadActivity,
@@ -41,10 +42,15 @@ import { useTranslations } from 'next-intl'
 type RangeDays = 7 | 30 | 90
 
 export default function DashboardPage() {
-  const { defaultCurrency, isCustomer } = useAuth()
+  const { defaultCurrency, isSuperAdmin, isAgent, isCustomer } = useAuth()
 
-  // Customer users see a simplified marketing-focused dashboard
-  if (isCustomer) {
+  // Super Admins see the platform-wide Super Admin Dashboard
+  if (isSuperAdmin) {
+    return <SuperAdminDashboard />
+  }
+
+  // Agent users see a simplified marketing-focused dashboard
+  if (isAgent || isCustomer) {
     return <CustomerDashboard />
   }
 

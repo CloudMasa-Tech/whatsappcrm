@@ -15,7 +15,9 @@ import {
   DollarSign,
   StickyNote,
   Plus,
+  ExternalLink,
 } from "lucide-react";
+import { Instagram } from "@/components/icons/instagram";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
@@ -170,6 +172,19 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                 <Copy className="h-3 w-3 text-muted-foreground" />
               )}
             </button>
+
+            {contact.instagram_username && (
+              <a
+                href={`https://instagram.com/${contact.instagram_username}`}
+                target="_blank"
+                rel="noreferrer"
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-pink-600 dark:text-pink-400 transition-colors hover:bg-muted"
+              >
+                <Instagram className="h-4 w-4 text-pink-500 shrink-0" />
+                <span className="flex-1 text-left font-medium truncate">@{contact.instagram_username}</span>
+                <ExternalLink className="h-3 w-3 text-muted-foreground" />
+              </a>
+            )}
 
             {contact.email && (
               <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground">

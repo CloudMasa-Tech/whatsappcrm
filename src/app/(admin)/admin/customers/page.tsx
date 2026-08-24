@@ -33,18 +33,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 
 interface Customer {
   id: string;
   user_id: string;
   email: string;
   full_name: string | null;
+  role?: "agent" | "admin";
   created_at: string;
 }
 
 interface CreatedCredentials {
   email: string;
   password: string;
+  role?: "agent" | "admin";
   signInUrl: string;
 }
 
@@ -78,6 +81,7 @@ export default function AdminCustomersPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [role, setRole] = useState<"agent" | "admin">("agent");
   const [submitting, setSubmitting] = useState(false);
 
   // Projects list
@@ -122,6 +126,7 @@ export default function AdminCustomersPage() {
     setEmail("");
     setPassword("");
     setProjectId("");
+    setRole("agent");
   };
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -151,6 +156,7 @@ export default function AdminCustomersPage() {
           password,
           fullName: fullName.trim() || undefined,
           projectId,
+          role,
         }),
       });
 
@@ -175,7 +181,7 @@ export default function AdminCustomersPage() {
 
   const copyCredentials = () => {
     if (!credentials) return;
-    const text = `Email: ${credentials.email}\nPassword: ${credentials.password}\nLogin: ${credentials.signInUrl}`;
+    const text = `Email: ${credentials.email}\nRole: ${credentials.role ?? 'customer'}\nPassword: ${credentials.password}\nLogin: ${credentials.signInUrl}`;
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -215,9 +221,21 @@ export default function AdminCustomersPage() {
                   {(c.full_name ?? c.email).charAt(0).toUpperCase()}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-foreground">
-                    {c.full_name ?? "—"}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {c.full_name ?? "—"}
+                    </p>
+                    <span
+                      className={cn(
+                        "rounded-full px-2 py-0.5 text-[10px] font-medium capitalize",
+                        c.role === "admin"
+                          ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
+                          : "bg-primary/10 text-primary border border-primary/20"
+                      )}
+                    >
+                      {c.role === "admin" ? "Admin" : "Agent"}
+                    </span>
+                  </div>
                   <p className="truncate text-xs text-muted-foreground">{c.email}</p>
                 </div>
                 <div className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
@@ -280,6 +298,35 @@ export default function AdminCustomersPage() {
               </p>
             </div>
             <div className="space-y-2">
+              <Label htmlFor="role">Role *</Label>
+              <Select
+                value={role}
+                onValueChange={(v) => setRole((v as "agent" | "admin") ?? "agent")}
+              >
+                <SelectTrigger id="role">
+                  <SelectValue placeholder="Select role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="agent">
+                    <div className="flex flex-col text-left py-0.5">
+                      <span className="font-medium text-foreground">Agent</span>
+                      <span className="text-xs text-muted-foreground">
+                        Can send messages & campaigns (cannot disconnect channels)
+                      </span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="admin">
+                    <div className="flex flex-col text-left py-0.5">
+                      <span className="font-medium text-foreground">Admin</span>
+                      <span className="text-xs text-muted-foreground">
+                        Full project configuration, channels, and settings
+                      </span>
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
               <Label>{t("project")} *</Label>
               {projects.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
@@ -328,6 +375,12 @@ export default function AdminCustomersPage() {
                 <div className="flex items-center gap-2">
                   <Mail className="h-4 w-4 text-muted-foreground" />
                   <span className="text-sm font-medium text-foreground">{credentials.email}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Role:</span>
+                  <span className="font-medium text-foreground capitalize">
+                    {credentials.role ?? "customer"}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-muted-foreground">{t("password")}:</span>

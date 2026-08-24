@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import {
   Plus,
@@ -12,6 +13,10 @@ import {
   Pencil,
   RotateCcw,
   Upload,
+  Clock,
+  Check,
+  ShieldCheck,
+  ExternalLink,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import {
@@ -139,13 +144,13 @@ const MEDIA_HEADER_TYPES: MessageTemplate['header_type'][] = [
 function isMediaHeaderType(
   type: MessageTemplate['header_type'] | undefined
 ): type is 'image' | 'video' | 'document' {
-  return !!type && MEDIA_HEADER_TYPES.includes(type);
+  return (
+    type === 'image' || type === 'video' || type === 'document'
+  );
 }
 
-// File-picker `accept` list per header kind, used by the attach-media
-// dialog. Mirrors the kinds Meta supports for template headers.
 function mediaHeaderAccept(
-  type: MessageTemplate['header_type'] | undefined
+  type: 'image' | 'video' | 'document' | MessageTemplate['header_type'] | undefined
 ): string {
   switch (type) {
     case 'image':
@@ -162,7 +167,8 @@ function mediaHeaderAccept(
 export function TemplateManager() {
   const t = useTranslations('Settings.templates');
   const supabase = createClient();
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, activeProjectId, isSuperAdmin, platformRole } = useAuth();
+  const isSuperAdminUser = isSuperAdmin || platformRole === 'super_admin';
 
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -170,26 +176,12 @@ export function TemplateManager() {
   const [submitting, setSubmitting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [form, setForm] = useState<TemplateFormData>(emptyForm);
-  // Non-null when the dialog is editing an existing row — switches the
-  // submit handler from POST /submit to PATCH /[id] and changes the
-  // dialog title + CTA. Set to the template id to pre-fill from a row.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  // Template selected for the confirm-delete dialog. The destructive
-  // action goes through this two-step so a slip on the trash icon
-  // doesn't take the template off Meta as well as locally.
   const [templateToDelete, setTemplateToDelete] =
     useState<MessageTemplate | null>(null);
-  // Header-image upload (issue #230). Uploads to the account-scoped
-  // chat-media bucket and stores the public URL in header_media_url; the
-  // submit route turns that into a Meta Resumable-Upload handle.
   const [uploadingHeader, setUploadingHeader] = useState(false);
   const headerFileRef = useRef<HTMLInputElement>(null);
-  // Template selected for the attach-header-media dialog — non-null
-  // while open. Used to set/replace the send-time media URL on synced
-  // templates, which Meta's list API can't provide (it only returns the
-  // creation-time header_handle, not the URL). Purely local — no Meta
-  // re-review, unlike the Edit dialog.
   const [mediaDialogTemplate, setMediaDialogTemplate] =
     useState<MessageTemplate | null>(null);
   const [mediaUrl, setMediaUrl] = useState('');
@@ -197,9 +189,59 @@ export function TemplateManager() {
   const [savingMedia, setSavingMedia] = useState(false);
   const mediaFileRef = useRef<HTMLInputElement>(null);
 
-  // Body variable indices — `[1, 2, 3]` for "{{1}} {{2}} {{3}}". We
-  // re-run the extractor on every render to keep the sample-value rows
-  // in sync with what the user typed.
+  // Super Admin direct approval / rejection state
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [rejectingTemplate, setRejectingTemplate] = useState<MessageTemplate | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+
+  const handleApproveTemplate = async (template: MessageTemplate) => {
+    setApprovingId(template.id);
+    try {
+      const res = await fetch(`/api/admin/templates/${template.id}/approve`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to approve template');
+      toast.success(`Template "${template.name}" approved successfully!`);
+      setTemplates((prev) =>
+        prev.map((t) => (t.id === template.id ? { ...t, status: 'APPROVED', rejection_reason: undefined } : t))
+      );
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to approve template');
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  const handleRejectTemplate = async () => {
+    if (!rejectingTemplate) return;
+    setRejectingId(rejectingTemplate.id);
+    try {
+      const res = await fetch(`/api/admin/templates/${rejectingTemplate.id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: rejectReason }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to reject template');
+      toast.success(`Template "${rejectingTemplate.name}" rejected.`);
+      setTemplates((prev) =>
+        prev.map((t) =>
+          t.id === rejectingTemplate.id
+            ? { ...t, status: 'REJECTED', rejection_reason: rejectReason }
+            : t
+        )
+      );
+      setRejectingTemplate(null);
+      setRejectReason('');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to reject template');
+    } finally {
+      setRejectingId(null);
+    }
+  };
+
   const bodyVarCount = useMemo(
     () => extractVariableIndices(form.body_text).length,
     [form.body_text]
@@ -212,8 +254,6 @@ export function TemplateManager() {
     [form.header_format, form.header_content]
   );
 
-  // Resize body_samples so it always has exactly bodyVarCount entries.
-  // (We mutate via setForm in an effect so React owns the state.)
   useEffect(() => {
     setForm((prev) => {
       if (prev.body_samples.length === bodyVarCount) return prev;
@@ -223,24 +263,16 @@ export function TemplateManager() {
     });
   }, [bodyVarCount]);
 
-  useEffect(() => {
-    if (authLoading) return;
-    if (!user) {
-      setLoading(false);
-      return;
-    }
-    fetchTemplates(user.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, user?.id]);
-
-  async function fetchTemplates(userId: string) {
+  const fetchTemplates = useCallback(async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('message_templates')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
+      let query = supabase.from('message_templates').select('*');
+      if (activeProjectId) {
+        query = query.eq('project_id', activeProjectId);
+      } else if (!isSuperAdminUser && user?.id) {
+        query = query.eq('user_id', user.id);
+      }
+      const { data, error } = await query.order('created_at', { ascending: false });
       if (error) throw error;
       setTemplates(data || []);
     } catch (err) {
@@ -249,7 +281,16 @@ export function TemplateManager() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [supabase, activeProjectId, user?.id, isSuperAdminUser, t]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+    fetchTemplates();
+  }, [authLoading, user, fetchTemplates]);
 
   function buildSubmitPayload() {
     const sample_values: TemplateSampleValues = {};
@@ -328,16 +369,30 @@ export function TemplateManager() {
       }
       // Refresh first, then close — re-opening the dialog
       // immediately should not show a stale list.
-      if (user) await fetchTemplates(user.id);
-      toast.success(
-        data.dry_run
-          ? isEdit
-            ? t('toastSaveEditDry')
-            : t('toastSaveNewDry')
-          : isEdit
-            ? t('toastSubmitEditSuccess')
-            : t('toastSubmitNewSuccess')
-      );
+      if (user) await fetchTemplates();
+      if (data.requiresApproval) {
+        toast.success(
+          isEdit
+            ? 'Template updated and re-submitted for Super Admin approval.'
+            : 'Template submitted for Super Admin approval.'
+        );
+      } else if (data.isSuperAdmin) {
+        toast.success(
+          isEdit
+            ? 'Template updated and approved.'
+            : 'Template created and approved.'
+        );
+      } else {
+        toast.success(
+          data.dry_run
+            ? isEdit
+              ? t('toastSaveEditDry')
+              : t('toastSaveNewDry')
+            : isEdit
+              ? t('toastSubmitEditSuccess')
+              : t('toastSubmitNewSuccess')
+        );
+      }
       setDialogOpen(false);
       setForm(emptyForm);
       setEditingId(null);
@@ -388,7 +443,7 @@ export function TemplateManager() {
         // the same short timer as `success`.
         toast.error(t('toastSyncTruncated'), { duration: 10000 });
       }
-      await fetchTemplates(user.id);
+      await fetchTemplates();
     } catch (err) {
       console.error('Template sync error:', err);
       toast.error(err instanceof Error ? err.message : t('toastSyncError'));
@@ -645,6 +700,29 @@ export function TemplateManager() {
         }
       />
 
+      {isSuperAdminUser && templates.some((t) => (t.status || '').toUpperCase() === 'PENDING') && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+          <div className="flex items-center gap-2.5">
+            <ShieldCheck className="size-5 shrink-0 text-amber-400" />
+            <div>
+              <span className="font-semibold text-foreground">
+                {templates.filter((t) => (t.status || '').toUpperCase() === 'PENDING').length} Template(s) Pending Approval
+              </span>
+              <p className="text-xs text-muted-foreground">
+                Review and approve templates submitted by project admins directly below or in the Admin Panel.
+              </p>
+            </div>
+          </div>
+          <Link
+            href="/admin/templates"
+            className="inline-flex items-center gap-1.5 rounded-md bg-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-300 transition-colors hover:bg-amber-500/30 border border-amber-500/30"
+          >
+            Open Admin Approvals Portal
+            <ExternalLink className="size-3.5" />
+          </Link>
+        </div>
+      )}
+
       {templates.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
@@ -675,43 +753,24 @@ export function TemplateManager() {
                       <Badge className={`border text-xs ${status.classes}`}>
                         {status.label}
                       </Badge>
-                      {template.language && (
-                        <span className="text-muted-foreground text-xs uppercase">
-                          {template.language}
-                        </span>
-                      )}
-                      {template.quality_score && (
-                        <span
-                          className={`text-[10px] font-medium uppercase ${
-                            template.quality_score === 'GREEN'
-                              ? 'text-emerald-400'
-                              : template.quality_score === 'YELLOW'
-                                ? 'text-yellow-400'
-                                : 'text-red-400'
-                          }`}
-                          title="Meta quality score"
-                        >
-                          {template.quality_score}
+                      <Badge variant="outline" className="border-border text-xs">
+                        {template.language}
+                      </Badge>
+                      {template.rejection_reason && (
+                        <span className="text-xs text-red-400 font-medium">
+                          Reason: {template.rejection_reason}
                         </span>
                       )}
                     </div>
-                    <p className="text-muted-foreground line-clamp-2 text-sm">
-                      {template.body_text}
-                    </p>
-                    {template.footer_text && (
-                      <p className="text-muted-foreground text-xs italic">
-                        {template.footer_text}
+                    {template.body_text && (
+                      <p className="text-muted-foreground line-clamp-2 text-xs">
+                        {template.body_text}
                       </p>
                     )}
-                    {(template.rejection_reason ||
-                      template.submission_error) && (
-                      <div className="flex items-start gap-1.5 rounded border border-red-900/40 bg-red-950/20 px-2 py-1.5 text-xs text-red-400">
-                        <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
-                        <span>
-                          {template.rejection_reason ||
-                            template.submission_error}
-                        </span>
-                      </div>
+                    {template.header_media_url && (
+                      <p className="text-muted-foreground truncate text-[11px]">
+                        {t('attachedMedia', { url: template.header_media_url })}
+                      </p>
                     )}
                     {isMediaHeaderType(template.header_type) &&
                       !template.header_media_url && (
@@ -722,6 +781,38 @@ export function TemplateManager() {
                       )}
                   </div>
                   <div className="ml-2 flex shrink-0 items-center gap-1">
+                    {isSuperAdminUser && statusKey === 'PENDING' && (
+                      <>
+                        <Button
+                          size="sm"
+                          onClick={() => handleApproveTemplate(template)}
+                          disabled={approvingId === template.id || rejectingId === template.id}
+                          title="Approve Template"
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium gap-1 h-8 px-2.5 shadow-sm"
+                        >
+                          {approvingId === template.id ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <Check className="size-3.5" />
+                          )}
+                          Approve
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setRejectingTemplate(template);
+                            setRejectReason('');
+                          }}
+                          disabled={approvingId === template.id || rejectingId === template.id}
+                          title="Reject Template"
+                          className="border-red-500/40 text-red-400 hover:bg-red-950/30 hover:text-red-300 gap-1 h-8 px-2.5"
+                        >
+                          <X className="size-3.5" />
+                          Reject
+                        </Button>
+                      </>
+                    )}
                     {isMediaHeaderType(template.header_type) && (
                       <Button
                         variant="ghost"
@@ -735,7 +826,7 @@ export function TemplateManager() {
                         {t('attachMedia')}
                       </Button>
                     )}
-                    {statusKey === 'APPROVED' && (
+                    {(statusKey === 'APPROVED' || statusKey === 'PENDING' || statusKey === 'DRAFT') && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -1410,6 +1501,86 @@ export function TemplateManager() {
               ) : (
                 t('save')
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Super Admin Rejection Dialog */}
+      <Dialog
+        open={!!rejectingTemplate}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRejectingTemplate(null);
+            setRejectReason('');
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md bg-card border-border">
+          <DialogHeader>
+            <DialogTitle className="text-foreground">Reject Template</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              Provide a reason for rejecting &quot;{rejectingTemplate?.name}&quot;. The project admin will see this reason and can make changes to resubmit.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <Label htmlFor="reject-reason" className="text-foreground text-xs font-medium">
+              Rejection Reason
+            </Label>
+            <Textarea
+              id="reject-reason"
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="e.g. Contains promotional language in a utility template..."
+              rows={3}
+              className="bg-muted border-border text-foreground placeholder:text-muted-foreground resize-none"
+            />
+            <div className="space-y-1.5">
+              <span className="text-[11px] text-muted-foreground font-medium">Quick reason presets:</span>
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {[
+                  'Contains promotional content in utility template',
+                  'Malformed {{variables}} without context',
+                  'Violates WhatsApp Business Policy',
+                  'Invalid buttons or destination URLs',
+                ].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setRejectReason(preset)}
+                    className="text-[11px] rounded bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground px-2 py-1 transition-colors border border-border text-left"
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="bg-popover border-border gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRejectingTemplate(null)}
+              disabled={!!rejectingId}
+              className="border-border text-muted-foreground"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleRejectTemplate}
+              disabled={!rejectReason.trim() || !!rejectingId}
+              className="gap-1.5"
+            >
+              {rejectingId ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <X className="size-3.5" />
+              )}
+              Confirm Rejection
             </Button>
           </DialogFooter>
         </DialogContent>

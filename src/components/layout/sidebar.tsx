@@ -28,6 +28,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { Instagram } from "@/components/icons/instagram";
 import type { AccountRole } from "@/lib/auth/roles";
 
 // Per-role chip metadata used in the sidebar's account strip + the
@@ -83,34 +84,34 @@ import {
 interface NavItem {
   href: string;
   labelKey: string;
-  icon: typeof LayoutDashboard;
+  icon: React.ComponentType<{ className?: string }>;
   /**
    * When true, the nav row renders a small "Beta" chip after the label.
    * Purely informational — doesn't affect routing or access.
    */
   beta?: boolean;
-  /** If set, only shown to users with this platform role (or all if omitted). */
-  platformRole?: "super_admin" | "customer";
+  /** Allowed roles: 'super_admin' | 'admin' | 'agent' (or all if omitted). */
+  roles?: ("super_admin" | "admin" | "agent")[];
 }
 
 const navItems: NavItem[] = [
   { href: "/dashboard", labelKey: "dashboard", icon: LayoutDashboard },
-  // Inbox — shown to agents / customers only; hidden for super_admin
-  { href: "/inbox", labelKey: "inbox", icon: MessageSquare, platformRole: "customer" },
-  { href: "/whatsapp", labelKey: "whatsapp", icon: QrCode },
-  { href: "/contacts", labelKey: "contacts", icon: Users },
-  { href: "/broadcasts", labelKey: "broadcasts", icon: Radio },
-  { href: "/settings?tab=templates", labelKey: "templates", icon: FileText },
-  { href: "/pipelines", labelKey: "pipelines", icon: GitBranch },
-  { href: "/automations", labelKey: "automations", icon: Zap },
-  { href: "/flows", labelKey: "flows", icon: Workflow, beta: true },
-  { href: "/agents", labelKey: "aiAgents", icon: Bot },
-  { href: "/notifications", labelKey: "notifications", icon: Bell },
   // Super admin exclusive: Admin Panel
-  { href: "/admin", labelKey: "admin", icon: Shield, platformRole: "super_admin" },
+  { href: "/admin", labelKey: "admin", icon: Shield, roles: ["super_admin"] },
+  { href: "/inbox", labelKey: "inbox", icon: MessageSquare, roles: ["admin", "agent"] },
+  { href: "/whatsapp", labelKey: "whatsapp", icon: QrCode, roles: ["admin"] },
+  { href: "/instagram", labelKey: "instagram", icon: Instagram, roles: ["admin"] },
+  { href: "/contacts", labelKey: "contacts", icon: Users, roles: ["admin", "agent"] },
+  { href: "/broadcasts", labelKey: "broadcasts", icon: Radio, roles: ["admin", "agent"] },
+  { href: "/templates", labelKey: "templates", icon: FileText, roles: ["admin"] },
+  { href: "/pipelines", labelKey: "pipelines", icon: GitBranch, roles: ["admin", "agent"] },
+  { href: "/automations", labelKey: "automations", icon: Zap, roles: ["admin"] },
+  { href: "/flows", labelKey: "flows", icon: Workflow, beta: true, roles: ["admin"] },
+  { href: "/agents", labelKey: "aiAgents", icon: Bot, roles: ["admin"] },
+  { href: "/notifications", labelKey: "notifications", icon: Bell },
 ];
 
-const bottomNavItems: { href: string; labelKey: string; icon: typeof LayoutDashboard; platformRole?: "super_admin" | "customer" }[] = [
+const bottomNavItems: { href: string; labelKey: string; icon: React.ComponentType<{ className?: string }>; roles?: ("super_admin" | "admin" | "agent")[] }[] = [
   { href: "/settings", labelKey: "settings", icon: Settings },
 ];
 
@@ -219,19 +220,20 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           <ul className="flex flex-col gap-1">
             {navItems
               .filter((item) => {
-                if (!item.platformRole) return true; // no restriction
-                // During profile loading (platformRole === null) show
-                // customer items so the sidebar isn't empty / broken.
-                if (!platformRole) return item.platformRole === "customer";
-                return platformRole === item.platformRole;
+                if (!item.roles || item.roles.length === 0) return true;
+                const currentRole: "super_admin" | "admin" | "agent" =
+                  platformRole === "super_admin"
+                    ? "super_admin"
+                    : accountRole === "admin" || accountRole === "owner" || profile?.role === "admin"
+                    ? "admin"
+                    : "agent";
+                return item.roles.includes(currentRole);
               })
               .map((item) => {
-              // For hrefs with query params (e.g. /settings?tab=whatsapp),
-              // match on the pathname portion only.
               const hrefPath = item.href.split('?')[0];
               const isActive =
                 pathname === hrefPath ||
-                (hrefPath !== "/dashboard" && pathname.startsWith(hrefPath));
+                (hrefPath !== "/dashboard" && hrefPath !== "/settings" && pathname.startsWith(hrefPath));
 
               const showUnreadDot =
                 item.href === "/inbox" && totalUnread > 0 && !isActive;
@@ -293,8 +295,14 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           <ul className="flex flex-col gap-1">
             {bottomNavItems
               .filter((item) => {
-                if (item.platformRole && platformRole !== item.platformRole) return false;
-                return true;
+                if (!item.roles || item.roles.length === 0) return true;
+                const currentRole: "super_admin" | "admin" | "agent" =
+                  platformRole === "super_admin"
+                    ? "super_admin"
+                    : accountRole === "admin" || accountRole === "owner" || profile?.role === "admin"
+                    ? "admin"
+                    : "agent";
+                return item.roles.includes(currentRole);
               })
               .map((item) => {
                 const hrefPath = item.href.split('?')[0];

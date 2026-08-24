@@ -110,6 +110,9 @@ export interface Contact {
   email?: string;
   company?: string;
   avatar_url?: string;
+  channel?: 'whatsapp' | 'instagram' | string;
+  instagram_id?: string;
+  instagram_username?: string;
   created_at: string;
   updated_at: string;
   /** Hydrated by queries that embed `contact_tags(tags(*))` (e.g. the
@@ -164,8 +167,11 @@ export type ConversationStatus = 'open' | 'pending' | 'closed';
 export interface Conversation {
   id: string;
   user_id: string;
+  account_id?: string;
+  project_id?: string;
   contact_id: string;
   status: ConversationStatus;
+  channel?: 'whatsapp' | 'instagram' | string;
   assigned_agent_id?: string;
   last_message_text?: string;
   last_message_at?: string;
@@ -235,6 +241,7 @@ export interface Message {
   template_name?: string;
   message_id?: string;
   status: MessageStatus;
+  channel?: 'whatsapp' | 'instagram' | string;
   created_at: string;
   reply_to_message_id?: string;
   /**

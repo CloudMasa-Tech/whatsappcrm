@@ -15,9 +15,13 @@ import type { User } from "@supabase/supabase-js";
 import { DEFAULT_CURRENCY } from "@/lib/currency";
 import {
   canConnectWhatsApp as canConnectWhatsAppFor,
+  canDisconnectWhatsApp as canDisconnectWhatsAppFor,
   canEditSettings as canEditSettingsFor,
   canManageCustomers as canManageCustomersFor,
   canManageMembers as canManageMembersFor,
+  canManageProjectSettings as canManageProjectSettingsFor,
+  canCreateProject as canCreateProjectFor,
+  canDeleteProject as canDeleteProjectFor,
   canSendMessages as canSendMessagesFor,
   isAccountRole,
   isPlatformRole,
@@ -122,16 +126,24 @@ interface AuthContextValue {
   isAgent: boolean;
   /** True if `accountRole === 'viewer'`. */
   isViewer: boolean;
-  /** True if the caller can manage members (admin+). */
+  /** True if the caller can manage members within the account (admin+). */
   canManageMembers: boolean;
-  /** True if the caller can onboard customer users (admin+). */
+  /** True if the caller can create projects (super_admin only). */
+  canCreateProject: boolean;
+  /** True if the caller can delete projects (super_admin only). */
+  canDeleteProject: boolean;
+  /** True if the caller can onboard customer users (super_admin only). */
   canManageCustomers: boolean;
   /** True if the caller can edit account-wide settings (admin+). */
   canEditSettings: boolean;
+  /** True if the caller can manage project settings and channels (admin/owner/super_admin). */
+  canManageProjectSettings: boolean;
   /** True if the caller can send messages and edit operational data (agent+). */
   canSendMessages: boolean;
-  /** True if the caller can connect or disconnect WhatsApp on their assigned project (agent+). */
+  /** True if the caller can connect WhatsApp on their assigned project (agent+). */
   canConnectWhatsApp: boolean;
+  /** True if the caller can disconnect WhatsApp (admin/owner/super_admin, NOT customer). */
+  canDisconnectWhatsApp: boolean;
   /** Platform-level role — super_admin or customer. Null while loading. */
   platformRole: PlatformRole | null;
   /** True if the caller is a platform super_admin. */
@@ -433,23 +445,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const derived = useMemo(() => {
     const role = profile?.account_role ?? null;
     const pRole = profile?.platform_role ?? null;
+    const isSuperAdmin = pRole === "super_admin";
+    const isOwner = role === "owner" || profile?.role === "owner";
+    const isAdmin = role === "admin" || profile?.role === "admin" || isOwner || isSuperAdmin;
+    const isAgent = (role === "agent" || profile?.role === "agent" || (!isAdmin && !isSuperAdmin)) && !isAdmin && !isSuperAdmin;
+    const isViewer = role === "viewer";
+
     return {
       accountRole: role,
       accountId: profile?.account_id ?? null,
       platformRole: pRole,
-      isSuperAdmin: pRole === "super_admin",
+      isSuperAdmin,
       isCustomer: pRole === "customer",
-      isOwner: role === "owner",
-      isAdmin: role === "admin",
-      isAgent: role === "agent",
-      isViewer: role === "viewer",
-      canManageMembers: role ? canManageMembersFor(role) : false,
-      canManageCustomers: role ? canManageCustomersFor(role) : false,
-      canEditSettings: role ? canEditSettingsFor(role) : false,
-      canSendMessages: role ? canSendMessagesFor(role) : false,
-      canConnectWhatsApp: role ? canConnectWhatsAppFor(role) : false,
+      isOwner,
+      isAdmin,
+      isAgent,
+      isViewer,
+      canManageMembers: role ? canManageMembersFor(role) : (isAdmin || isSuperAdmin),
+      canCreateProject: canCreateProjectFor(pRole),
+      canDeleteProject: canDeleteProjectFor(pRole),
+      canManageCustomers: canManageCustomersFor(pRole),
+      canEditSettings: role ? canEditSettingsFor(role) : (isAdmin || isSuperAdmin),
+      canManageProjectSettings: canManageProjectSettingsFor(role ?? "admin", pRole, profile?.role),
+      canSendMessages: true,
+      canConnectWhatsApp: canConnectWhatsAppFor(role ?? "admin"),
+      canDisconnectWhatsApp: canDisconnectWhatsAppFor(
+        role ?? "admin",
+        pRole,
+        profile?.role,
+      ),
     };
-  }, [profile?.account_role, profile?.account_id, profile?.platform_role]);
+  }, [profile?.account_role, profile?.account_id, profile?.platform_role, profile?.role]);
 
   return (
     <AuthContext.Provider
@@ -508,10 +534,14 @@ export function useAuth(): AuthContextValue {
       isAgent: false,
       isViewer: false,
       canManageMembers: false,
+      canCreateProject: false,
+      canDeleteProject: false,
       canManageCustomers: false,
       canEditSettings: false,
+      canManageProjectSettings: false,
       canSendMessages: false,
       canConnectWhatsApp: false,
+      canDisconnectWhatsApp: false,
     };
   }
   return ctx;

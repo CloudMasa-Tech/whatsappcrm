@@ -3,8 +3,12 @@ import {
   ACCOUNT_ROLES,
   type AccountRole,
   canConnectWhatsApp,
+  canCreateProject,
   canDeleteAccount,
+  canDeleteProject,
+  canDisconnectWhatsApp,
   canEditSettings,
+  canManageCustomers,
   canManageMembers,
   canSendMessages,
   canTransferOwnership,
@@ -134,5 +138,25 @@ describe("capability predicates", () => {
     expect(canTransferOwnership("admin")).toBe(false);
     expect(canTransferOwnership("agent")).toBe(false);
     expect(canTransferOwnership("viewer")).toBe(false);
+  });
+
+  it("canCreateProject / canDeleteProject / canManageCustomers: super_admin only", () => {
+    expect(canCreateProject("super_admin")).toBe(true);
+    expect(canCreateProject("customer")).toBe(false);
+    expect(canCreateProject(null)).toBe(false);
+
+    expect(canDeleteProject("super_admin")).toBe(true);
+    expect(canDeleteProject("customer")).toBe(false);
+
+    expect(canManageCustomers("super_admin")).toBe(true);
+    expect(canManageCustomers("customer")).toBe(false);
+  });
+
+  it("canDisconnectWhatsApp: super_admin, admin, owner (not agent/viewer)", () => {
+    expect(canDisconnectWhatsApp("admin", "customer", "admin")).toBe(true);
+    expect(canDisconnectWhatsApp("owner", "customer", "owner")).toBe(true);
+    expect(canDisconnectWhatsApp("agent", "super_admin", "agent")).toBe(true);
+    expect(canDisconnectWhatsApp("agent", "customer", "agent")).toBe(false);
+    expect(canDisconnectWhatsApp("viewer", "customer", "viewer")).toBe(false);
   });
 });

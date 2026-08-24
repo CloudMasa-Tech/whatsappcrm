@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -10,7 +10,9 @@ import { describe, expect, it } from 'vitest';
 
 const MESSAGES_DIR = join(process.cwd(), 'messages');
 const SOURCE_LOCALE = 'en';
-const TRANSLATED_LOCALES = ['ko'];
+const TRANSLATED_LOCALES = readdirSync(MESSAGES_DIR)
+  .filter((f) => f.endsWith('.json') && f !== `${SOURCE_LOCALE}.json`)
+  .map((f) => f.replace('.json', ''));
 
 function loadKeys(locale: string): Set<string> {
   const raw = readFileSync(join(MESSAGES_DIR, `${locale}.json`), 'utf8');
@@ -31,15 +33,21 @@ function loadKeys(locale: string): Set<string> {
 describe('message catalogue parity', () => {
   const source = loadKeys(SOURCE_LOCALE);
 
-  it.each(TRANSLATED_LOCALES)('%s.json covers every en.json key', (locale) => {
-    const translated = loadKeys(locale);
-    const missing = [...source].filter((k) => !translated.has(k)).sort();
-    expect(missing, `${locale}.json is missing these keys`).toEqual([]);
+  it('loads source en.json catalogue', () => {
+    expect(source.size).toBeGreaterThan(0);
   });
 
-  it.each(TRANSLATED_LOCALES)('%s.json has no orphaned keys', (locale) => {
-    const translated = loadKeys(locale);
-    const orphaned = [...translated].filter((k) => !source.has(k)).sort();
-    expect(orphaned, `${locale}.json has keys absent from en.json`).toEqual([]);
-  });
+  if (TRANSLATED_LOCALES.length > 0) {
+    it.each(TRANSLATED_LOCALES)('%s.json covers every en.json key', (locale) => {
+      const translated = loadKeys(locale);
+      const missing = [...source].filter((k) => !translated.has(k)).sort();
+      expect(missing, `${locale}.json is missing these keys`).toEqual([]);
+    });
+
+    it.each(TRANSLATED_LOCALES)('%s.json has no orphaned keys', (locale) => {
+      const translated = loadKeys(locale);
+      const orphaned = [...translated].filter((k) => !source.has(k)).sort();
+      expect(orphaned, `${locale}.json has keys absent from en.json`).toEqual([]);
+    });
+  }
 });

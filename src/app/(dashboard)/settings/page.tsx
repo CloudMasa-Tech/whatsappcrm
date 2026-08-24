@@ -22,6 +22,7 @@ import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import { ProjectsSettings } from '@/components/settings/projects-settings';
 import {
   resolveSection,
+  SECTION_META,
   type SettingsSection,
 } from '@/components/settings/settings-sections';
 
@@ -44,27 +45,18 @@ export default function SettingsPage() {
 function SettingsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { defaultCurrency, canEditSettings, canManageCustomers, platformRole } = useAuth();
+  const { defaultCurrency, canEditSettings, canManageCustomers, isAgent, isAdmin, isSuperAdmin } = useAuth();
   const { mode } = useTheme();
   const t = useTranslations('Settings');
 
-  // The URL (`?tab=`) is the single source of truth for the active
-  // section — deep-linkable, and it keeps the existing links in the
-  // app sidebar/header working. Legacy tab values (tags, custom-fields)
-  // resolve onto their new home; unknown/empty → the Overview landing.
   const raw = resolveSection(searchParams.get('tab'));
-  // Customers cannot access platform-admin settings sections.
+  const isAgentUser = isAgent && !isAdmin && !isSuperAdmin;
+
+  // Agents cannot access platform-admin or project-workspace settings sections.
   // If they land on one via URL, redirect to overview.
-  //
-  // `projects` is deliberately NOT in that list: a customer manages
-  // their own projects — enabling the WhatsApp QR channel and pairing a
-  // number is self-service. The write itself is still gated, by
-  // `canEditSettings` here and by `is_account_member(account_id,'admin')`
-  // in the projects_update policy, so an agent or viewer sees the same
-  // read-only list they always did.
   const section: SettingsSection =
     raw === 'customers' && !canManageCustomers ? 'overview' :
-    platformRole === 'customer' && ['members', 'customers', 'api'].includes(raw) ? 'overview' :
+    isAgentUser && SECTION_META[raw]?.group === 'workspace' ? 'overview' :
     raw;
 
   const go = (next: SettingsSection) => {
@@ -89,15 +81,15 @@ function SettingsPageInner() {
     profile: <ProfileForm />,
     security: <SecurityPanel />,
     appearance: <AppearancePanel />,
-    projects: <ProjectsSettings canManage={canEditSettings} />,
-    whatsapp: <WhatsAppConfig />,
-    templates: <TemplateManager />,
-    'quick-replies': <QuickRepliesManager />,
-    fields: <FieldsAndTagsPanel />,
-    deals: <DealsSettings />,
-    members: platformRole === 'customer' ? <SettingsOverview onSelect={go} /> : <MembersTab />,
+    projects: isAgentUser ? <SettingsOverview onSelect={go} /> : <ProjectsSettings canManage={canEditSettings} />,
+    whatsapp: isAgentUser ? <SettingsOverview onSelect={go} /> : <WhatsAppConfig />,
+    templates: isAgentUser ? <SettingsOverview onSelect={go} /> : <TemplateManager />,
+    'quick-replies': isAgentUser ? <SettingsOverview onSelect={go} /> : <QuickRepliesManager />,
+    fields: isAgentUser ? <SettingsOverview onSelect={go} /> : <FieldsAndTagsPanel />,
+    deals: isAgentUser ? <SettingsOverview onSelect={go} /> : <DealsSettings />,
+    members: isAgentUser ? <SettingsOverview onSelect={go} /> : <MembersTab />,
     customers: canManageCustomers ? <CustomersTab /> : <SettingsOverview onSelect={go} />,
-    api: platformRole === 'customer' ? <SettingsOverview onSelect={go} /> : <ApiKeysSettings />,
+    api: isAgentUser ? <SettingsOverview onSelect={go} /> : <ApiKeysSettings />,
   };
 
   return (
@@ -117,7 +109,7 @@ function SettingsPageInner() {
           onSelect={go}
           hints={hints}
           canManageCustomers={canManageCustomers}
-          isCustomer={platformRole === "customer"}
+          isCustomer={isAgentUser}
         />
         <div className="min-w-0">{panel[section]}</div>
       </div>

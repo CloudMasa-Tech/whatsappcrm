@@ -27,7 +27,7 @@ function isDuplicateEmailError(err: { message?: string } | null): boolean {
   return msg.includes('already been registered') || msg.includes('already registered');
 }
 
-// GET — the onboarding admin's list of customers they've created.
+// GET — the onboarding admin's list of customers/users they've created.
 export async function GET() {
   try {
     const ctx = await requireSuperAdmin();
@@ -46,15 +46,40 @@ export async function GET() {
       );
     }
 
-    return NextResponse.json({ customers: data ?? [] });
+    // Enrich with role from profiles
+    const userIds = (data ?? []).map((c) => c.user_id).filter(Boolean);
+    const userProfilesMap: Record<string, { role?: string | null; platform_role?: string | null; account_role?: string | null }> = {};
+    if (userIds.length > 0) {
+      const { data: profilesData } = await supabaseAdmin()
+        .from('profiles')
+        .select('user_id, role, platform_role, account_role')
+        .in('user_id', userIds);
+
+      if (profilesData) {
+        for (const p of profilesData) {
+          userProfilesMap[p.user_id] = p;
+        }
+      }
+    }
+
+    const customersWithRole = (data ?? []).map((c) => {
+      const prof = userProfilesMap[c.user_id];
+      const assignedRole = prof?.role === 'admin' ? 'admin' : 'agent';
+      return {
+        ...c,
+        role: assignedRole,
+      };
+    });
+
+    return NextResponse.json({ customers: customersWithRole });
   } catch (err) {
     return toErrorResponse(err);
   }
 }
 
-// POST — create a customer user and assign them to a project.
+// POST — create an admin/agent user and assign them to a project.
 //
-// The customer's profile is placed in the ADMIN's account (same
+// The user's profile is placed in the ADMIN's account (same
 // account_id as the caller), NOT in a new isolated account. The
 // handle_new_user trigger skips account/project creation when it
 // sees created_by_admin = true in user_metadata, so the API can
@@ -80,6 +105,7 @@ export async function POST(request: Request) {
     password?: unknown;
     fullName?: unknown;
     projectId?: unknown;
+    role?: unknown;
   } | null;
   if (!body) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
@@ -104,11 +130,14 @@ export async function POST(request: Request) {
     );
   }
 
-  // Project assignment — required. The customer must be placed in a
+  // Selected role: 'admin' vs 'agent' (default)
+  const assignedRole = body.role === 'admin' ? 'admin' : 'agent';
+
+  // Project assignment — required. The user must be placed in a
   // specific project so they can access WhatsApp and domain data.
   if (typeof body.projectId !== 'string' || body.projectId.trim() === '') {
     return NextResponse.json(
-      { error: 'A project must be selected for the customer' },
+      { error: 'A project must be selected for the user' },
       { status: 400 },
     );
   }
@@ -169,18 +198,18 @@ export async function POST(request: Request) {
     }
     console.error('[POST /api/admin/users] createUser error:', createErr);
     return NextResponse.json(
-      { error: 'Failed to create the customer account' },
+      { error: 'Failed to create the user account' },
       { status: 500 },
     );
   }
 
   const userId = created.user.id;
 
-  // Create the profile in the ADMIN's account with account_role = 'agent'.
-  // 'agent' grants RLS read/write to operational data (contacts,
-  // conversations, broadcasts, etc.) but NOT project creation or
-  // settings management (those require 'admin'). The platform_role
-  // column defaults to 'customer' which controls the UI.
+  // Create the profile in the account.
+  // account_role = 'admin' for project admins (full project configuration),
+  // or 'agent' for customers (operational messaging access).
+  const accountRoleForProfile = assignedRole === 'admin' ? 'admin' : 'agent';
+
   const { error: profileErr } = await supabaseAdmin()
     .from('profiles')
     .insert({
@@ -188,7 +217,9 @@ export async function POST(request: Request) {
       full_name: fullName,
       email,
       account_id: ctx.accountId,
-      account_role: 'agent',
+      account_role: accountRoleForProfile,
+      role: assignedRole,
+      platform_role: 'customer',
     });
 
   if (profileErr) {
@@ -200,10 +231,8 @@ export async function POST(request: Request) {
     );
   }
 
-  // Grant project access. Since the customer has account_role = 'agent',
+  // Grant project access. Since the user has account_role = 'agent',
   // they need an explicit project_members row to see the project.
-  // (Owners and admins auto-access all projects in their account;
-  // agents/viewers need a roster entry.)
   const { error: memberErr } = await supabaseAdmin()
     .from('project_members')
     .insert({
@@ -240,16 +269,14 @@ export async function POST(request: Request) {
 
   if (trackErr) {
     console.error('[POST /api/admin/users] tracking insert error:', trackErr);
-    // Non-fatal: the customer was created successfully, the tracking
-    // record is informational only. Don't delete the customer over it.
   }
 
   // The password is returned ONCE so the admin can hand it over in
   // person/over the phone — same spirit as the one-time invite link.
   return NextResponse.json(
     {
-      customer: { id: userId, email, full_name: fullName },
-      credentials: { email, password },
+      customer: { id: userId, email, full_name: fullName, role: assignedRole },
+      credentials: { email, password, role: assignedRole },
       signInUrl: signInUrl(request),
     },
     { status: 201 },

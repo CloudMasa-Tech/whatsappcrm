@@ -46,6 +46,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SettingsPanelHead } from './settings-panel-head';
+import { cn } from '@/lib/utils';
 
 interface Customer {
   id: string;
@@ -53,12 +54,14 @@ interface Customer {
   email: string;
   full_name: string | null;
   project_id: string | null;
+  role?: 'agent' | 'admin';
   created_at: string;
 }
 
 interface CreatedCredentials {
   email: string;
   password: string;
+  role?: 'agent' | 'admin';
   signInUrl: string;
 }
 
@@ -94,6 +97,7 @@ export function CustomersTab() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [projectId, setProjectId] = useState('');
+  const [role, setRole] = useState<'agent' | 'admin'>('agent');
   const [submitting, setSubmitting] = useState(false);
 
   // Projects list.
@@ -142,6 +146,7 @@ export function CustomersTab() {
     setEmail('');
     setPassword('');
     setProjectId('');
+    setRole('agent');
     setSubmitting(false);
   }
 
@@ -164,6 +169,7 @@ export function CustomersTab() {
           password,
           fullName: fullName.trim() ? fullName.trim() : undefined,
           projectId,
+          role,
         }),
       });
       const payload = await res.json().catch(() => ({}));
@@ -174,6 +180,7 @@ export function CustomersTab() {
       setCreated({
         email: payload.credentials?.email ?? email,
         password: payload.credentials?.password ?? password,
+        role: payload.credentials?.role ?? role,
         signInUrl: payload.signInUrl ?? '/login',
       });
       setOpen(false);
@@ -249,9 +256,21 @@ export function CustomersTab() {
                     <UserRound className="size-4" />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-foreground">
-                      {customer.full_name || customer.email}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-medium text-foreground">
+                        {customer.full_name || customer.email}
+                      </p>
+                      <span
+                        className={cn(
+                          "rounded-full px-2 py-0.5 text-[10px] font-medium capitalize",
+                          customer.role === "admin"
+                            ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
+                            : "bg-primary/10 text-primary border border-primary/20"
+                        )}
+                      >
+                        {customer.role === "admin" ? "Admin" : "Agent"}
+                      </span>
+                    </div>
                     <p className="truncate text-xs text-muted-foreground">
                       {customer.full_name ? customer.email : t('unnamed')} ·{' '}
                       {t('created', { date: fmtDate(customer.created_at) })}
@@ -329,6 +348,35 @@ export function CustomersTab() {
               </p>
             </div>
             <div className="grid gap-2">
+              <Label htmlFor="customer-role">Role</Label>
+              <Select
+                value={role}
+                onValueChange={(v) => setRole((v as 'agent' | 'admin') ?? 'agent')}
+              >
+                <SelectTrigger id="customer-role">
+                  <SelectValue placeholder="Select role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="agent">
+                    <div className="flex flex-col text-left py-0.5">
+                      <span className="font-medium text-foreground">Agent</span>
+                      <span className="text-xs text-muted-foreground">
+                        Can send messages & campaigns (cannot disconnect channels)
+                      </span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="admin">
+                    <div className="flex flex-col text-left py-0.5">
+                      <span className="font-medium text-foreground">Admin</span>
+                      <span className="text-xs text-muted-foreground">
+                        Full project configuration, channels, and settings
+                      </span>
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
               <Label>{t('project')}</Label>
               {projects.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
@@ -395,6 +443,12 @@ export function CustomersTab() {
                   <dt className="text-muted-foreground">{t('email')}</dt>
                   <dd className="truncate font-medium text-foreground">
                     {created.email}
+                  </dd>
+                </div>
+                <div className="grid grid-cols-[90px_minmax(0,1fr)] gap-3">
+                  <dt className="text-muted-foreground">Role</dt>
+                  <dd className="font-medium text-foreground capitalize">
+                    {created.role ?? 'customer'}
                   </dd>
                 </div>
                 <div className="grid grid-cols-[90px_minmax(0,1fr)] gap-3">

@@ -11,6 +11,7 @@ import {
   validateSendMessageParams,
   SendMessageError,
 } from '@/lib/whatsapp/send-message'
+import { sendInstagramMessage } from '@/lib/instagram/send-message'
 
 // The dashboard's outbound-send endpoint. It owns auth, per-user rate
 // limiting, and the two ways the UI targets a thread — an existing
@@ -166,6 +167,37 @@ export async function POST(request: Request) {
         { error: 'Conversation not found' },
         { status: 404 }
       )
+    }
+
+    // Check if the conversation is an Instagram conversation
+    const { data: convRow } = await supabase
+      .from('conversations')
+      .select('id, channel')
+      .eq('id', conversationId)
+      .maybeSingle()
+
+    if (convRow?.channel === 'instagram') {
+      try {
+        const result = await sendInstagramMessage(supabase, {
+          conversationId,
+          projectId,
+          accountId,
+          userId: user.id,
+          contentText: content_text,
+          mediaUrl: media_url,
+        })
+
+        return NextResponse.json({
+          success: true,
+          message_id: result.messageId,
+          instagram_message_id: result.externalMessageId,
+        })
+      } catch (err: unknown) {
+        return NextResponse.json(
+          { error: err instanceof Error ? err.message : 'Failed to send Instagram message' },
+          { status: 500 }
+        )
+      }
     }
 
     // Delegate to the shared send core (validates, sends to Meta with

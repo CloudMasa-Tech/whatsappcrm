@@ -101,6 +101,24 @@ export async function DELETE(request: Request) {
       ? await requireProject(requested, 'agent')
       : await requireProjectRole('agent')
 
+    // Fetch user profile role to differentiate Customer vs Agent
+    const { data: profile } = await ctx.supabase
+      .from('profiles')
+      .select('role, platform_role')
+      .eq('user_id', ctx.userId)
+      .maybeSingle()
+
+    const isCustomerUser =
+      profile?.role === 'customer' ||
+      (ctx.platformRole === 'customer' && profile?.role !== 'agent' && ctx.role !== 'owner' && ctx.role !== 'admin')
+
+    if (isCustomerUser) {
+      return NextResponse.json(
+        { error: 'Customer accounts cannot disconnect the WhatsApp channel. Contact your administrator.' },
+        { status: 403 },
+      )
+    }
+
     await disconnectSession(ctx.projectId)
     return NextResponse.json({ success: true })
   } catch (err) {

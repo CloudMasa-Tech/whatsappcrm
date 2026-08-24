@@ -66,11 +66,10 @@ export function SettingsRail({
           (s) =>
             SECTION_META[s].group === group &&
             (s !== 'customers' || canManageCustomers) &&
-            // Customer-only restrictions: hide platform-admin sections.
-            // `projects` stays visible — customers manage their own
-            // projects and connect WhatsApp there.
-            (!isCustomer || !['members', 'customers', 'api'].includes(s)),
+            // Customer role restriction: workspace configuration belongs to Admin.
+            (!isCustomer || SECTION_META[s].group !== 'workspace'),
         );
+        if (items.length === 0) return null;
         return (
           <div
             key={group}

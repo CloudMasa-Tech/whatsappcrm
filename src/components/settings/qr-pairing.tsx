@@ -96,8 +96,10 @@ interface SessionRow {
 interface QrPairingProps {
   projectId: string;
   projectName: string;
-  /** Admins may pair and unpair; everyone else sees status only. */
+  /** Admins/agents may pair; everyone else sees status only. */
   canManage: boolean;
+  /** Whether the user has permission to disconnect the active session (false for customer role). */
+  canDisconnect?: boolean;
 }
 
 const STATUS_COPY: Record<
@@ -121,7 +123,12 @@ const STATUS_COPY: Record<
   },
 };
 
-export function QrPairing({ projectId, projectName, canManage }: QrPairingProps) {
+export function QrPairing({
+  projectId,
+  projectName,
+  canManage,
+  canDisconnect = true,
+}: QrPairingProps) {
   const [session, setSession] = useState<SessionRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -385,15 +392,17 @@ export function QrPairing({ projectId, projectName, canManage }: QrPairingProps)
         {canManage && (
           <div className="flex gap-2">
             {status === "connected" ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={disconnect}
-                disabled={busy}
-              >
-                <Unplug className="mr-1.5 h-4 w-4" />
-                Disconnect
-              </Button>
+              canDisconnect ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={disconnect}
+                  disabled={busy}
+                >
+                  <Unplug className="mr-1.5 h-4 w-4" />
+                  Disconnect
+                </Button>
+              ) : null
             ) : (
               <Button size="sm" onClick={connect} disabled={busy}>
                 {busy ? (

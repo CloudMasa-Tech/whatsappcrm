@@ -46,6 +46,10 @@ export function SettingsOverview({
     defaultCurrency,
     canManageMembers,
     canManageCustomers,
+    isAgent,
+    isAdmin,
+    isSuperAdmin,
+    platformRole,
   } = useAuth();
   const { mode, theme } = useTheme();
   const t = useTranslations('Settings.overview');
@@ -168,13 +172,33 @@ export function SettingsOverview({
   const themeName = THEMES.find((t) => t.id === theme)?.name ?? theme;
   const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
+  const isAgentUser = (isAgent || accountRole === 'agent' || profile?.role === 'agent') && !isAdmin && !isSuperAdmin;
+
   // Per-tile loading + subtitle. `null` counts render as a graceful
   // fallback so a single failed query never blanks a tile.
   const tiles: {
     section: SettingsSection;
     loading: boolean;
     subtitle: ReactNode;
-  }[] = [
+  }[] = isAgentUser
+    ? [
+        {
+          section: 'profile',
+          loading: false,
+          subtitle: profile?.email ?? 'Manage your name and avatar',
+        },
+        {
+          section: 'security',
+          loading: false,
+          subtitle: 'Update your password and security settings',
+        },
+        {
+          section: 'appearance',
+          loading: false,
+          subtitle: t('appearance', { mode: cap(mode), theme: themeName }),
+        },
+      ]
+    : [
     {
       section: 'whatsapp',
       loading: whatsappLoading,

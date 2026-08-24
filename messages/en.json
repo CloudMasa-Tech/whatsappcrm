@@ -19,6 +19,7 @@
     "notifications": "Notifications",
     "contacts": "Contacts",
     "whatsapp": "WhatsApp",
+    "instagram": "Instagram",
     "pipelines": "Pipelines",
     "broadcasts": "Broadcasts",
     "campaigns": "Campaigns",
@@ -42,6 +43,12 @@
     "menuProfile": "Profile",
     "menuSettings": "Settings",
     "menuSignOut": "Sign out"
+  },
+  "Instagram": {
+    "page": {
+      "title": "Instagram Direct Messaging",
+      "description": "Connect your Instagram account to receive customer DMs, send replies from Inbox, and automate responses."
+    }
   },
   "WhatsApp": {
     "page": {
@@ -1791,18 +1798,58 @@
       "dashboard": "Dashboard",
       "customers": "Customers",
       "projects": "Projects",
+      "templates": "Template Approvals",
       "settings": "Settings"
     },
+    "templates": {
+      "title": "Template Approvals",
+      "description": "Review and approve message templates created by project administrators across the platform",
+      "totalTemplates": "Total Templates",
+      "pendingApproval": "Pending Approval",
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "searchPlaceholder": "Search by template name or project…",
+      "all": "All",
+      "statusPending": "Pending",
+      "statusApproved": "Approved",
+      "statusRejected": "Rejected",
+      "noTemplates": "No templates found",
+      "noTemplatesPending": "No templates awaiting approval",
+      "approve": "Approve",
+      "reject": "Reject",
+      "delete": "Delete",
+      "rejectModalTitle": "Reject Template",
+      "rejectModalDesc": "Provide a reason for rejecting this template. The project admin will see this reason to make adjustments.",
+      "reasonLabel": "Rejection Reason",
+      "reasonPlaceholder": "e.g. Contains promotional language in a utility template / violates policy.",
+      "confirmReject": "Reject Template",
+      "cancel": "Cancel",
+      "toastApproved": "Template approved successfully",
+      "toastRejected": "Template rejected",
+      "toastDeleted": "Template deleted"
+    },
     "dashboard": {
-      "title": "Admin Dashboard",
-      "description": "Overview of your platform",
-      "totalCustomers": "Total Customers",
+      "title": "Super Admin Dashboard",
+      "description": "Platform-wide visibility into projects, connected accounts, users, and messaging activity",
+      "totalProjects": "Total Projects",
       "activeProjects": "Active Projects",
+      "connectedAccounts": "Connected Accounts",
+      "totalUsers": "Total Platform Users",
+      "totalConversations": "Total Conversations",
+      "totalMessages": "Total Messages",
       "platformStatus": "Platform Status",
       "operational": "Operational",
-      "recentCustomers": "Recent Customers",
-      "noCustomers": "No customers yet",
-      "loading": "Loading…"
+      "whatsappChannels": "WhatsApp Channels",
+      "instagramChannels": "Instagram Channels",
+      "recentProjects": "Recent Projects",
+      "recentUsers": "Recent Users & Assignments",
+      "noProjects": "No projects created yet",
+      "noUsers": "No users found",
+      "loading": "Loading platform data…",
+      "viewAll": "View all",
+      "newProject": "New Project",
+      "onboardUser": "Onboard User",
+      "refresh": "Refresh"
     },
     "customers": {
       "title": "Customers",
@@ -1855,5 +1902,26 @@
       "notesTitle": "Platform notes",
       "notesDesc": "Customers are created by the Super Admin. Each customer gets their own isolated project with WhatsApp connection, contacts, templates, and campaign capabilities."
     }
+  },
+  "CustomerDashboard": {
+    "title": "Agent Dashboard",
+    "description": "Overview of your assigned campaigns, contacts, and messaging status.",
+    "checkingWhatsApp": "Checking WhatsApp connection…",
+    "whatsappConnected": "WhatsApp Connected",
+    "whatsappNotConnected": "WhatsApp Disconnected",
+    "whatsappConnectedDesc": "Online & Ready · Messages can be sent and received",
+    "whatsappNotConnectedDesc": "Please contact your project administrator to connect WhatsApp.",
+    "methodQR": "WhatsApp QR Gateway",
+    "methodMeta": "Meta Cloud API",
+    "totalContacts": "Total Contacts",
+    "totalCampaigns": "Total Campaigns",
+    "messagesSent": "Messages Sent",
+    "delivered": "Delivered",
+    "recentCampaigns": "Recent Campaigns",
+    "noCampaignsYet": "No campaigns yet",
+    "viewAll": "View all",
+    "recipients": "recipients",
+    "noProjectAssigned": "No project assigned",
+    "noProjectAssignedHint": "Please contact your administrator to assign you to a project."
   }
 }

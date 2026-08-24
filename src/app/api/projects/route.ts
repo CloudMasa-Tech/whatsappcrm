@@ -1,17 +1,10 @@
 import { NextResponse } from 'next/server'
 
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { requireRole, requireSuperAdmin, toErrorResponse } from '@/lib/auth/account'
 import { getCurrentProject, isChannelType, listProjects } from '@/lib/auth/project'
 
 // Projects — the data-isolation boundary inside an organisation.
-// GET lists the ones the caller may reach; POST creates a new one.
-//
-// Both go through the caller's own Supabase client so RLS
-// (projects_select / projects_insert from migration 041) is the
-// authority. No service-role client here: there is nothing this route
-// needs to see that the user is not allowed to see, and reaching for
-// the admin client would mean re-implementing the membership check by
-// hand.
+// GET lists the ones the caller may reach; POST creates a new one (Super Admin only).
 
 /** Max projects per organisation. A guardrail, not a product limit. */
 const MAX_PROJECTS_PER_ACCOUNT = 50
@@ -38,7 +31,7 @@ function slugify(name: string): string {
 export async function GET() {
   try {
     const ctx = await getCurrentProject()
-    const projects = await listProjects(ctx.supabase)
+    const projects = await listProjects(ctx.supabase, ctx.userId, ctx.platformRole)
     return NextResponse.json({
       projects,
       active_project_id: ctx.projectId,
@@ -51,10 +44,8 @@ export async function GET() {
 export async function POST(request: Request) {
   let ctx
   try {
-    // Creating a project is an organisation-level act (it spends
-    // quota and creates a new isolation boundary), so it gates on the
-    // account role rather than membership of any existing project.
-    ctx = await requireRole('admin')
+    // Creating a project is an exclusive platform Super Admin operation.
+    ctx = await requireSuperAdmin()
   } catch (err) {
     return toErrorResponse(err)
   }

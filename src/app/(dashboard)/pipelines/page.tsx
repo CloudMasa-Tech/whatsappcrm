@@ -73,7 +73,16 @@ export default function PipelinesPage() {
   // Guard against double-seeding (React StrictMode double-effect in dev).
   const seedAttempted = useRef(false);
 
-  const loadPipelines = useCallback(async () => {
+  const loadPipelines = useCallback(async (): Promise<Pipeline[]> => {
+    try {
+      const res = await fetch("/api/pipelines");
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json.pipelines)) return json.pipelines as Pipeline[];
+      }
+    } catch (err) {
+      console.error("Failed to load pipelines via API:", err);
+    }
     const { data, error } = await supabase
       .from("pipelines")
       .select("*")
@@ -82,7 +91,7 @@ export default function PipelinesPage() {
       console.error("Failed to load pipelines:", error.message);
       return [];
     }
-    return data ?? [];
+    return (data ?? []) as Pipeline[];
   }, [supabase]);
 
   const loadStages = useCallback(
@@ -110,12 +119,21 @@ export default function PipelinesPage() {
   );
 
   const seedDefaultPipeline = useCallback(async (): Promise<Pipeline | null> => {
+    try {
+      const res = await fetch("/api/pipelines/seed", { method: "POST" });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.pipeline) return json.pipeline;
+      }
+    } catch (err) {
+      console.error("Seed route failed:", err);
+    }
+
     const {
       data: { session },
     } = await supabase.auth.getSession();
     const user = session?.user;
     if (!user) return null;
-    // pipelines.account_id is NOT NULL post-017 with no DB default.
     if (!accountId) return null;
 
     const { data: pipeline, error } = await supabase
@@ -257,6 +275,28 @@ export default function PipelinesPage() {
     if (!name) return;
     setCreating(true);
 
+    try {
+      const res = await fetch("/api/pipelines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        const pipeline = json.pipeline;
+        setNewPipelineName("");
+        setNewPipelineOpen(false);
+        setSelectedPipelineId(pipeline.id);
+        await refreshPipelines();
+        setCreating(false);
+        toast.success(t("toastPipelineCreated"));
+        return;
+      }
+    } catch (err) {
+      console.error("API create pipeline failed, falling back:", err);
+    }
+
     const {
       data: { session },
     } = await supabase.auth.getSession();
@@ -265,7 +305,6 @@ export default function PipelinesPage() {
       setCreating(false);
       return;
     }
-    // pipelines.account_id is NOT NULL post-017 with no DB default.
     if (!accountId) {
       toast.error(t("toastNotLinkedToAccount"));
       setCreating(false);

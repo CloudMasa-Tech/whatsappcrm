@@ -141,122 +141,82 @@ export async function POST(request: Request) {
       )
     }
 
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('platform_role, role')
+      .eq('user_id', user.id)
+      .single();
+
+    const isSuperAdmin = profile?.platform_role === 'super_admin';
+    const targetStatus = isSuperAdmin ? 'APPROVED' : 'PENDING';
+
     const dryRun =
       process.env.WHATSAPP_TEMPLATES_DRY_RUN === 'true' ||
-      process.env.WHATSAPP_TEMPLATES_DRY_RUN === '1'
+      process.env.WHATSAPP_TEMPLATES_DRY_RUN === '1';
 
-    let metaTemplateId: string
-    let metaStatus: string
+    let metaTemplateId: string | null = null;
+    let metaStatus: string = targetStatus;
 
     if (dryRun) {
-      metaTemplateId = `dry-run-${crypto.randomUUID()}`
-      metaStatus = 'PENDING'
+      metaTemplateId = `dry-run-${crypto.randomUUID()}`;
     } else {
-      const { data: config, error: configError } = await supabase
+      const { data: config } = await supabase
         .from('whatsapp_config')
         .select('*')
         .eq('project_id', projectId)
-        .single()
-      if (configError || !config) {
-        return NextResponse.json(
-          {
-            error:
-              'WhatsApp not configured. Connect your WhatsApp Business account in Settings first.',
-          },
-          { status: 400 },
-        )
-      }
-      if (!config.waba_id) {
-        return NextResponse.json(
-          {
-            error:
-              'WABA (WhatsApp Business Account) ID missing. Re-connect your account in Settings.',
-          },
-          { status: 400 },
-        )
-      }
+        .maybeSingle();
 
-      const accessToken = decrypt(config.access_token)
-
-      // Image headers need a Resumable-Upload handle (Meta rejects a
-      // plain URL at creation). Derive it from header_media_url before
-      // building the payload. Surfaces a 400 with an actionable message
-      // (missing META_APP_ID, unreachable URL, wrong type/size).
-      try {
-        await ensureImageHeaderHandle(payload, accessToken)
-      } catch (e) {
-        return NextResponse.json(
-          { error: e instanceof Error ? e.message : 'Header image upload failed.' },
-          { status: 400 },
-        )
-      }
-
-      const metaPayload = buildMetaTemplatePayload(payload)
-      try {
-        const meta = await submitMessageTemplate({
-          wabaId: config.waba_id,
-          accessToken,
-          payload: metaPayload,
-        })
-        metaTemplateId = meta.id
-        metaStatus = meta.status
-      } catch (e) {
-        const message = e instanceof Error ? e.message : 'Meta submit failed.'
-        // Persist the failure so the user can retry; row stays DRAFT
-        // until they fix and re-submit.
-        await upsertTemplateRow(
-          supabase,
-          buildUpsertRow(
-    accountId,
-    projectId,
-    user.id, payload, {
-            status: 'DRAFT',
-            metaTemplateId: null,
-            submissionError: message,
-          }),
-        )
-        const isRateLimit = /\b429\b/.test(message)
-        return NextResponse.json(
-          {
-            error: isRateLimit
-              ? 'Meta rate limit hit (100 template creates per hour). Try again later.'
-              : message,
-          },
-          { status: isRateLimit ? 429 : 502 },
-        )
+      if (config?.waba_id && config?.access_token) {
+        try {
+          const accessToken = decrypt(config.access_token);
+          await ensureImageHeaderHandle(payload, accessToken);
+          const metaPayload = buildMetaTemplatePayload(payload);
+          const meta = await submitMessageTemplate({
+            wabaId: config.waba_id,
+            accessToken,
+            payload: metaPayload,
+          });
+          metaTemplateId = meta.id;
+          if (meta.status) metaStatus = meta.status;
+        } catch (e) {
+          console.warn('[template submit] Meta API submit failed or unneeded (QR mode), proceeding with local template creation:', e);
+        }
       }
     }
+
+    const finalStatus = isSuperAdmin ? 'APPROVED' : normalizeStatus(metaStatus);
 
     const { data: row, error: upsertErr } = await upsertTemplateRow(
       supabase,
       buildUpsertRow(
-    accountId,
-    projectId,
-    user.id, payload, {
-        status: normalizeStatus(metaStatus),
-        metaTemplateId,
-        submissionError: null,
-      }),
-    )
+        accountId,
+        projectId,
+        user.id,
+        payload,
+        {
+          status: finalStatus,
+          metaTemplateId,
+          submissionError: null,
+        },
+      ),
+    );
 
     if (upsertErr) {
-      // The submit succeeded on Meta's side but we failed to persist
-      // locally. That's a data-drift state — surface the meta_template_id
-      // so the user can recover via "Sync from Meta".
       return NextResponse.json(
         {
-          error: `Submitted to Meta but failed to save locally: ${upsertErr.message}. Run "Sync from Meta" to recover.`,
-          meta_template_id: metaTemplateId,
+          error: `Failed to save template locally: ${upsertErr.message}`,
         },
         { status: 500 },
-      )
+      );
     }
 
     return NextResponse.json({
       success: true,
       template: row,
       dry_run: dryRun,
-    })
+      isSuperAdmin,
+      requiresApproval: !isSuperAdmin,
+    });
   } catch (error) {
     console.error('Error submitting template:', error)
     return NextResponse.json(

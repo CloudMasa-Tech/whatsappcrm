@@ -9,14 +9,20 @@ import {
   Plus,
   QrCode,
   Radio,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/hooks/use-auth";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { QrPairing } from "@/components/settings/qr-pairing";
+import {
+  DeleteProjectDialog,
+  type ProjectToDelete,
+} from "@/components/projects/delete-project-dialog";
 
 // ============================================================
 // Projects — the isolation boundary inside an organisation.
@@ -57,10 +63,14 @@ const CHANNEL_COPY: Record<Channel, { label: string; blurb: string }> = {
 };
 
 export function ProjectsSettings({ canManage }: ProjectsSettingsProps) {
+  const { isSuperAdmin, platformRole } = useAuth();
+  const canCreateOrDeleteProject = isSuperAdmin || platformRole === "super_admin";
+
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState<ProjectToDelete | null>(null);
   const [newName, setNewName] = useState("");
   const [newAllowedChannels, setNewAllowedChannels] = useState<Channel[]>(["qr"]);
   const [showForm, setShowForm] = useState(false);
@@ -219,7 +229,7 @@ export function ProjectsSettings({ canManage }: ProjectsSettingsProps) {
             members.
           </p>
         </div>
-        {canManage && !showForm && (
+        {canCreateOrDeleteProject && !showForm && (
           <Button size="sm" onClick={() => setShowForm(true)}>
             <Plus className="mr-1.5 h-4 w-4" />
             New project
@@ -227,7 +237,7 @@ export function ProjectsSettings({ canManage }: ProjectsSettingsProps) {
         )}
       </div>
 
-      {showForm && canManage && (
+      {showForm && canCreateOrDeleteProject && (
         <div className="space-y-4 rounded-lg border border-border p-4">
           <div className="space-y-2">
             <Label htmlFor="project-name">Project name</Label>
@@ -335,25 +345,45 @@ export function ProjectsSettings({ canManage }: ProjectsSettingsProps) {
                 </div>
               </div>
 
-              {canManage && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setArchived(project, !project.archived_at)}
-                >
-                  {project.archived_at ? (
-                    <>
-                      <ArchiveRestore className="mr-1.5 h-4 w-4" />
-                      Restore
-                    </>
-                  ) : (
-                    <>
-                      <Archive className="mr-1.5 h-4 w-4" />
-                      Archive
-                    </>
-                  )}
-                </Button>
-              )}
+              <div className="flex items-center gap-2">
+                {canManage && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setArchived(project, !project.archived_at)}
+                  >
+                    {project.archived_at ? (
+                      <>
+                        <ArchiveRestore className="mr-1.5 h-4 w-4" />
+                        Restore
+                      </>
+                    ) : (
+                      <>
+                        <Archive className="mr-1.5 h-4 w-4" />
+                        Archive
+                      </>
+                    )}
+                  </Button>
+                )}
+
+                {canCreateOrDeleteProject && (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() =>
+                      setProjectToDelete({
+                        id: project.id,
+                        name: project.name,
+                        slug: project.slug,
+                      })
+                    }
+                    className="gap-1.5"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete
+                  </Button>
+                )}
+              </div>
             </div>
 
             {!project.archived_at && (
@@ -419,6 +449,18 @@ export function ProjectsSettings({ canManage }: ProjectsSettingsProps) {
           </div>
         ))}
       </div>
+
+      <DeleteProjectDialog
+        open={Boolean(projectToDelete)}
+        onOpenChange={(open) => {
+          if (!open) setProjectToDelete(null);
+        }}
+        project={projectToDelete}
+        onDeleted={() => {
+          setProjectToDelete(null);
+          void load();
+        }}
+      />
     </div>
   );
 }

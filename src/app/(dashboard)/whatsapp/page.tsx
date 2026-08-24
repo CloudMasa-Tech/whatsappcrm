@@ -21,6 +21,7 @@ export default function WhatsAppPage() {
     canEditSettings,
     canSendMessages,
     canConnectWhatsApp,
+    canDisconnectWhatsApp,
   } = useAuth();
 
   // Only offer what the project actually has switched on under
@@ -109,6 +110,7 @@ export default function WhatsAppPage() {
           projectId={activeProjectId}
           projectName="WhatsApp"
           canManage={canConnectWhatsApp || canSendMessages || canEditSettings}
+          canDisconnect={canDisconnectWhatsApp}
         />
       ) : (
         <WhatsAppConfig />

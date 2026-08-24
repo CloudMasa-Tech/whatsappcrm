@@ -1,18 +1,15 @@
 // ============================================================
-// Account role helpers — pure, unit-testable, no I/O.
+// Account & Platform role helpers — pure, unit-testable, no I/O.
 //
-// Mirrors the `account_role_enum` Postgres type from migration
-// 017_account_sharing.sql. The hierarchy is intentionally a flat
-// ordinal (owner=4 … viewer=1) — it matches the same CASE
-// expression the `is_account_member(account_id, min_role)` SQL
-// helper uses, so server-side TypeScript guards and database-side
-// RLS speak the same language.
-//
-// Predicates (`canManageMembers`, `canEditSettings`, …) are the
-// single source of truth for "what can this role do?" — both
-// API route guards and UI gates should call them rather than
-// open-coding their own role checks. That keeps role-policy
-// changes a one-file diff.
+// 3 Core Roles:
+//   1. super_admin: Platform-wide operator. Full platform control,
+//      project creation & deletion, user onboarding, /admin.
+//   2. admin: Organization / Project administrator. Full project details,
+//      channel configurations (WhatsApp, Instagram), team roster,
+//      pipelines, automations, templates, flows.
+//   3. agent: Project agent / marketing user. Operational access:
+//      inbox messaging, contacts, campaigns/broadcasts, pipelines.
+//      Cannot disconnect channels or edit project settings.
 // ============================================================
 
 export type AccountRole = "owner" | "admin" | "agent" | "viewer";
@@ -20,10 +17,8 @@ export type AccountRole = "owner" | "admin" | "agent" | "viewer";
 /**
  * Platform-level role — orthogonal to AccountRole.
  *
- * - `super_admin`: Platform operator. Can access /admin, manage customers/projects.
- * - `customer`: Restricted marketing user. Can only use assigned features.
- *
- * Stored in `profiles.platform_role` (column added by migration 047).
+ * - `super_admin`: Platform operator. Can access /admin, create/delete projects, onboard users.
+ * - `customer` / `agent`: Operational user assigned to projects.
  */
 export type PlatformRole = "super_admin" | "customer";
 
@@ -70,62 +65,106 @@ export function isAccountRole(value: unknown): value is AccountRole {
 
 // ============================================================
 // Capability predicates
-//
-// Every UI gate and API route guard should call one of these
-// instead of comparing role strings inline. Adding a capability
-// = one new predicate here + one call site change per consumer.
 // ============================================================
 
-/** Owner / admin: invite, remove, change roles. */
+/** Owner / admin: invite, remove, change roles within the account. */
 export function canManageMembers(role: AccountRole): boolean {
   return hasMinRole(role, "admin");
 }
 
 /**
- * Owner / admin: create customer users (each gets their own separate
- * account + project via `handle_new_user`). Onboarding is account-wide,
- * so it requires admin+ like the other account-level settings.
+ * Platform user onboarding: STRICTLY SUPER_ADMIN only.
  */
-export function canManageCustomers(role: AccountRole): boolean {
-  return hasMinRole(role, "admin");
+export function canManageCustomers(platformRole?: PlatformRole | string | null): boolean {
+  return platformRole === "super_admin";
 }
 
 /**
- * Owner / admin: edit account-wide settings (WhatsApp config,
- * message templates, pipelines, tags, custom fields, account
- * name). Excludes per-user settings like avatar or own password.
+ * Project creation: STRICTLY SUPER_ADMIN only.
  */
+export function canCreateProject(platformRole?: PlatformRole | string | null): boolean {
+  return platformRole === "super_admin";
+}
+
+/**
+ * Project deletion: STRICTLY SUPER_ADMIN only.
+ */
+export function canDeleteProject(platformRole?: PlatformRole | string | null): boolean {
+  return platformRole === "super_admin";
+}
+
+/**
+ * Project Settings & Channel Config: Super Admin, Owner, Admin.
+ * Excludes Agent.
+ */
+export function canManageProjectSettings(
+  accountRole: AccountRole,
+  platformRole?: PlatformRole | string | null,
+  userRole?: string | null,
+): boolean {
+  if (platformRole === "super_admin" || accountRole === "owner" || accountRole === "admin") {
+    return true;
+  }
+  if (userRole === "agent" || userRole === "customer") {
+    return false;
+  }
+  return hasMinRole(accountRole, "admin");
+}
+
+/** Owner / admin: edit account-wide settings. */
 export function canEditSettings(role: AccountRole): boolean {
   return hasMinRole(role, "admin");
 }
 
 /**
- * Owner / admin / agent: write operational data — send messages,
- * create contacts, move deals, run broadcasts, edit automations.
- * Viewers are read-only.
+ * Super Admin / Admin / Agent: write operational data — send messages,
+ * create contacts, move deals, run broadcasts, view inbox.
  */
 export function canSendMessages(role: AccountRole): boolean {
   return hasMinRole(role, "agent");
 }
 
 /**
- * Owner / admin / agent: connect/disconnect WhatsApp for their assigned project.
- * Viewers are read-only.
+ * Connect WhatsApp / Instagram for a project: Super Admin, Owner, Admin.
  */
 export function canConnectWhatsApp(role: AccountRole): boolean {
   return hasMinRole(role, "agent");
 }
 
 /**
- * Viewer: read-only across everything. Provided as a positive
- * predicate so UI gates read naturally (`if (canViewOnly(role))`
- * shows the "Read-only" tooltip without inverting `canSendMessages`).
+ * Disconnect WhatsApp / Instagram channels:
+ * - Super Admin / Owner / Admin: YES
+ * - Agent: NO (cannot disconnect channels)
+ */
+export function canDisconnectWhatsApp(
+  accountRole: AccountRole,
+  platformRole?: PlatformRole | string | null,
+  userRole?: string | null,
+): boolean {
+  if (
+    platformRole === "super_admin" ||
+    accountRole === "owner" ||
+    accountRole === "admin"
+  ) {
+    return true;
+  }
+  if (userRole === "agent" || userRole === "customer" || accountRole === "agent") {
+    return false;
+  }
+  return hasMinRole(accountRole, "admin");
+}
+
+/** Alias for channel disconnection capability */
+export const canDisconnectChannels = canDisconnectWhatsApp;
+
+/**
+ * Viewer: read-only across everything.
  */
 export function canViewOnly(role: AccountRole): boolean {
   return role === "viewer";
 }
 
-/** Owner only: irreversible destructive operations. */
+/** Owner only: irreversible destructive operations on account. */
 export function canDeleteAccount(role: AccountRole): boolean {
   return role === "owner";
 }
@@ -145,12 +184,12 @@ export function isPlatformRole(value: unknown): value is PlatformRole {
 }
 
 /** True iff the platform role is super_admin. */
-export function isSuperAdmin(platformRole: PlatformRole | null): boolean {
+export function isSuperAdmin(platformRole: PlatformRole | string | null | undefined): boolean {
   return platformRole === "super_admin";
 }
 
-/** True iff the platform role is customer. */
-export function isCustomer(platformRole: PlatformRole | null): boolean {
+/** True iff the platform role is customer/agent. */
+export function isCustomer(platformRole: PlatformRole | string | null | undefined): boolean {
   return platformRole === "customer";
 }
 
@@ -158,7 +197,7 @@ export function isCustomer(platformRole: PlatformRole | null): boolean {
  * Can this user access the Super Admin area (/admin)?
  * Only super_admins.
  */
-export function canAccessAdmin(platformRole: PlatformRole | null): boolean {
+export function canAccessAdmin(platformRole: PlatformRole | string | null | undefined): boolean {
   return platformRole === "super_admin";
 }
 
@@ -166,6 +205,6 @@ export function canAccessAdmin(platformRole: PlatformRole | null): boolean {
  * Can this user create/manage customers and projects at the platform level?
  * Only super_admins.
  */
-export function canManagePlatform(platformRole: PlatformRole | null): boolean {
+export function canManagePlatform(platformRole: PlatformRole | string | null | undefined): boolean {
   return platformRole === "super_admin";
 }
