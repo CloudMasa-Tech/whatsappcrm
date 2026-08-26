@@ -22,13 +22,12 @@
 // ============================================================
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
+  FolderKanban,
   Loader2,
-  Mail,
-  MailX,
-  Plus,
   Trash2,
   UsersRound,
 } from 'lucide-react';
@@ -40,11 +39,6 @@ import {
   AvatarImage,
 } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -55,15 +49,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { useTranslations } from 'next-intl';
-import { RequireRole } from '@/components/auth/require-role';
 import { useAuth } from '@/hooks/use-auth';
 import { usePresence } from '@/hooks/use-presence';
 import type { AccountRole } from '@/lib/auth/roles';
@@ -72,7 +58,6 @@ import {
   PRESENCE_DOT_CLASS,
   PresenceDot,
 } from '@/components/presence/presence-dot';
-import { InviteMemberDialog } from './invite-member-dialog';
 import { SettingsPanelHead } from './settings-panel-head';
 import { ROLE_META } from './role-meta';
 
@@ -83,6 +68,13 @@ interface Member {
   avatar_url: string | null;
   role: AccountRole;
   joined_at: string;
+  project_id?: string | null;
+  project_name?: string | null;
+  projects?: Array<{
+    id: string;
+    name: string;
+    channel_type?: string;
+  }>;
 }
 
 interface Invitation {
@@ -127,7 +119,7 @@ function fmtExpiresIn(iso: string, t: (key: string, values?: Record<string, stri
 export function MembersTab() {
   const t = useTranslations('Settings.members');
   const tRoles = useTranslations('Settings.roles');
-  const { user, canManageMembers } = useAuth();
+  const { user, canManageMembers, isSuperAdmin } = useAuth();
   const { getPresence, getRow, now } = usePresence();
 
   const [members, setMembers] = useState<Member[]>([]);
@@ -144,7 +136,7 @@ export function MembersTab() {
     try {
       const [mres, ires] = await Promise.all([
         fetch('/api/account/members', { cache: 'no-store' }),
-        canManageMembers
+        isSuperAdmin
           ? fetch('/api/account/invitations', { cache: 'no-store' })
           : Promise.resolve(null),
       ]);
@@ -156,25 +148,13 @@ export function MembersTab() {
       }
       const mdata = (await mres.json()) as { members: Member[] };
       setMembers(mdata.members);
-
-      if (ires) {
-        if (!ires.ok) {
-          const payload = await ires.json().catch(() => ({}));
-          toast.error(payload.error || 'Failed to load invitations');
-          return;
-        }
-        const idata = (await ires.json()) as { invitations: Invitation[] };
-        setInvitations(idata.invitations);
-      } else {
-        setInvitations([]);
-      }
     } catch (err) {
       console.error('[MembersTab] load error:', err);
       toast.error('Could not reach the server');
     } finally {
       setLoading(false);
     }
-  }, [canManageMembers]);
+  }, []);
 
   useEffect(() => {
     void loadEverything();
@@ -281,19 +261,53 @@ export function MembersTab() {
   }
 
   return (
-    <section className="animate-in fade-in-50 space-y-6 duration-200">
+    <section className="animate-in fade-in-50 space-y-6">
       <SettingsPanelHead
         title={t('title')}
-        description={t('description')}
+        description="View team members and active agents in this workspace."
         action={
-          <RequireRole min="admin">
-            <Button onClick={() => setInviteOpen(true)}>
-              <Plus className="size-4" />
-              {t('inviteMember')}
-            </Button>
-          </RequireRole>
+          isSuperAdmin ? (
+            <Link href="/admin/customers">
+              <Button size="sm">
+                <UsersRound className="size-4 mr-1.5" />
+                Manage Users
+              </Button>
+            </Link>
+          ) : undefined
         }
       />
+
+      {/* Info notice explaining centralized onboarding */}
+      <div className="rounded-lg border border-border/80 bg-muted/40 p-3.5 flex items-start gap-3 text-xs text-muted-foreground">
+        <UsersRound className="size-4 text-primary shrink-0 mt-0.5" />
+        <div>
+          <span className="font-semibold text-foreground">User Onboarding & Management: </span>
+          Team members, agents, and administrators are provisioned and assigned to projects centrally by the Platform Super Administrator.
+          {isSuperAdmin && (
+            <Link href="/admin/customers" className="ml-1 text-primary font-medium hover:underline">
+              Go to Customer Management &rarr;
+            </Link>
+          )}
+        </div>
+      </div>
+
+      {/* Active project banner for non-superadmin users (agents / project members) */}
+      {!isSuperAdmin && (
+        <div className="rounded-lg border border-primary/20 bg-primary/5 p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2">
+            <FolderKanban className="size-4 text-primary shrink-0" />
+            <span className="text-foreground font-medium">
+              Project Workspace:{' '}
+              <span className="font-semibold text-primary">
+                {members[0]?.project_name || 'Assigned Project'}
+              </span>
+            </span>
+          </div>
+          <span className="text-muted-foreground text-[11px]">
+            Displaying team members assigned to this project
+          </span>
+        </div>
+      )}
 
       {/* Live presence summary across the roster. Updates without a
           full refresh as heartbeats and the local re-derive tick land. */}
@@ -338,131 +352,82 @@ export function MembersTab() {
                 presenceRow?.last_seen_at ?? null,
                 now,
               );
+              const memberProjectName =
+                member.project_name ||
+                (member.projects && member.projects.length > 0
+                  ? member.projects[0].name
+                  : null);
 
               return (
                 <li
                   key={member.user_id}
-                  // Mobile: stack identity (avatar+name+email) above the
-                  // role/remove actions so the role dropdown's fixed
-                  // 128px width doesn't force the name into a 50-pixel
-                  // truncation. Desktop (sm+): everything inline as
-                  // before.
-                  className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-4"
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3.5"
                 >
-                  <div className="flex min-w-0 flex-1 items-center gap-4">
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Avatar className="size-9 shrink-0">
-                            {member.avatar_url ? (
-                              <AvatarImage
-                                src={member.avatar_url}
-                                alt={member.full_name || 'Member'}
-                              />
-                            ) : null}
-                            <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
-                              {(member.full_name || member.email || 'U')
-                                .charAt(0)
-                                .toUpperCase()}
-                            </AvatarFallback>
-                            {/* role+label so screen readers announce
-                                presence — the hover tooltip alone isn't
-                                reachable by keyboard/AT on a non-focusable
-                                avatar. */}
-                            <AvatarBadge
-                              role="img"
-                              aria-label={presenceText}
-                              className={PRESENCE_DOT_CLASS[presence]}
-                            />
-                          </Avatar>
-                        }
+                  {/* Left: Avatar + presence + Name/email + self badge + project badge */}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Avatar className="relative size-10">
+                      <AvatarImage
+                        src={member.avatar_url ?? undefined}
+                        alt={member.full_name || t('unnamed')}
                       />
-                      <TooltipContent>{presenceText}</TooltipContent>
-                    </Tooltip>
+                      <AvatarFallback>
+                        {(member.full_name || member.email || '?')
+                          .charAt(0)
+                          .toUpperCase()}
+                      </AvatarFallback>
+                      <AvatarBadge
+                        className={PRESENCE_DOT_CLASS[presence]}
+                        aria-label={presenceText}
+                      />
+                    </Avatar>
 
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-medium text-foreground">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium text-foreground truncate">
                           {member.full_name || t('unnamed')}
                         </span>
                         {isSelf && (
-                          <Badge className="bg-muted text-muted-foreground border-border text-[10px] uppercase tracking-wide">
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0">
                             {t('you')}
                           </Badge>
                         )}
+                        {memberProjectName && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/60 px-2 py-0.5 text-[10px] font-medium text-foreground">
+                            <FolderKanban className="size-3 text-primary shrink-0" />
+                            {memberProjectName}
+                          </span>
+                        )}
                       </div>
-                      {member.email && (
-                        <p className="truncate text-xs text-muted-foreground">
-                          {member.email}
-                        </p>
-                      )}
+                      <p className="text-xs text-muted-foreground truncate font-mono mt-0.5">
+                        {member.email ?? t('noEmail')}
+                      </p>
                     </div>
                   </div>
 
-                  {/* Joined date stays desktop-only. The mobile row's
-                      vertical density makes the joined date noise. */}
-                  <div className="hidden sm:block text-right text-xs text-muted-foreground">
-                    {t('joined', { date: fmtDate(member.joined_at) })}
-                  </div>
+                  {/* Right: Role badge + Joined date + removal (if superadmin) */}
+                  <div className="flex items-center gap-3 self-end sm:self-auto">
+                    <div className="hidden sm:block text-right">
+                      <p className="text-xs text-muted-foreground">
+                        {t('joined', { date: fmtDate(member.joined_at) })}
+                      </p>
+                    </div>
 
-                  {/* Actions cluster. On mobile this is its own row
-                      below the identity block; on desktop it sits
-                      inline. Items align to the start on mobile so the
-                      role dropdown lines up under the avatar. */}
-                  <div className="flex items-center gap-2 sm:gap-3">
-                    {/* Role display / editor. Inline Select is admin+
-                        only AND not allowed on the owner row (owner
-                        changes go through transfer, which lands later). */}
-                    {canManageMembers && !isOwnerRow && !isSelf ? (
-                      <Select
-                        value={member.role}
-                        onValueChange={(v) =>
-                          // Base UI Select can emit null on clear. We
-                          // don't expose a clear affordance, so the
-                          // guard is defensive — but the typed
-                          // signature requires it.
-                          v && handleRoleChange(member, v as AccountRole)
-                        }
-                      >
-                        <SelectTrigger
-                          className="w-32 bg-muted border-border text-foreground"
-                          disabled={isBusy}
-                        >
-                          <SelectValue>{tRoles(member.role)}</SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {EDITABLE_ROLES.map((r) => (
-                            <SelectItem key={r.value} value={r.value}>
-                              {tRoles(r.value)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <span
-                        className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium ${roleMeta.className}`}
-                      >
-                        <RoleIcon className="size-3.5" />
-                        {tRoles(member.role)}
-                      </span>
-                    )}
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-medium ${roleMeta.className}`}
+                    >
+                      <RoleIcon className="size-3.5" />
+                      {tRoles(member.role)}
+                    </span>
 
-                    {/* Remove. Admin+ only; never on the owner row;
-                        never on yourself. Pre-polish styling was
-                        neutral-default + red-on-hover — the
-                        destructive intent was invisible until the
-                        user moused over. Now red is the default
-                        state with a darker shade on hover so the
-                        affordance reads at-a-glance. */}
-                    {canManageMembers && !isOwnerRow && !isSelf && (
+                    {isSuperAdmin && !isOwnerRow && !isSelf && (
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => setRemovingMember(member)}
                         disabled={isBusy}
-                        className="border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:border-red-500/60 hover:text-red-200"
+                        className="border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:border-red-500/60 hover:text-red-200 h-8 px-2"
                       >
-                        <Trash2 className="size-4" />
+                        <Trash2 className="size-3.5" />
                       </Button>
                     )}
                   </div>
@@ -472,99 +437,6 @@ export function MembersTab() {
           </ul>
         </CardContent>
       </Card>
-
-      {/* Pending invitations — admin+ only */}
-      <RequireRole min="admin">
-        <div>
-          <div className="mb-2 flex items-center gap-2">
-            <UsersRound className="size-4 text-muted-foreground" />
-            <h3 className="text-sm font-semibold text-foreground">
-              {t('pendingInvitations')}
-            </h3>
-            <Badge className="bg-muted text-muted-foreground border-border">
-              {invitations.length}
-            </Badge>
-          </div>
-          {/* P10 — make the no-resend design explicit. Admins were
-              confused why the pending list shows roles + expiry but
-              no "copy link again" button. Stating the constraint up
-              front (rather than letting the user discover it by
-              looking for a button) keeps it from feeling like a bug. */}
-          {invitations.length > 0 ? (
-            <p className="mb-3 text-xs text-muted-foreground">
-              {t('inviteHint')}
-            </p>
-          ) : null}
-
-          {invitations.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-8 text-center">
-                <Mail className="size-6 text-muted-foreground" />
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {t('noPendingTitle')}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t.rich('noPendingDesc', { bold: (chunks) => <strong>{chunks}</strong> })}
-                </p>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardContent className="p-0">
-                <ul className="divide-y divide-border">
-                  {invitations.map((inv) => {
-                    const inviteRoleMeta = ROLE_META[inv.role];
-                    const InviteRoleIcon = inviteRoleMeta.icon;
-                    return (
-                    <li
-                      key={inv.id}
-                      className="flex items-center gap-4 px-4 py-3"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-foreground">
-                            {inv.label || t('untitledInvite')}
-                          </span>
-                          <span
-                            className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium ${inviteRoleMeta.className}`}
-                          >
-                            <InviteRoleIcon className="size-3" />
-                            {tRoles(inv.role)}
-                          </span>
-                        </div>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {t('created', { date: fmtDate(inv.created_at) })} · {fmtExpiresIn(inv.expires_at, t)}
-                        </p>
-                      </div>
-
-                      {/* Revoke: red default state, mirrors the
-                          members-tab Remove button. Pre-polish version
-                          read as a neutral secondary button until
-                          hover. */}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleRevoke(inv)}
-                        className="border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:border-red-500/60 hover:text-red-200"
-                      >
-                        <MailX className="size-4" />
-                        {t('revoke')}
-                      </Button>
-                    </li>
-                    );
-                  })}
-                </ul>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </RequireRole>
-
-      <InviteMemberDialog
-        open={inviteOpen}
-        onOpenChange={setInviteOpen}
-        onCreated={loadEverything}
-      />
 
       <Dialog
         open={removingMember !== null}

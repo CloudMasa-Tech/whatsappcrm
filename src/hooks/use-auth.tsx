@@ -106,6 +106,16 @@ interface AuthContextValue {
    * what it owns.
    */
   activeProjectId: string | null;
+  /** Active project name. Null while loading. */
+  activeProjectName: string | null;
+  /** Full active project object. */
+  activeProject: {
+    id: string;
+    name: string;
+    slug?: string;
+    channel_type: "qr" | "cloud_api";
+    allowed_channels: ("qr" | "cloud_api")[];
+  } | null;
   /** The active project's WhatsApp transport. Null while loading. */
   activeProjectChannel: "qr" | "cloud_api" | null;
   /** Which connection methods are enabled for the active project. */
@@ -165,6 +175,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<AccountSummary | null>(null);
   const [activeProject, setActiveProject] = useState<{
     id: string;
+    name: string;
+    slug?: string;
     channel_type: "qr" | "cloud_api";
     allowed_channels: ("qr" | "cloud_api")[];
   } | null>(null);
@@ -489,6 +501,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         account,
         defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
         activeProjectId: activeProject?.id ?? null,
+        activeProjectName: activeProject?.name ?? null,
+        activeProject: activeProject ?? null,
         activeProjectChannel: activeProject?.channel_type ?? null,
         allowedChannels: activeProject?.allowed_channels ?? ["qr"],
         ...derived,
@@ -523,6 +537,8 @@ export function useAuth(): AuthContextValue {
       defaultCurrency: DEFAULT_CURRENCY,
       accountId: null,
       activeProjectId: null,
+      activeProjectName: null,
+      activeProject: null,
       activeProjectChannel: null,
       allowedChannels: ["qr"],
       accountRole: null,

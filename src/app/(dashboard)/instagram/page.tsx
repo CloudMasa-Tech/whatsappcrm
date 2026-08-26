@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@/hooks/use-auth";
-import { InstagramConfig } from "@/components/settings/instagram-config";
+import { InstagramHub } from "@/components/instagram/instagram-hub";
 import { Loader2 } from "lucide-react";
 import { Instagram } from "@/components/icons/instagram";
 
@@ -33,8 +33,8 @@ export default function InstagramPage() {
   }
 
   return (
-    <div className="max-w-4xl space-y-6">
-      <InstagramConfig canDisconnect={canDisconnectWhatsApp} />
+    <div className="w-full space-y-6">
+      <InstagramHub canDisconnect={canDisconnectWhatsApp} />
     </div>
   );
 }

@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Copy, Loader2, Plus, UserRound, UserPlus } from 'lucide-react';
+import { Copy, FolderKanban, Loader2, Plus, UserRound, UserPlus } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
 import { RequireRole } from '@/components/auth/require-role';
@@ -54,6 +54,13 @@ interface Customer {
   email: string;
   full_name: string | null;
   project_id: string | null;
+  project_name?: string | null;
+  project?: {
+    id: string;
+    name: string;
+    slug?: string;
+    channel_type?: string;
+  } | null;
   role?: 'agent' | 'admin';
   created_at: string;
 }
@@ -247,37 +254,64 @@ export function CustomersTab() {
         <Card>
           <CardContent className="p-0">
             <ul className="divide-y divide-border">
-              {customers.map((customer) => (
-                <li
-                  key={customer.id}
-                  className="flex items-center gap-4 px-4 py-3"
-                >
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
-                    <UserRound className="size-4" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-medium text-foreground">
-                        {customer.full_name || customer.email}
-                      </p>
-                      <span
-                        className={cn(
-                          "rounded-full px-2 py-0.5 text-[10px] font-medium capitalize",
-                          customer.role === "admin"
-                            ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
-                            : "bg-primary/10 text-primary border border-primary/20"
+              {customers.map((customer) => {
+                const projectName =
+                  customer.project_name ||
+                  customer.project?.name ||
+                  projects.find((p) => p.id === customer.project_id)?.name ||
+                  null;
+
+                return (
+                  <li
+                    key={customer.id}
+                    className="flex items-center gap-4 px-4 py-3.5"
+                  >
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
+                      <UserRound className="size-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-sm font-medium text-foreground">
+                          {customer.full_name || customer.email}
+                        </p>
+                        <span
+                          className={cn(
+                            "rounded-full px-2 py-0.5 text-[10px] font-medium capitalize",
+                            customer.role === "admin"
+                              ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
+                              : "bg-primary/10 text-primary border border-primary/20"
+                          )}
+                        >
+                          {customer.role === "admin" ? "Admin" : "Agent"}
+                        </span>
+                        {projectName ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/70 px-2 py-0.5 text-[10px] font-medium text-foreground">
+                            <FolderKanban className="size-3 text-primary shrink-0" />
+                            {projectName}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] text-muted-foreground">
+                            No project
+                          </span>
                         )}
-                      >
-                        {customer.role === "admin" ? "Admin" : "Agent"}
-                      </span>
+                      </div>
+                      <p className="truncate text-xs text-muted-foreground mt-0.5">
+                        {customer.full_name ? customer.email : t('unnamed')}
+                        {projectName && (
+                          <>
+                            {' · '}
+                            <span className="font-medium text-foreground/80">
+                              Project: {projectName}
+                            </span>
+                          </>
+                        )}
+                        {' · '}
+                        {t('created', { date: fmtDate(customer.created_at) })}
+                      </p>
                     </div>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {customer.full_name ? customer.email : t('unnamed')} ·{' '}
-                      {t('created', { date: fmtDate(customer.created_at) })}
-                    </p>
-                  </div>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           </CardContent>
         </Card>

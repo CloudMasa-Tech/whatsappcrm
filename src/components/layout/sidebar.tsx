@@ -100,7 +100,7 @@ const navItems: NavItem[] = [
   { href: "/admin", labelKey: "admin", icon: Shield, roles: ["super_admin"] },
   { href: "/inbox", labelKey: "inbox", icon: MessageSquare, roles: ["admin", "agent"] },
   { href: "/whatsapp", labelKey: "whatsapp", icon: QrCode, roles: ["admin"] },
-  { href: "/instagram", labelKey: "instagram", icon: Instagram, roles: ["admin"] },
+  { href: "/instagram", labelKey: "instagram", icon: Instagram, roles: ["admin", "agent"] },
   { href: "/contacts", labelKey: "contacts", icon: Users, roles: ["admin", "agent"] },
   { href: "/broadcasts", labelKey: "broadcasts", icon: Radio, roles: ["admin", "agent"] },
   { href: "/templates", labelKey: "templates", icon: FileText, roles: ["admin"] },
@@ -112,7 +112,7 @@ const navItems: NavItem[] = [
 ];
 
 const bottomNavItems: { href: string; labelKey: string; icon: React.ComponentType<{ className?: string }>; roles?: ("super_admin" | "admin" | "agent")[] }[] = [
-  { href: "/settings", labelKey: "settings", icon: Settings },
+  { href: "/settings", labelKey: "settings", icon: Settings, roles: ["super_admin", "admin"] },
 ];
 
 interface SidebarProps {
@@ -126,7 +126,7 @@ import { useTranslations } from "next-intl";
 export function Sidebar({ open = false, onClose }: SidebarProps) {
   const t = useTranslations("Sidebar");
   const pathname = usePathname();
-  const { profile, profileLoading, account, accountRole, platformRole, signOut } = useAuth();
+  const { profile, profileLoading, account, accountRole, platformRole, activeProjectName, signOut } = useAuth();
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();
   // Only surface the account-name strip when it actually carries
@@ -384,7 +384,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                   {profile?.full_name ?? t("defaultUser")}
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {profile?.email ?? ""}
+                  {activeProjectName ? `Project: ${activeProjectName}` : (profile?.email ?? "")}
                 </p>
               </div>
             </DropdownMenuTrigger>

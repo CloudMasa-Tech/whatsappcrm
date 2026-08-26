@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Upload, Trash2, Mail, CircleAlert } from 'lucide-react';
+import { CircleAlert, FolderKanban, Loader2, Mail, Trash2, Upload } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
@@ -33,7 +33,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function ProfileForm() {
   const t = useTranslations('Settings.profile');
-  const { user, profile, refreshProfile } = useAuth();
+  const { user, profile, refreshProfile, activeProjectName, activeProject } = useAuth();
   const supabase = createClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -312,13 +312,20 @@ export function ProfileForm() {
             <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <div>
                 <dt className="text-muted-foreground">{t('role')}</dt>
-                <dd className="mt-0.5 font-mono text-foreground">
+                <dd className="mt-0.5 font-mono text-foreground capitalize">
                   {profile?.role ?? 'user'}
                 </dd>
               </div>
               <div>
                 <dt className="text-muted-foreground">{t('joined')}</dt>
                 <dd className="mt-0.5 text-foreground">{joined}</dd>
+              </div>
+              <div className="sm:col-span-2">
+                <dt className="text-muted-foreground">Assigned Project</dt>
+                <dd className="mt-1 flex items-center gap-1.5 font-medium text-foreground">
+                  <FolderKanban className="size-3.5 text-primary shrink-0" />
+                  <span>{activeProjectName || activeProject?.name || 'Assigned Workspace'}</span>
+                </dd>
               </div>
               <div className="sm:col-span-2">
                 <dt className="text-muted-foreground">{t('userId')}</dt>

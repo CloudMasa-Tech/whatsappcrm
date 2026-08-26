@@ -126,42 +126,10 @@ export default function PipelinesPage() {
         if (json.pipeline) return json.pipeline;
       }
     } catch (err) {
-      console.error("Seed route failed:", err);
+      console.error("[Pipelines] Seed route error:", err);
     }
-
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const user = session?.user;
-    if (!user) return null;
-    if (!accountId) return null;
-
-    const { data: pipeline, error } = await supabase
-      .from("pipelines")
-      .insert({
-        user_id: user.id,
-        account_id: accountId,
-        project_id: activeProjectId,
-        name: "Sales Pipeline",
-      })
-      .select()
-      .single();
-
-    if (error || !pipeline) {
-      console.error("Failed to seed pipeline:", error?.message);
-      return null;
-    }
-
-    const stagesPayload = SPEC_DEFAULT_STAGES.map((s) => ({
-      pipeline_id: pipeline.id,
-      name: s.name,
-      color: s.color,
-      position: s.position,
-    }));
-    await supabase.from("pipeline_stages").insert(stagesPayload);
-
-    return pipeline as Pipeline;
-  }, [supabase, accountId, activeProjectId]);
+    return null;
+  }, []);
 
   // Initial load + seed-if-empty
   useEffect(() => {
@@ -193,26 +161,21 @@ export default function PipelinesPage() {
   }, [loadPipelines, seedDefaultPipeline]);
 
   // Load stages + deals whenever selected pipeline changes.
-  // Clearing on no-selection is a legitimate sync with URL/prop
-  // state; the load completion uses async setters inside promise
-  // callbacks (not synchronous in the effect body).
   useEffect(() => {
     if (!selectedPipelineId) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStages([]);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDeals([]);
       return;
     }
     let cancelled = false;
     (async () => {
-      const [s, d] = await Promise.all([
+      const [newStages, newDeals] = await Promise.all([
         loadStages(selectedPipelineId),
         loadDeals(selectedPipelineId),
       ]);
       if (cancelled) return;
-      setStages(s);
-      setDeals(d);
+      setStages(newStages);
+      setDeals(newDeals);
     })();
     return () => {
       cancelled = true;
@@ -282,8 +245,8 @@ export default function PipelinesPage() {
         body: JSON.stringify({ name }),
       });
 
-      if (res.ok) {
-        const json = await res.json();
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.pipeline) {
         const pipeline = json.pipeline;
         setNewPipelineName("");
         setNewPipelineOpen(false);
@@ -292,56 +255,15 @@ export default function PipelinesPage() {
         setCreating(false);
         toast.success(t("toastPipelineCreated"));
         return;
+      } else {
+        toast.error(json.error || t("toastFailedCreatePipeline"));
       }
     } catch (err) {
-      console.error("API create pipeline failed, falling back:", err);
-    }
-
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const user = session?.user;
-    if (!user) {
-      setCreating(false);
-      return;
-    }
-    if (!accountId) {
-      toast.error(t("toastNotLinkedToAccount"));
-      setCreating(false);
-      return;
-    }
-
-    const { data: pipeline, error } = await supabase
-      .from("pipelines")
-      .insert({
-        user_id: user.id,
-        account_id: accountId,
-        project_id: activeProjectId,
-        name,
-      })
-      .select()
-      .single();
-
-    if (error || !pipeline) {
+      console.error("[Pipelines] API create pipeline failed:", err);
       toast.error(t("toastFailedCreatePipeline"));
+    } finally {
       setCreating(false);
-      return;
     }
-
-    const stagesPayload = SPEC_DEFAULT_STAGES.map((s) => ({
-      pipeline_id: pipeline.id,
-      name: s.name,
-      color: s.color,
-      position: s.position,
-    }));
-    await supabase.from("pipeline_stages").insert(stagesPayload);
-
-    setNewPipelineName("");
-    setNewPipelineOpen(false);
-    setSelectedPipelineId(pipeline.id);
-    await refreshPipelines();
-    setCreating(false);
-    toast.success(t("toastPipelineCreated"));
   }
 
   const selectedPipeline = pipelines.find((p) => p.id === selectedPipelineId);

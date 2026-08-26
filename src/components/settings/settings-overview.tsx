@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronRight, Loader2 } from 'lucide-react';
+import { ChevronRight, FolderKanban, Loader2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
 import { createClient } from '@/lib/supabase/client';
@@ -42,6 +42,7 @@ export function SettingsOverview({
     profile,
     accountId,
     activeProjectId,
+    activeProjectName,
     accountRole,
     defaultCurrency,
     canManageMembers,
@@ -285,11 +286,19 @@ export function SettingsOverview({
           </AvatarFallback>
         </Avatar>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-base font-semibold text-foreground">
-            {displayName}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate text-base font-semibold text-foreground">
+              {displayName}
+            </span>
+            {activeProjectName && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                <FolderKanban className="size-3 shrink-0" />
+                {activeProjectName}
+              </span>
+            )}
           </div>
           {profile?.email ? (
-            <div className="truncate text-sm text-muted-foreground">
+            <div className="truncate text-sm text-muted-foreground mt-0.5">
               {profile.email}
             </div>
           ) : null}

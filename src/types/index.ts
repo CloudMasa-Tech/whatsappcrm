@@ -75,6 +75,13 @@ export interface AccountMember {
   avatar_url: string | null;
   role: AccountRole;
   joined_at: string;
+  project_id?: string | null;
+  project_name?: string | null;
+  projects?: Array<{
+    id: string;
+    name: string;
+    channel_type?: string;
+  }>;
 }
 
 /**

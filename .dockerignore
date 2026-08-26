@@ -6,3 +6,7 @@ npm-debug.log
 .env.*
 !.env.example
 *.tsbuildinfo
+*.tar
+scratch
+gateway/dist
+gateway/node_modules

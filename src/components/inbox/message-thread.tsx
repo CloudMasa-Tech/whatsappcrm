@@ -29,10 +29,11 @@ import {
   PanelRightClose,
   MessageCircle,
 } from "lucide-react";
-import { Instagram } from "@/components/icons/instagram";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { useTranslations } from "next-intl";
+import { Instagram } from "@/components/icons/instagram";
 import { Badge } from "@/components/ui/badge";
+import { formatDisplayPhone, getContactDisplay } from "@/lib/whatsapp/phone-utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -867,7 +868,7 @@ export function MessageThread({
     );
   }
 
-  const displayName = contact.name || contact.phone;
+  const { title: displayTitle, subtitle: displaySubtitle, initials } = getContactDisplay(contact, t("selectConversation"));
   const messageGroups = groupMessagesByDate(messages);
   const currentStatus = STATUS_OPTIONS.find(
     (s) => s.value === conversation.status
@@ -906,7 +907,7 @@ export function MessageThread({
           )}
           {/* Avatar with Channel Overlay */}
           <div className="relative flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
-            {displayName.charAt(0).toUpperCase()}
+            {initials}
             {conversation.channel === "instagram" || contact.channel === "instagram" ? (
               <div
                 className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 text-white shadow-sm ring-1 ring-background"
@@ -925,16 +926,18 @@ export function MessageThread({
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <h2 className="truncate text-sm font-semibold text-foreground">{displayName}</h2>
+              <h2 className="truncate text-sm font-semibold text-foreground">{displayTitle}</h2>
               {conversation.channel === "instagram" || contact.channel === "instagram" ? (
                 <Badge className="bg-pink-500/10 text-pink-600 border-pink-500/20 text-[10px] py-0 px-1.5">
                   <Instagram className="h-2.5 w-2.5 mr-1" /> Instagram
                 </Badge>
               ) : null}
             </div>
-            <p className="truncate text-xs text-muted-foreground">
-              {contact.instagram_username ? `@${contact.instagram_username}` : contact.phone}
-            </p>
+            {displaySubtitle && (
+              <p className="truncate text-xs text-muted-foreground font-mono">
+                {displaySubtitle}
+              </p>
+            )}
           </div>
           {/* Session timer badge — hidden on the narrowest phones so
               the name + back arrow keep their room. */}

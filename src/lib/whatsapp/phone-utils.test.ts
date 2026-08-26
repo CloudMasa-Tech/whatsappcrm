@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatDisplayPhone,
+  getContactDisplay,
   isRecipientNotAllowedError,
   isValidE164,
   normalizePhone,
@@ -162,3 +164,55 @@ describe("isRecipientNotAllowedError", () => {
     expect(isRecipientNotAllowedError("")).toBe(false);
   });
 });
+
+describe("formatDisplayPhone", () => {
+  it("strips WhatsApp JID suffixes cleanly", () => {
+    expect(formatDisplayPhone("919876543210@s.whatsapp.net")).toBe("+91 98765 43210");
+    expect(formatDisplayPhone("14155552671@c.us")).toBe("+1 415 555 2671");
+  });
+
+  it("formats US 11-digit numbers", () => {
+    expect(formatDisplayPhone("14155552671")).toBe("+1 415 555 2671");
+  });
+
+  it("formats Indian 12-digit numbers", () => {
+    expect(formatDisplayPhone("919876543210")).toBe("+91 98765 43210");
+  });
+
+  it("returns empty string for nullish or empty phone", () => {
+    expect(formatDisplayPhone("")).toBe("");
+    expect(formatDisplayPhone(null)).toBe("");
+  });
+});
+
+describe("getContactDisplay", () => {
+  it("returns saved name as title and formatted phone as subtitle", () => {
+    const res = getContactDisplay({
+      name: "John Doe",
+      phone: "919876543210@s.whatsapp.net",
+    });
+    expect(res.title).toBe("John Doe");
+    expect(res.subtitle).toBe("+91 98765 43210");
+    expect(res.initials).toBe("J");
+  });
+
+  it("falls back to formatted phone as title when name is identical to phone", () => {
+    const res = getContactDisplay({
+      name: "919876543210",
+      phone: "919876543210",
+    });
+    expect(res.title).toBe("+91 98765 43210");
+    expect(res.subtitle).toBeNull();
+  });
+
+  it("handles instagram contacts properly", () => {
+    const res = getContactDisplay({
+      name: "Jane Doe",
+      channel: "instagram",
+      instagram_username: "janedoe",
+    });
+    expect(res.title).toBe("Jane Doe");
+    expect(res.subtitle).toBe("@janedoe");
+  });
+});
+

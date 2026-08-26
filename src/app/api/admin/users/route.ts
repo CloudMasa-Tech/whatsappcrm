@@ -10,8 +10,9 @@ import {
   RATE_LIMITS,
 } from '@/lib/rate-limit';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { sendOnboardingWelcomeEmail } from '@/lib/email/onboarding';
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 const MIN_PASSWORD_LEN = 8;
 const MAX_NAME_LEN = 80;
 
@@ -34,7 +35,7 @@ export async function GET() {
 
     const { data, error } = await ctx.supabase
       .from('onboarded_customers')
-      .select('id, user_id, email, full_name, project_id, created_at')
+      .select('id, user_id, email, full_name, project_id, created_at, project:projects(id, name, slug, channel_type)')
       .eq('onboarded_by_account_id', ctx.accountId)
       .order('created_at', { ascending: false });
 
@@ -46,9 +47,11 @@ export async function GET() {
       );
     }
 
-    // Enrich with role from profiles
+    // Enrich with role from profiles and project assignments from project_members
     const userIds = (data ?? []).map((c) => c.user_id).filter(Boolean);
     const userProfilesMap: Record<string, { role?: string | null; platform_role?: string | null; account_role?: string | null }> = {};
+    const userProjectsMap: Record<string, { id: string; name: string; channel_type?: string }> = {};
+
     if (userIds.length > 0) {
       const { data: profilesData } = await supabaseAdmin()
         .from('profiles')
@@ -60,14 +63,40 @@ export async function GET() {
           userProfilesMap[p.user_id] = p;
         }
       }
+
+      // Query project_members to ensure project is resolved even if onboarded_customers.project_id was unset
+      const { data: pmData } = await supabaseAdmin()
+        .from('project_members')
+        .select('user_id, project_id, project:projects(id, name, channel_type)')
+        .in('user_id', userIds);
+
+      if (pmData) {
+        for (const pm of pmData) {
+          const proj = Array.isArray(pm.project) ? pm.project[0] : pm.project;
+          if (proj && proj.id && proj.name) {
+            userProjectsMap[pm.user_id] = {
+              id: proj.id,
+              name: proj.name,
+              channel_type: proj.channel_type,
+            };
+          }
+        }
+      }
     }
 
-    const customersWithRole = (data ?? []).map((c) => {
+    const customersWithRole = (data ?? []).map((c: any) => {
       const prof = userProfilesMap[c.user_id];
       const assignedRole = prof?.role === 'admin' ? 'admin' : 'agent';
+      const rawProj = Array.isArray(c.project) ? c.project[0] : c.project;
+      const fallbackProj = userProjectsMap[c.user_id];
+      const projectObj = rawProj ?? fallbackProj ?? null;
+
       return {
         ...c,
         role: assignedRole,
+        project_id: c.project_id || projectObj?.id || null,
+        project: projectObj,
+        project_name: projectObj?.name ?? null,
       };
     });
 
@@ -78,12 +107,6 @@ export async function GET() {
 }
 
 // POST — create an admin/agent user and assign them to a project.
-//
-// The user's profile is placed in the ADMIN's account (same
-// account_id as the caller), NOT in a new isolated account. The
-// handle_new_user trigger skips account/project creation when it
-// sees created_by_admin = true in user_metadata, so the API can
-// create the profile and project_members row directly.
 export async function POST(request: Request) {
   let ctx;
   try {
@@ -115,7 +138,7 @@ export async function POST(request: Request) {
     typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   if (!EMAIL_RE.test(email)) {
     return NextResponse.json(
-      { error: 'A valid email address is required' },
+      { error: 'A valid email address is required (e.g. name@example.com)' },
       { status: 400 },
     );
   }
@@ -137,15 +160,13 @@ export async function POST(request: Request) {
   // specific project so they can access WhatsApp and domain data.
   if (typeof body.projectId !== 'string' || body.projectId.trim() === '') {
     return NextResponse.json(
-      { error: 'A project must be selected for the user' },
+      { error: 'A project must be selected for the customer' },
       { status: 400 },
     );
   }
   const projectId = body.projectId.trim();
 
   // Validate the project exists and belongs to the admin's account
-  // via RLS (resolveProject checks is_project_member, and the admin
-  // is auto-granted access to all projects in their account).
   const { data: project, error: projectErr } = await ctx.supabase
     .from('projects')
     .select('id, name, archived_at')
@@ -171,12 +192,7 @@ export async function POST(request: Request) {
     fullName = trimmed === '' ? null : trimmed;
   }
 
-  // Create the auth user via the service role. `email_confirm: true`
-  // means the customer can sign in with the password immediately — no
-  // verification email in the way of onboarding.
-  //
-  // created_by_admin = true tells the handle_new_user trigger to skip
-  // creating an account/project/profile — the API handles that below.
+  // Create the auth user via the service role
   const { data: created, error: createErr } = await supabaseAdmin().auth.admin
     .createUser({
       email,
@@ -205,9 +221,7 @@ export async function POST(request: Request) {
 
   const userId = created.user.id;
 
-  // Create the profile in the account.
-  // account_role = 'admin' for project admins (full project configuration),
-  // or 'agent' for customers (operational messaging access).
+  // Create the profile in the account
   const accountRoleForProfile = assignedRole === 'admin' ? 'admin' : 'agent';
 
   const { error: profileErr } = await supabaseAdmin()
@@ -231,8 +245,7 @@ export async function POST(request: Request) {
     );
   }
 
-  // Grant project access. Since the user has account_role = 'agent',
-  // they need an explicit project_members row to see the project.
+  // Grant project access in project_members
   const { error: memberErr } = await supabaseAdmin()
     .from('project_members')
     .insert({
@@ -243,7 +256,6 @@ export async function POST(request: Request) {
 
   if (memberErr) {
     console.error('[POST /api/admin/users] project_members insert error:', memberErr);
-    // Best-effort rollback: delete the profile and the auth user.
     try {
       await supabaseAdmin()
         .from('profiles')
@@ -257,7 +269,7 @@ export async function POST(request: Request) {
     );
   }
 
-  // Track the onboarding so the admin can see who they've created.
+  // Track the onboarding
   const { error: trackErr } = await ctx.supabase.from('onboarded_customers').insert({
     user_id: userId,
     email,
@@ -271,14 +283,35 @@ export async function POST(request: Request) {
     console.error('[POST /api/admin/users] tracking insert error:', trackErr);
   }
 
-  // The password is returned ONCE so the admin can hand it over in
-  // person/over the phone — same spirit as the one-time invite link.
+  const loginUrl = signInUrl(request);
+
+  // Send onboarding welcome email notification
+  await sendOnboardingWelcomeEmail({
+    toEmail: email,
+    fullName,
+    temporaryPassword: password,
+    role: assignedRole,
+    projectName: project.name,
+    signInUrl: loginUrl,
+  }).catch((emailErr) => {
+    console.error('[POST /api/admin/users] email delivery notification error:', emailErr);
+  });
+
   return NextResponse.json(
     {
-      customer: { id: userId, email, full_name: fullName, role: assignedRole },
-      credentials: { email, password, role: assignedRole },
-      signInUrl: signInUrl(request),
+      customer: {
+        id: userId,
+        email,
+        full_name: fullName,
+        role: assignedRole,
+        project_id: projectId,
+        project_name: project.name,
+      },
+      credentials: { email, password, role: assignedRole, projectName: project.name },
+      signInUrl: loginUrl,
+      emailDispatched: true,
     },
     { status: 201 },
   );
 }
+

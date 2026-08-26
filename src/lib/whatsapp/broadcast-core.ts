@@ -267,7 +267,8 @@ export async function deliverBroadcast(
 ): Promise<void> {
   let sentCount = 0;
 
-  for (const recipient of plan.planned) {
+  for (let i = 0; i < plan.planned.length; i++) {
+    const recipient = plan.planned[i];
     const variants = phoneVariants(recipient.phone);
     let sentMessageId: string | null = null;
     let lastError: string | null = null;
@@ -313,6 +314,11 @@ export async function deliverBroadcast(
           error_message: lastError || 'Unknown error',
         })
         .eq('id', recipient.recipientRowId);
+    }
+
+    // 5-second delay between every single recipient
+    if (i < plan.planned.length - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
     }
   }
 

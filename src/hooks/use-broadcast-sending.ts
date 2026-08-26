@@ -55,12 +55,10 @@ interface UseBroadcastSendingReturn {
 }
 
 /**
- * Meta rate-limit buffer. 10 per batch + 1 s pause matches the spec
- * and keeps us comfortably under Meta's per-phone-number messaging
- * rate so a large broadcast never trips the upstream limiter.
+ * 1-by-1 sending with a 5-second delay between every single message.
  */
-const SEND_BATCH_SIZE = 10;
-const SEND_BATCH_DELAY_MS = 1000;
+const SEND_BATCH_SIZE = 1;
+const SEND_BATCH_DELAY_MS = 5000;
 
 /** `broadcast_recipients` inserts are independent of the send rate. */
 const INSERT_BATCH_SIZE = 200;

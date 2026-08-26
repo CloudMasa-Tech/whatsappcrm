@@ -86,8 +86,19 @@ export function ProjectSwitcher() {
 
   const active = projects.find((p) => p.id === activeId);
 
-  // One project is the common case and a switcher would be noise.
-  if (loading || projects.length <= 1) return null;
+  if (loading) return null;
+  if (projects.length === 0) return null;
+
+  // Single project: display static active project badge
+  if (projects.length === 1) {
+    const singleProj = active || projects[0];
+    return (
+      <div className="flex h-8 items-center gap-1.5 rounded-md border border-border/80 bg-muted/50 px-2.5 text-xs text-foreground font-medium">
+        <FolderKanban className="size-3.5 text-primary shrink-0" />
+        <span className="truncate max-w-[160px]">{singleProj.name}</span>
+      </div>
+    );
+  }
 
   return (
     <DropdownMenu>

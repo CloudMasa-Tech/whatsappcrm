@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { NewChatDialog } from "@/components/inbox/new-chat-dialog";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
+import { formatDisplayPhone, getContactDisplay } from "@/lib/whatsapp/phone-utils";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -527,8 +528,7 @@ function ConversationItem({
   t,
 }: ConversationItemProps) {
   const contact = conversation.contact;
-  const displayName = contact?.name || contact?.phone || t("unknown");
-  const initials = displayName.charAt(0).toUpperCase();
+  const { title, subtitle, initials } = getContactDisplay(contact, t("unknown"));
 
   const handleClick = useCallback(() => {
     onSelect(conversation);
@@ -556,7 +556,7 @@ function ConversationItem({
         {contact?.avatar_url ? (
           <img
             src={contact.avatar_url}
-            alt={displayName}
+            alt={title}
             className="h-10 w-10 rounded-full object-cover"
           />
         ) : (
@@ -582,19 +582,26 @@ function ConversationItem({
       {/* Content */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="truncate text-sm font-medium text-foreground">
-              {displayName}
-            </span>
-            {isInstagram && contact?.instagram_username && (
-              <span className="text-[11px] text-pink-500 font-mono truncate">
-                @{contact.instagram_username}
+          <div className="flex flex-col min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="truncate text-sm font-medium text-foreground">
+                {title}
+              </span>
+              {isInstagram && contact?.instagram_username && (
+                <span className="text-[11px] text-pink-500 font-mono truncate">
+                  @{contact.instagram_username}
+                </span>
+              )}
+            </div>
+            {subtitle && subtitle !== title && (
+              <span className="text-[11px] text-muted-foreground font-mono truncate">
+                {subtitle}
               </span>
             )}
           </div>
           <span className="shrink-0 text-[10px] text-muted-foreground">{timeAgo}</span>
         </div>
-        <div className="mt-0.5 flex items-center justify-between gap-2">
+        <div className="mt-1 flex items-center justify-between gap-2">
           <p className="truncate text-xs text-muted-foreground">
             {conversation.last_message_text || t("noMessagesYet")}
           </p>

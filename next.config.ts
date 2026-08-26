@@ -25,7 +25,7 @@ const SECURITY_HEADERS = [
     value: "max-age=63072000; includeSubDomains; preload",
   },
   { key: "X-Content-Type-Options", value: "nosniff" },
-  { key: "X-Frame-Options", value: "DENY" },
+  { key: "X-Frame-Options", value: "SAMEORIGIN" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   {
     // Microphone is allowed for same-origin (`self`) so the inbox
@@ -33,7 +33,7 @@ const SECURITY_HEADERS = [
     // else stays denied — a compromised dependency can't silently grab
     // the camera / geolocation / etc.
     key: "Permissions-Policy",
-    value: "camera=(), microphone=(self), geolocation=(), payment=(), usb=()",
+    value: "camera=*, microphone=(self), geolocation=(), payment=(), usb=(), unload=*",
   },
   {
     key: "Content-Security-Policy-Report-Only",
@@ -42,23 +42,24 @@ const SECURITY_HEADERS = [
       // Next.js needs 'unsafe-inline' for its inline hydration script
       // and 'unsafe-eval' in dev + some production optimisations.
       // Nonce-based CSP is a later project.
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://instagram.com https://*.instagram.com https://*.cdninstagram.com https://facebook.com https://*.facebook.com https://*.fbcdn.net https://*.meta.com",
       // Tailwind + inline style attributes on lots of components.
-      "style-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline' https://instagram.com https://*.instagram.com https://facebook.com https://*.facebook.com",
       // Supabase public-bucket avatars, contact avatars (arbitrary
       // https URLs paste-able from the UI), OG images, data URLs for
       // tiny inline assets.
       "img-src 'self' data: blob: https:",
       // Outbound media previews (blob: from MediaRecorder + file picker)
       // and Supabase public-bucket audio/video the inbox renders.
-      "media-src 'self' blob: https://*.supabase.co",
-      "font-src 'self' data:",
+      "media-src 'self' blob: https://*.supabase.co https://instagram.com https://*.instagram.com https://*.cdninstagram.com https://facebook.com https://*.facebook.com https://*.fbcdn.net",
+      "font-src 'self' data: https://instagram.com https://*.instagram.com https://*.cdninstagram.com https://facebook.com https://*.facebook.com https://*.fbcdn.net",
       // Supabase REST + realtime (WSS). All Meta API calls happen
       // server-side, so graph.facebook.com does not belong here.
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
-      "frame-ancestors 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://instagram.com https://*.instagram.com https://*.cdninstagram.com https://facebook.com https://*.facebook.com https://*.fbcdn.net https://*.meta.com",
+      "frame-src 'self' http://instagram.com https://instagram.com https://*.instagram.com https://*.cdninstagram.com http://facebook.com https://facebook.com https://*.facebook.com https://*.fbcdn.net blob: data:",
+      "frame-ancestors 'self'",
+      "base-uri 'self' https://instagram.com https://*.instagram.com https://facebook.com https://*.facebook.com",
+      "form-action 'self' https://instagram.com https://*.instagram.com https://facebook.com https://*.facebook.com",
     ].join("; "),
   },
 ] as const;
@@ -151,6 +152,22 @@ const nextConfig: NextConfig = {
         // policy don't hurt).
         source: "/:path*",
         headers: [...SECURITY_HEADERS],
+      },
+    ];
+  },
+  async rewrites() {
+    return [
+      {
+        source: "/ajax/:path*",
+        destination: "https://www.instagram.com/ajax/:path*",
+      },
+      {
+        source: "/logging_client_events",
+        destination: "https://www.instagram.com/logging_client_events",
+      },
+      {
+        source: "/browser_push_events",
+        destination: "https://www.instagram.com/browser_push_events",
       },
     ];
   },

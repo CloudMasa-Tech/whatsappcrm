@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 
 import { requireRole, requireSuperAdmin, toErrorResponse } from '@/lib/auth/account'
 import { getCurrentProject, isChannelType, listProjects } from '@/lib/auth/project'
+import { supabaseAdmin } from '@/lib/supabase/admin'
 
 // Projects — the data-isolation boundary inside an organisation.
 // GET lists the ones the caller may reach; POST creates a new one (Super Admin only).
@@ -32,8 +33,49 @@ export async function GET() {
   try {
     const ctx = await getCurrentProject()
     const projects = await listProjects(ctx.supabase, ctx.userId, ctx.platformRole)
+
+    let enrichedProjects = projects
+    if (ctx.platformRole === 'super_admin') {
+      const projectIds = projects.map((p) => p.id)
+      if (projectIds.length > 0) {
+        const { data: memberRows } = await supabaseAdmin()
+          .from('project_members')
+          .select('project_id, user_id')
+          .in('project_id', projectIds)
+
+        const userIds = Array.from(new Set((memberRows ?? []).map((m) => m.user_id)))
+        const { data: profiles } = userIds.length > 0
+          ? await supabaseAdmin()
+              .from('profiles')
+              .select('user_id, full_name, email, role, account_role')
+              .in('user_id', userIds)
+          : { data: [] }
+
+        const profileMap = new Map((profiles ?? []).map((p) => [p.user_id, p]))
+        const projectMembersMap: Record<string, any[]> = {}
+
+        for (const row of memberRows ?? []) {
+          const prof = profileMap.get(row.user_id)
+          if (prof) {
+            if (!projectMembersMap[row.project_id]) projectMembersMap[row.project_id] = []
+            projectMembersMap[row.project_id].push({
+              user_id: prof.user_id,
+              full_name: prof.full_name,
+              email: prof.email,
+              role: prof.role === 'admin' ? 'admin' : 'agent',
+            })
+          }
+        }
+
+        enrichedProjects = projects.map((p) => ({
+          ...p,
+          members: projectMembersMap[p.id] ?? [],
+        }))
+      }
+    }
+
     return NextResponse.json({
-      projects,
+      projects: enrichedProjects,
       active_project_id: ctx.projectId,
     })
   } catch (err) {

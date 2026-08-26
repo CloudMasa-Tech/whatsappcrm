@@ -40,11 +40,6 @@ interface BroadcastResult {
  *       template_params: string[],
  *       template_name, template_language
  *     }
- *
- * Previous implementation only supported the legacy shape, and the
- * sending hook was forced to ship every batch with `templateParams[0]`
- * — meaning every recipient got contact-0's personalization. The new
- * shape is what actually fixes that.
  */
 interface NewRecipient {
   phone: string
@@ -52,9 +47,7 @@ interface NewRecipient {
   params?: string[]
   /**
    * Structured per-send values (header text variable, media URL
-   * override, URL/COPY_CODE button values). When set, takes
-   * precedence over `params` for the body too — see
-   * sendTemplateMessage for the merge rules.
+   * override, URL/COPY_CODE button values).
    */
   messageParams?: SendTimeParams
 }
@@ -72,22 +65,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Per-user broadcast budget. Note: this limits how often a user
-    // can *start* a campaign, not how many messages go out inside
-    // one — the fan-out loop below runs without additional gating.
     const limit = checkRateLimit(`broadcast:${user.id}`, RATE_LIMITS.broadcast)
     if (!limit.success) {
       return rateLimitResponse(limit)
     }
 
-    // Resolve the caller's account_id. whatsapp_config + templates
-    // + broadcasts are all account-scoped post-multi-user, so the
-    // old `.eq('user_id', user.id)` filters miss every row created
-    // by a teammate.
-    // Resolve the caller's account AND active project. Post-042 the
-    // project is the tenancy key on every domain row, and this route
-    // writes through the service-role client, so RLS will not catch a
-    // missing or wrong scope.
     const { accountId, projectId } = await getCurrentProject();
     if (!accountId) {
       return NextResponse.json(
@@ -152,11 +134,6 @@ export async function POST(request: Request) {
 
     const accessToken = decrypt(config.access_token)
 
-    // Load the template row once so sendTemplateMessage can build
-    // header + button components on each iteration. Loading inside
-    // the loop would N+1 against Supabase for every recipient.
-    // Guard against a malformed local row crashing every send in
-    // the loop with the same opaque TypeError — fail loudly once.
     const { data: rawTemplateRow } = await supabase
       .from('message_templates')
       .select('*')
@@ -179,7 +156,8 @@ export async function POST(request: Request) {
     let sentCount = 0
     let failedCount = 0
 
-    for (const recipient of recipients) {
+    for (let i = 0; i < recipients.length; i++) {
+      const recipient = recipients[i]
       const sanitized = sanitizePhoneForMeta(recipient.phone)
 
       if (!isValidE164(sanitized)) {
@@ -243,6 +221,11 @@ export async function POST(request: Request) {
           error: lastError || 'Unknown error',
         })
         failedCount++
+      }
+
+      // 5-second delay between every single message
+      if (i < recipients.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5000))
       }
     }
 

@@ -21,7 +21,7 @@ FROM node:22-alpine AS build
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 COPY . .
 
@@ -57,7 +57,7 @@ ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 
 COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm install --omit=dev && npm cache clean --force
 
 COPY --from=build /app/.next ./.next
 COPY --from=build /app/public ./public

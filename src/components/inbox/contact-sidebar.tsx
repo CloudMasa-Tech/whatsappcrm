@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
 import { useTranslations } from "next-intl";
+import { formatDisplayPhone, getContactDisplay } from "@/lib/whatsapp/phone-utils";
 
 interface ContactSidebarProps {
   contact: Contact | null;
@@ -84,7 +85,8 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
 
   const handleCopyPhone = useCallback(async () => {
     if (!contact?.phone) return;
-    await navigator.clipboard.writeText(contact.phone);
+    const cleanPhone = formatDisplayPhone(contact.phone);
+    await navigator.clipboard.writeText(cleanPhone);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     // Dep is the whole `contact` object (not `contact?.phone`) so the
@@ -130,8 +132,8 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     );
   }
 
-  const displayName = contact.name || contact.phone;
-  const initials = displayName.charAt(0).toUpperCase();
+  const { title: displayTitle, initials } = getContactDisplay(contact, "Contact");
+  const formattedPhone = formatDisplayPhone(contact.phone);
 
   return (
     <div className="flex h-full w-70 flex-col border-l border-border bg-card">
@@ -143,7 +145,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
               {contact.avatar_url ? (
                 <img
                   src={contact.avatar_url}
-                  alt={displayName}
+                  alt={displayTitle}
                   className="h-16 w-16 rounded-full object-cover"
                 />
               ) : (
@@ -151,7 +153,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
               )}
             </div>
             <h3 className="mt-3 text-sm font-semibold text-foreground">
-              {displayName}
+              {displayTitle}
             </h3>
             {contact.company && (
               <p className="text-xs text-muted-foreground">{contact.company}</p>
@@ -160,18 +162,20 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
 
           {/* Phone */}
           <div className="mt-4 space-y-2">
-            <button
-              onClick={handleCopyPhone}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted"
-            >
-              <Phone className="h-4 w-4 text-muted-foreground" />
-              <span className="flex-1 text-left">{contact.phone}</span>
-              {copied ? (
-                <Check className="h-3 w-3 text-primary" />
-              ) : (
-                <Copy className="h-3 w-3 text-muted-foreground" />
-              )}
-            </button>
+            {contact.phone && (
+              <button
+                onClick={handleCopyPhone}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted font-mono"
+              >
+                <Phone className="h-4 w-4 text-muted-foreground shrink-0" />
+                <span className="flex-1 text-left">{formattedPhone}</span>
+                {copied ? (
+                  <Check className="h-3 w-3 text-primary" />
+                ) : (
+                  <Copy className="h-3 w-3 text-muted-foreground" />
+                )}
+              </button>
+            )}
 
             {contact.instagram_username && (
               <a

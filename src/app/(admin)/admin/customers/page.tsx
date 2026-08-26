@@ -11,11 +11,14 @@ import {
   Mail,
   Calendar,
   ExternalLink,
+  FolderKanban,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -41,6 +44,8 @@ interface Customer {
   email: string;
   full_name: string | null;
   role?: "agent" | "admin";
+  project_id?: string | null;
+  project_name?: string | null;
   created_at: string;
 }
 
@@ -48,6 +53,7 @@ interface CreatedCredentials {
   email: string;
   password: string;
   role?: "agent" | "admin";
+  projectName?: string;
   signInUrl: string;
 }
 
@@ -59,6 +65,7 @@ interface Project {
   archived_at: string | null;
 }
 
+const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 const MIN_PASSWORD_LEN = 8;
 const MAX_NAME_LEN = 80;
 
@@ -79,6 +86,7 @@ export default function AdminCustomersPage() {
   const [open, setOpen] = useState(false);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
+  const [emailTouched, setEmailTouched] = useState(false);
   const [password, setPassword] = useState("");
   const [projectId, setProjectId] = useState("");
   const [role, setRole] = useState<"agent" | "admin">("agent");
@@ -90,6 +98,8 @@ export default function AdminCustomersPage() {
   // Credential handover
   const [credentials, setCredentials] = useState<CreatedCredentials | null>(null);
   const [copied, setCopied] = useState(false);
+
+  const isEmailValid = EMAIL_RE.test(email.trim());
 
   const loadCustomers = useCallback(async () => {
     try {
@@ -124,6 +134,7 @@ export default function AdminCustomersPage() {
   const resetForm = () => {
     setFullName("");
     setEmail("");
+    setEmailTouched(false);
     setPassword("");
     setProjectId("");
     setRole("agent");
@@ -133,8 +144,8 @@ export default function AdminCustomersPage() {
     e.preventDefault();
     if (submitting) return;
 
-    if (!email.trim()) {
-      toast.error(t("emailRequired"));
+    if (!email.trim() || !isEmailValid) {
+      toast.error("Please provide a valid email address");
       return;
     }
     if (password.length < MIN_PASSWORD_LEN) {
@@ -167,7 +178,7 @@ export default function AdminCustomersPage() {
         return;
       }
 
-      toast.success(t("created"));
+      toast.success(t("created") + " & welcome email sent to user!");
       resetForm();
       setOpen(false);
       setCredentials(data.credentials);
@@ -181,7 +192,7 @@ export default function AdminCustomersPage() {
 
   const copyCredentials = () => {
     if (!credentials) return;
-    const text = `Email: ${credentials.email}\nRole: ${credentials.role ?? 'customer'}\nPassword: ${credentials.password}\nLogin: ${credentials.signInUrl}`;
+    const text = `Email: ${credentials.email}\nRole: ${credentials.role ?? 'agent'}\nProject: ${credentials.projectName ?? ''}\nPassword: ${credentials.password}\nLogin: ${credentials.signInUrl}`;
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -215,40 +226,61 @@ export default function AdminCustomersPage() {
               <p className="mt-1 text-xs text-muted-foreground">{t("noCustomersHint")}</p>
             </div>
           ) : (
-            customers.map((c) => (
-              <div key={c.id} className="flex items-center gap-4 px-6 py-4">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-medium text-primary">
-                  {(c.full_name ?? c.email).charAt(0).toUpperCase()}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate text-sm font-medium text-foreground">
-                      {c.full_name ?? "—"}
-                    </p>
-                    <span
-                      className={cn(
-                        "rounded-full px-2 py-0.5 text-[10px] font-medium capitalize",
-                        c.role === "admin"
-                          ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
-                          : "bg-primary/10 text-primary border border-primary/20"
-                      )}
-                    >
-                      {c.role === "admin" ? "Admin" : "Agent"}
-                    </span>
+            customers.map((c) => {
+                const pName = c.project_name || projects.find((p) => p.id === c.project_id)?.name || null;
+                return (
+                <div
+                  key={c.id}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 hover:bg-muted/30 transition-colors"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                      <UserRound className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-sm font-semibold text-foreground">
+                          {c.full_name || t("unnamed")}
+                        </p>
+                        <Badge
+                          className={cn(
+                            "text-[10px] px-2 py-0 capitalize",
+                            c.role === "admin"
+                              ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
+                              : "bg-primary/10 text-primary border border-primary/20"
+                          )}
+                        >
+                          {c.role === "admin" ? "Admin" : "Agent"}
+                        </Badge>
+                        {pName ? (
+                          <span className="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs text-foreground font-medium border border-border">
+                            <FolderKanban className="h-3 w-3 text-primary" />
+                            {pName}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground border border-border/50">
+                            No project
+                          </span>
+                        )}
+                      </div>
+                      <p className="truncate text-xs text-muted-foreground font-mono mt-0.5">{c.email}</p>
+                    </div>
                   </div>
-                  <p className="truncate text-xs text-muted-foreground">{c.email}</p>
+
+                  <div className="flex items-center gap-4 self-end sm:self-auto">
+                    <div className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
+                      <Calendar className="h-3.5 w-3.5" />
+                      {fmtDate(c.created_at)}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-medium text-green-500">
+                        Active
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <div className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
-                  <Calendar className="h-3.5 w-3.5" />
-                  {fmtDate(c.created_at)}
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-medium text-green-500">
-                    Active
-                  </span>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
@@ -272,13 +304,33 @@ export default function AdminCustomersPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="email">{t("emailLabel")} *</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="email">{t("emailLabel")} *</Label>
+                {emailTouched && (
+                  <span className={cn("text-[11px] flex items-center gap-1", isEmailValid ? "text-emerald-500" : "text-destructive")}>
+                    {isEmailValid ? (
+                      <>
+                        <CheckCircle2 className="h-3 w-3" /> Valid email
+                      </>
+                    ) : (
+                      <>
+                        <AlertCircle className="h-3 w-3" /> Invalid email format
+                      </>
+                    )}
+                  </span>
+                )}
+              </div>
               <Input
                 id="email"
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder={t("emailPlaceholder")}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (!emailTouched) setEmailTouched(true);
+                }}
+                onBlur={() => setEmailTouched(true)}
+                placeholder="name@example.com"
+                className={cn(emailTouched && !isEmailValid && "border-destructive focus-visible:ring-destructive")}
                 required
               />
             </div>
@@ -311,7 +363,7 @@ export default function AdminCustomersPage() {
                     <div className="flex flex-col text-left py-0.5">
                       <span className="font-medium text-foreground">Agent</span>
                       <span className="text-xs text-muted-foreground">
-                        Can send messages & campaigns (cannot disconnect channels)
+                        Can send messages, manage inbox & deals (cannot edit project settings)
                       </span>
                     </div>
                   </SelectItem>
@@ -319,7 +371,7 @@ export default function AdminCustomersPage() {
                     <div className="flex flex-col text-left py-0.5">
                       <span className="font-medium text-foreground">Admin</span>
                       <span className="text-xs text-muted-foreground">
-                        Full project configuration, channels, and settings
+                        Full project management, connect WhatsApp QR / Instagram, pipelines & settings
                       </span>
                     </div>
                   </SelectItem>
@@ -342,18 +394,29 @@ export default function AdminCustomersPage() {
                       .filter((p) => !p.archived_at)
                       .map((p) => (
                         <SelectItem key={p.id} value={p.id}>
-                          {p.name}
+                          <div className="flex items-center gap-2">
+                            <span>{p.name}</span>
+                            <span className="text-[10px] text-muted-foreground font-mono">
+                              ({p.channel_type === "qr" ? "QR Code" : "Cloud API"})
+                            </span>
+                          </div>
                         </SelectItem>
                       ))}
                   </SelectContent>
                 </Select>
               )}
             </div>
+
+            <div className="rounded-md bg-muted/60 p-2.5 text-xs text-muted-foreground flex items-start gap-2">
+              <Mail className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+              <span>A welcome email with login credentials and access instructions will be sent to the user's email address upon creation.</span>
+            </div>
+
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                 {t("cancel")}
               </Button>
-              <Button type="submit" disabled={submitting}>
+              <Button type="submit" disabled={submitting || (emailTouched && !isEmailValid)}>
                 {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {t("create")}
               </Button>
@@ -379,9 +442,17 @@ export default function AdminCustomersPage() {
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-muted-foreground">Role:</span>
                   <span className="font-medium text-foreground capitalize">
-                    {credentials.role ?? "customer"}
+                    {credentials.role ?? "agent"}
                   </span>
                 </div>
+                {credentials.projectName && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">Project:</span>
+                    <span className="font-semibold text-primary">
+                      {credentials.projectName}
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-muted-foreground">{t("password")}:</span>
                   <code className="rounded bg-background px-2 py-0.5 text-sm font-mono">
@@ -389,6 +460,12 @@ export default function AdminCustomersPage() {
                   </code>
                 </div>
               </div>
+
+              <div className="rounded-md bg-emerald-500/10 border border-emerald-500/20 p-2.5 text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>Onboarding details and sign-in credentials have been sent to <strong>{credentials.email}</strong>.</span>
+              </div>
+
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" onClick={copyCredentials}>
                   {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
@@ -415,3 +492,4 @@ export default function AdminCustomersPage() {
     </div>
   );
 }
+

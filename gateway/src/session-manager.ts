@@ -25,6 +25,7 @@
 
 import { Boom } from "@hapi/boom";
 import makeWASocket, {
+  Browsers,
   DisconnectReason,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
@@ -494,7 +495,12 @@ async function openSocket(session: Session): Promise<void> {
     // customer's behalf, and do not broadcast presence.
     markOnlineOnConnect: false,
     syncFullHistory: true,
-    browser: ["MaSa CRM", "Chrome", "1.0.0"],
+    browser: Browsers.ubuntu("Chrome"),
+    keepAliveIntervalMs: 25_000,
+    connectTimeoutMs: 60_000,
+    defaultQueryTimeoutMs: 60_000,
+    retryRequestDelayMs: 500,
+    maxMsgRetryCount: 5,
   });
 
   session.socket = socket;
@@ -561,24 +567,22 @@ async function openSocket(session: Session): Promise<void> {
     if (connection === "close") {
       const statusCode = (lastDisconnect?.error as Boom | undefined)?.output
         ?.statusCode;
-      const loggedOut =
-        statusCode === DisconnectReason.loggedOut ||
-        statusCode === DisconnectReason.connectionReplaced ||
+      const isExplicitLogout = (statusCode as number | undefined) === (DisconnectReason.loggedOut as number);
+      const isBanned = statusCode === 403;
+      const isRestartRequired = (statusCode as number | undefined) === (DisconnectReason.restartRequired as number);
+      const isConnectionReplaced =
+        (statusCode as number | undefined) === (DisconnectReason.connectionReplaced as number) ||
         statusCode === 440;
-      const banned = statusCode === 403;
-      const restartRequired = statusCode === DisconnectReason.restartRequired;
 
       if (session.closing) return;
 
-      if (restartRequired) {
+      if (isRestartRequired) {
         // 515. Expected — WhatsApp closes the socket immediately after a
         // successful scan and requires a new one carrying the
         // credentials that scan produced. Not a failure: it must not
         // consume a reconnect attempt, must not back off (the QR the
         // customer just scanned is spent, and a long delay reads as
         // "nothing happened"), and must not report an error to the UI.
-        // scheduleReopen() waits for the credential write, which is the
-        // whole reason a fresh pairing used to die here.
         session.status = "connecting";
         await upsertSessionRow(session.projectId, session.accountId, {
           status: "connecting",
@@ -594,11 +598,9 @@ async function openSocket(session: Session): Promise<void> {
         return;
       }
 
-      if (loggedOut || banned) {
-        // Terminal. The credentials are dead — destroy them so the
-        // next connect() starts a clean pairing instead of retrying
-        // with keys WhatsApp has already rejected.
-        session.status = banned ? "banned" : "logged_out";
+      if (isExplicitLogout || isBanned) {
+        // Terminal: The phone unlinked the device or WhatsApp banned the number.
+        session.status = isBanned ? "banned" : "logged_out";
         sessions.delete(session.projectId);
         await clearAuthState(session.projectId).catch((err) =>
           logger.error({ err, projectId: session.projectId }, "clearAuthState failed"),
@@ -608,11 +610,9 @@ async function openSocket(session: Session): Promise<void> {
           qr_code: null,
           qr_expires_at: null,
           last_disconnected_at: new Date().toISOString(),
-          last_error: banned
+          last_error: isBanned
             ? "WhatsApp rejected this number. It may be banned."
-            : statusCode === 440 || statusCode === DisconnectReason.connectionReplaced
-              ? "WhatsApp connection was replaced by another session. Please scan the QR code again."
-              : "The linked device was logged out. Scan the QR code again to reconnect.",
+            : "The linked device was logged out on WhatsApp. Scan the QR code again to reconnect.",
         });
         logger.warn(
           { projectId: session.projectId, statusCode },
@@ -621,32 +621,25 @@ async function openSocket(session: Session): Promise<void> {
         return;
       }
 
-      // Transient. Credentials are still valid; back off and retry.
+      // Transient drop (network hiccup, WhatsApp server migration, 440 conflict, timeout).
+      // Keep credentials intact and reconnect indefinitely in the background.
       session.reconnectAttempts += 1;
-      if (session.reconnectAttempts > config.reconnect.maxAttempts) {
-        session.status = "error";
-        sessions.delete(session.projectId);
-        await upsertSessionRow(session.projectId, session.accountId, {
-          status: "error",
-          last_disconnected_at: new Date().toISOString(),
-          last_error: `Could not reconnect after ${config.reconnect.maxAttempts} attempts.`,
-        });
-        logger.error({ projectId: session.projectId }, "reconnect attempts exhausted");
-        return;
-      }
+      const delay = isConnectionReplaced
+        ? 5_000
+        : Math.min(
+            config.reconnect.baseMs * 1.5 ** Math.min(session.reconnectAttempts, 8),
+            30_000,
+          );
 
-      const delay = Math.min(
-        config.reconnect.baseMs * 2 ** (session.reconnectAttempts - 1),
-        config.reconnect.maxMs,
-      );
       session.status = "connecting";
       await upsertSessionRow(session.projectId, session.accountId, {
         status: "connecting",
         last_disconnected_at: new Date().toISOString(),
+        last_error: null,
       });
       logger.warn(
         { projectId: session.projectId, statusCode, delay, attempt: session.reconnectAttempts },
-        "session dropped; reconnecting",
+        "session dropped; reconnecting in background",
       );
 
       scheduleReopen(session, socket, delay);
@@ -913,7 +906,11 @@ export async function sendMessage(
   if (session && session.status === "connecting") {
     for (let i = 0; i < 25; i++) {
       await new Promise((r) => setTimeout(r, 200));
-      if (session.status === "connected" && session.socket) break;
+      const current = sessions.get(params.projectId);
+      if (current && (current.status as string) === "connected" && current.socket) {
+        session = current;
+        break;
+      }
     }
   }
 
@@ -1052,9 +1049,9 @@ export async function restoreSessions(): Promise<void> {
   }
 }
 
-/** Periodic liveness stamp for every connected session. */
+/** Periodic liveness stamp and auto-heal watchdog for all paired sessions. */
 export function startHeartbeat(): NodeJS.Timeout {
-  return setInterval(() => {
+  return setInterval(async () => {
     const now = new Date().toISOString();
     for (const session of sessions.values()) {
       if (session.status !== "connected") continue;
@@ -1067,6 +1064,29 @@ export function startHeartbeat(): NodeJS.Timeout {
             logger.warn({ err: error, projectId: session.projectId }, "heartbeat failed");
           }
         });
+    }
+
+    // Auto-heal watchdog: periodically scan for paired sessions that should be live
+    // but have no active in-memory socket (e.g. following network recovery or sleep)
+    try {
+      const { data: activeRows } = await supabase
+        .from("whatsapp_sessions")
+        .select("project_id, status")
+        .in("status", ["connected", "connecting"]);
+      if (activeRows && activeRows.length > 0) {
+        for (const row of activeRows) {
+          const pid = row.project_id as string;
+          const existing = sessions.get(pid);
+          if (!existing || (!existing.socket && existing.status !== "qr_pending" && !existing.closing)) {
+            logger.info({ projectId: pid }, "auto-healing session connection");
+            void connectSession(pid).catch((err) => {
+              logger.warn({ err, projectId: pid }, "auto-heal connectSession failed");
+            });
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn({ err }, "watchdog scan failed");
     }
   }, config.heartbeatIntervalMs);
 }

@@ -102,3 +102,108 @@ export function phoneVariants(sanitized: string): string[] {
 export function isRecipientNotAllowedError(message: string): boolean {
   return /131030|not in allowed list|not in the allowed list/i.test(message)
 }
+
+/**
+ * Format phone number for clean UI display.
+ * Strips WhatsApp JID suffixes (@s.whatsapp.net, @c.us, etc.) and ensures
+ * a consistent international + prefix with readable digit spacing.
+ *
+ * e.g. "919876543210@s.whatsapp.net" → "+91 98765 43210"
+ * e.g. "+14155552671" → "+1 415 555 2671"
+ */
+export function formatDisplayPhone(phone?: string | null): string {
+  if (!phone) return '';
+  // Strip JID suffix if present
+  let clean = phone.replace(/@(s\.whatsapp\.net|c\.us|g\.us).*$/i, '').trim();
+
+  // If already formatted with spaces or dashes and starts with +, return cleaned
+  if (clean.startsWith('+') && /\s|-/.test(clean)) {
+    return clean;
+  }
+
+  // Extract digits
+  const digits = clean.replace(/\D/g, '');
+  if (!digits) return clean;
+
+  // Format common lengths
+  if (digits.length === 10) {
+    // Local 10-digit number
+    return `+${digits.slice(0, 5)} ${digits.slice(5)}`;
+  } else if (digits.length === 11 && digits.startsWith('1')) {
+    // US/Canada: +1 (XXX) XXX-XXXX
+    return `+1 ${digits.slice(1, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
+  } else if (digits.length === 12 && digits.startsWith('91')) {
+    // India: +91 XXXXX XXXXX
+    return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
+  } else if (digits.length >= 11 && digits.length <= 15) {
+    // Generic international: +CC XXXX XXXXX
+    const ccLen = digits.length > 12 ? 3 : 2;
+    return `+${digits.slice(0, ccLen)} ${digits.slice(ccLen, ccLen + 4)} ${digits.slice(ccLen + 4)}`;
+  }
+
+  return clean.startsWith('+') ? clean : `+${digits}`;
+}
+
+export interface ContactDisplayInfo {
+  title: string;
+  subtitle: string | null;
+  initials: string;
+}
+
+/**
+ * Resolves the primary contact title and formatted subtitle (phone or instagram handle).
+ * If a user-saved contact name exists, the name is displayed as the title,
+ * and the formatted phone number is shown as the subtitle.
+ */
+export function getContactDisplay(contact?: {
+  name?: string | null;
+  phone?: string | null;
+  instagram_username?: string | null;
+  channel?: string | null;
+} | null, fallbackText = 'Unknown'): ContactDisplayInfo {
+  if (!contact) {
+    return { title: fallbackText, subtitle: null, initials: '?' };
+  }
+
+  const isInstagram = contact.channel === 'instagram' || Boolean(contact.instagram_username);
+  const formattedPhone = contact.phone ? formatDisplayPhone(contact.phone) : null;
+  const igHandle = contact.instagram_username ? `@${contact.instagram_username}` : null;
+
+  const hasExplicitName = Boolean(
+    contact.name &&
+    contact.name.trim() !== '' &&
+    contact.name.trim() !== contact.phone &&
+    !contact.name.includes('@s.whatsapp.net') &&
+    !contact.name.includes('@c.us')
+  );
+
+  if (hasExplicitName) {
+    const title = contact.name!.trim();
+    const subtitle = isInstagram ? igHandle : formattedPhone;
+    const initials = title.charAt(0).toUpperCase();
+    return { title, subtitle, initials };
+  }
+
+  if (isInstagram && igHandle) {
+    return {
+      title: igHandle,
+      subtitle: contact.name && contact.name !== igHandle ? contact.name : null,
+      initials: (contact.instagram_username || 'I').charAt(0).toUpperCase(),
+    };
+  }
+
+  if (formattedPhone) {
+    return {
+      title: formattedPhone,
+      subtitle: null,
+      initials: formattedPhone.replace(/\D/g, '').charAt(0) || '#',
+    };
+  }
+
+  return {
+    title: contact.name || fallbackText,
+    subtitle: null,
+    initials: (contact.name || fallbackText).charAt(0).toUpperCase(),
+  };
+}
+
