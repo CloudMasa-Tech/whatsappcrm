@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const ALLOWED_DOMAINS = [
-  "instagram.com",
-  "cdninstagram.com",
   "facebook.com",
+  "m.facebook.com",
+  "web.facebook.com",
+  "business.facebook.com",
+  "messenger.com",
   "fbcdn.net",
   "fbsbx.com",
   "meta.com",
+  "instagram.com",
+  "cdninstagram.com",
 ];
 
 const CLIENT_INJECTION_SCRIPT = `
@@ -45,34 +49,35 @@ const CLIENT_INJECTION_SCRIPT = `
     });
   } catch(e) {}
 
-  // 3. Helper to normalize and route Meta/Instagram URLs through local proxy
+  // 3. Helper to normalize and route Meta/Facebook URLs through local proxy
   function normalizeAndProxyUrl(rawUrl) {
     if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
-    if (rawUrl.indexOf('/api/instagram/proxy') !== -1) return rawUrl;
+    if (rawUrl.indexOf('/api/facebook/proxy') !== -1) return rawUrl;
 
     var target = rawUrl.trim();
     if (target.startsWith('//')) {
       target = 'https:' + target;
     } else if (!target.startsWith('http://') && !target.startsWith('https://')) {
       if (target.startsWith('/')) {
-        target = 'https://www.instagram.com' + target;
+        target = 'https://www.facebook.com' + target;
       } else {
-        target = 'https://www.instagram.com/' + target;
+        target = 'https://www.facebook.com/' + target;
       }
     }
 
     var isMetaTarget = (
-      target.indexOf('instagram.com') !== -1 ||
-      target.indexOf('cdninstagram.com') !== -1 ||
       target.indexOf('facebook.com') !== -1 ||
+      target.indexOf('messenger.com') !== -1 ||
+      target.indexOf('business.facebook.com') !== -1 ||
       target.indexOf('fbcdn.net') !== -1 ||
       target.indexOf('fbsbx.com') !== -1 ||
-      target.indexOf('meta.com') !== -1
+      target.indexOf('meta.com') !== -1 ||
+      target.indexOf('instagram.com') !== -1
     );
 
     if (isMetaTarget) {
       var origin = window.location.origin || (window.location.protocol + '//' + window.location.host);
-      return origin + '/api/instagram/proxy?url=' + encodeURIComponent(target);
+      return origin + '/api/facebook/proxy?url=' + encodeURIComponent(target);
     }
 
     return target;
@@ -182,7 +187,7 @@ export async function DELETE(request: NextRequest) {
 
 async function handleProxyRequest(request: NextRequest, method: string) {
   const { searchParams } = new URL(request.url);
-  const targetUrl = searchParams.get("url") || "https://www.instagram.com/";
+  const targetUrl = searchParams.get("url") || "https://www.facebook.com/";
 
   try {
     const parsed = new URL(targetUrl);
@@ -200,7 +205,6 @@ async function handleProxyRequest(request: NextRequest, method: string) {
     const cookieHeader = request.headers.get("cookie") || "";
     const contentTypeReq = request.headers.get("content-type");
 
-    // Extract CSRF token from cookies if present
     let csrfTokenFromCookie = "";
     if (cookieHeader) {
       const match = cookieHeader.match(/csrftoken=([^;]+)/);
@@ -215,31 +219,24 @@ async function handleProxyRequest(request: NextRequest, method: string) {
       "Sec-Fetch-Dest": request.headers.get("sec-fetch-dest") || "empty",
       "Sec-Fetch-Mode": request.headers.get("sec-fetch-mode") || "cors",
       "Sec-Fetch-Site": "same-origin",
-      Origin: "https://www.instagram.com",
-      Referer: targetUrl.includes("instagram.com") ? targetUrl : "https://www.instagram.com/",
+      Origin: "https://www.facebook.com",
+      Referer: targetUrl.includes("facebook.com") || targetUrl.includes("messenger.com") ? targetUrl : "https://www.facebook.com/",
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
     };
 
-    // Forward Meta/Instagram specific request headers
     const customHeaderKeys = [
       "x-csrftoken",
-      "x-ig-app-id",
-      "x-asbd-id",
       "x-fb-lsd",
       "x-requested-with",
-      "x-ig-www-claim",
       "x-fb-friendly-name",
       "x-fb-rla-fr",
-      "x-instagram-ajax",
-      "x-ig-connection-type",
-      "x-ig-capabilities",
+      "x-asbd-id",
     ];
     for (const key of customHeaderKeys) {
       const val = request.headers.get(key);
       if (val) reqHeaders[key] = val;
     }
 
-    // Ensure x-csrftoken is present if we have it in cookies
     if (!reqHeaders["x-csrftoken"] && csrfTokenFromCookie) {
       reqHeaders["x-csrftoken"] = csrfTokenFromCookie;
     }
@@ -270,7 +267,6 @@ async function handleProxyRequest(request: NextRequest, method: string) {
     resHeaders.set("X-Frame-Options", "SAMEORIGIN");
     resHeaders.set("Permissions-Policy", "unload=*");
 
-    // Forward and sanitize Set-Cookie headers so localhost stores session & csrf cookies properly
     const rawSetCookies =
       typeof response.headers.getSetCookie === "function"
         ? response.headers.getSetCookie()
@@ -280,28 +276,26 @@ async function handleProxyRequest(request: NextRequest, method: string) {
 
     for (const cookie of rawSetCookies) {
       // 1. Strip Domain and Secure flags so the browser on localhost / HTTP saves the session cookie
-      // 2. Enforce Path=/api/instagram so Instagram cookies stay completely isolated from Facebook
+      // 2. Enforce Path=/api/facebook so Facebook cookies stay completely isolated from Instagram
       let sanitized = cookie
         .replace(/Domain=[^;]+;?\s*/gi, "")
         .replace(/Secure;?\s*/gi, "")
         .replace(/Path=[^;]+;?\s*/gi, "")
         .replace(/SameSite=None;?\s*/gi, "SameSite=Lax; ");
-      sanitized = sanitized.trim().replace(/;$/, "") + "; Path=/api/instagram";
+      sanitized = sanitized.trim().replace(/;$/, "") + "; Path=/api/facebook";
       resHeaders.append("Set-Cookie", sanitized);
     }
 
-    // If Instagram responded with a redirect Location header, rewrite to stay in proxy
     const locationHeader = response.headers.get("location");
     if (locationHeader) {
       const origin = request.nextUrl.origin;
       let fullLoc = locationHeader;
       if (fullLoc.startsWith("/")) {
-        fullLoc = `https://www.instagram.com${fullLoc}`;
+        fullLoc = `https://www.facebook.com${fullLoc}`;
       }
-      resHeaders.set("Location", `${origin}/api/instagram/proxy?url=${encodeURIComponent(fullLoc)}`);
+      resHeaders.set("Location", `${origin}/api/facebook/proxy?url=${encodeURIComponent(fullLoc)}`);
     }
 
-    // If HTML, inject client monkey-patch before DOCTYPE so DOM tree inside <html> is untouched
     if (contentType.includes("text/html")) {
       let html = await response.text();
       html = CLIENT_INJECTION_SCRIPT + html;
@@ -316,7 +310,6 @@ async function handleProxyRequest(request: NextRequest, method: string) {
       });
     }
 
-    // Binary / JSON / JS / CSS pass-through
     const buffer = await response.arrayBuffer();
     resHeaders.set("Content-Type", contentType || "application/octet-stream");
     resHeaders.set("Cache-Control", "public, max-age=3600");
@@ -328,7 +321,7 @@ async function handleProxyRequest(request: NextRequest, method: string) {
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     return NextResponse.json(
-      { error: "Proxy request failed", details: errorMsg },
+      { error: "Facebook proxy request failed", details: errorMsg },
       {
         status: 502,
         headers: {

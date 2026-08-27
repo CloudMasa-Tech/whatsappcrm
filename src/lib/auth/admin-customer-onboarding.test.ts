@@ -315,3 +315,31 @@ describe("isSuperAdmin / isCustomer", () => {
     expect(isCustomer(null)).toBe(false);
   });
 });
+
+// --- Super Admin Customer Deletion ---
+
+describe("Super Admin customer deletion privileges", () => {
+  it("allows super admin to delete customer users", () => {
+    const callerRole = "super_admin";
+    const targetUserId: string = "customer-user-123";
+    const callerUserId: string = "super-admin-uuid";
+    const canDelete = isSuperAdmin(callerRole) && targetUserId !== callerUserId;
+    expect(canDelete).toBe(true);
+  });
+
+  it("prevents super admin from deleting themselves", () => {
+    const callerRole = "super_admin";
+    const targetUserId: string = "super-admin-uuid";
+    const callerUserId: string = "super-admin-uuid";
+    const canDelete = isSuperAdmin(callerRole) && targetUserId !== callerUserId;
+    expect(canDelete).toBe(false);
+  });
+
+  it("prevents non-superadmin from deleting customer users", () => {
+    const callerRole = "agent";
+    const targetUserId: string = "customer-user-123";
+    const callerUserId: string = "agent-uuid";
+    const canDelete = isSuperAdmin(callerRole) && targetUserId !== callerUserId;
+    expect(canDelete).toBe(false);
+  });
+});

@@ -7,29 +7,27 @@ import {
   Maximize2,
   Minimize2,
   MessageSquare,
+  Building2,
   Globe,
-  Compass,
-  Film,
   Loader2,
 } from "lucide-react";
-import { InstagramGradientIcon } from "@/components/icons/instagram";
+import { FacebookBrandIcon } from "@/components/icons/facebook";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
-interface InstagramHubProps {
+interface FacebookHubProps {
   canDisconnect?: boolean;
 }
 
 const PRESET_URLS = [
-  { id: "inbox", label: "Direct Inbox", icon: MessageSquare, url: "https://www.instagram.com/direct/inbox/" },
-  { id: "home", label: "Instagram Feed", icon: Globe, url: "https://www.instagram.com/" },
-  { id: "explore", label: "Explore", icon: Compass, url: "https://www.instagram.com/explore/" },
-  { id: "reels", label: "Reels", icon: Film, url: "https://www.instagram.com/reels/" },
+  { id: "messenger", label: "Messenger Inbox", icon: MessageSquare, url: "https://www.facebook.com/messages/t/" },
+  { id: "business", label: "Meta Business Suite", icon: Building2, url: "https://business.facebook.com/latest/inbox/all" },
+  { id: "feed", label: "Facebook Feed", icon: Globe, url: "https://www.facebook.com/" },
 ];
 
-export function InstagramHub({ canDisconnect = true }: InstagramHubProps) {
-  const [frameUrl, setFrameUrl] = useState("https://www.instagram.com/direct/inbox/");
+export function FacebookHub({ canDisconnect = true }: FacebookHubProps) {
+  const [frameUrl, setFrameUrl] = useState("https://www.facebook.com/messages/t/");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [loadingFrame, setLoadingFrame] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
@@ -47,18 +45,18 @@ export function InstagramHub({ canDisconnect = true }: InstagramHubProps) {
   const handleReload = () => {
     setLoadingFrame(true);
     setIframeKey((k) => k + 1);
-    toast.info("Reloading Instagram...");
+    toast.info("Reloading Facebook...");
     setTimeout(() => setLoadingFrame(false), 800);
   };
 
   const handleOpenPopup = () => {
     const popup = window.open(
       frameUrl,
-      "InstagramWeb",
-      "width=480,height=820,menubar=no,toolbar=no,location=no,status=no,resizable=yes"
+      "FacebookWeb",
+      "width=520,height=840,menubar=no,toolbar=no,location=no,status=no,resizable=yes"
     );
     if (popup) {
-      toast.success("Instagram opened in companion window!");
+      toast.success("Facebook opened in companion window!");
     } else {
       toast.error("Popup was blocked by browser. Please allow popups.");
     }
@@ -78,7 +76,7 @@ export function InstagramHub({ canDisconnect = true }: InstagramHubProps) {
     }
   };
 
-  const proxySrc = `/api/instagram/proxy?url=${encodeURIComponent(frameUrl)}`;
+  const proxySrc = `/api/facebook/proxy?url=${encodeURIComponent(frameUrl)}`;
 
   return (
     <div
@@ -93,9 +91,9 @@ export function InstagramHub({ canDisconnect = true }: InstagramHubProps) {
         {/* Left: Branding & Quick View Switcher */}
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-2 mr-2">
-            <InstagramGradientIcon className="size-5 rounded-md" />
+            <FacebookBrandIcon className="size-5" />
             <span className="text-xs font-semibold text-foreground hidden sm:inline">
-              Instagram
+              Facebook
             </span>
           </div>
 
@@ -110,9 +108,7 @@ export function InstagramHub({ canDisconnect = true }: InstagramHubProps) {
                   size="sm"
                   className={cn(
                     "h-7 px-2.5 text-xs gap-1.5",
-                    isActive
-                      ? "bg-gradient-to-r from-pink-500 via-rose-500 to-purple-600 text-white shadow-xs hover:opacity-90 font-medium"
-                      : "text-muted-foreground"
+                    isActive ? "bg-blue-600 text-white shadow-xs hover:bg-blue-700 font-medium" : "text-muted-foreground"
                   )}
                   onClick={() => handleNavigate(preset.url)}
                 >
@@ -133,7 +129,7 @@ export function InstagramHub({ canDisconnect = true }: InstagramHubProps) {
             title="Reload Frame"
             onClick={handleReload}
           >
-            <RotateCw className={cn("size-3.5", loadingFrame ? "animate-spin text-pink-500" : "")} />
+            <RotateCw className={cn("size-3.5", loadingFrame ? "animate-spin text-blue-500" : "")} />
           </Button>
 
           <Button
@@ -162,8 +158,8 @@ export function InstagramHub({ canDisconnect = true }: InstagramHubProps) {
       <div className="relative flex-1 w-full bg-background overflow-hidden">
         {loadingFrame && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-background/80 backdrop-blur-xs gap-2">
-            <Loader2 className="size-7 animate-spin text-pink-500" />
-            <p className="text-xs font-medium text-muted-foreground">Loading Instagram...</p>
+            <Loader2 className="size-7 animate-spin text-blue-600" />
+            <p className="text-xs font-medium text-muted-foreground">Loading Facebook...</p>
           </div>
         )}
 
@@ -171,7 +167,7 @@ export function InstagramHub({ canDisconnect = true }: InstagramHubProps) {
           key={iframeKey}
           ref={iframeRef}
           src={proxySrc}
-          title="Instagram In-Frame"
+          title="Facebook In-Frame"
           className="h-full w-full border-0 bg-white"
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-presentation"
           allow="camera; microphone; clipboard-write; encrypted-media; fullscreen; unload"

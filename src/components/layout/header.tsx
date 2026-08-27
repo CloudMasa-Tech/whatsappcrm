@@ -22,6 +22,9 @@ import { ProjectSwitcher } from "@/components/projects/project-switcher";
 const pageTitles: Record<string, string> = {
   "/dashboard": "dashboard",
   "/inbox": "inbox",
+  "/whatsapp": "whatsapp",
+  "/instagram": "instagram",
+  "/facebook": "facebook",
   "/notifications": "notifications",
   "/contacts": "contacts",
   "/pipelines": "pipelines",
@@ -148,6 +151,16 @@ export function Header({ onOpenSidebar }: HeaderProps) {
           </DropdownMenuItem>
         </DropdownMenuContent>
         </DropdownMenu>
+
+        <button
+          type="button"
+          onClick={signOut}
+          title={t("menuSignOut")}
+          aria-label={t("menuSignOut")}
+          className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus:outline-none"
+        >
+          <LogOut className="size-4" />
+        </button>
       </div>
     </header>
   );

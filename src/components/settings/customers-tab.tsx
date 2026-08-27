@@ -6,28 +6,35 @@
 // Admin-only. Onboards a NEW customer into the admin's account,
 // assigning them to a specific project via project_members.
 //
-// The customer's profile is placed in the ADMIN's account
-// (same account_id), NOT in a new isolated account. The
-// handle_new_user trigger skips account/project/profile creation
-// when it sees created_by_admin = true in user_metadata.
-//
 // Flow:
-//   1. Dialog — name / email / password / project → POST /api/admin/users.
-//   2. Result — the credentials come back ONCE for handover (same
-//               spirit as the one-time invite link).
-//
-// The list is fetched via GET /api/admin/users (RLS-scoped to the
-// onboarding admin's account).
+//   1. Filter by Project or view All.
+//   2. Dialog — name / email / password / project (pre-selected to
+//      active project filter) → POST /api/admin/users.
+//   3. Result — credentials handover modal.
+//   4. Delete — permanently delete customer account via DELETE /api/admin/users.
 // ============================================================
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Copy, FolderKanban, Loader2, Plus, UserRound, UserPlus } from 'lucide-react';
+import {
+  Copy,
+  FolderKanban,
+  Loader2,
+  Plus,
+  UserRound,
+  UserPlus,
+  Filter,
+  X,
+  Trash2,
+  Mail,
+  CheckCircle2,
+} from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
 import { RequireRole } from '@/components/auth/require-role';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
@@ -69,6 +76,7 @@ interface CreatedCredentials {
   email: string;
   password: string;
   role?: 'agent' | 'admin';
+  projectName?: string;
   signInUrl: string;
 }
 
@@ -80,7 +88,6 @@ interface Project {
   archived_at: string | null;
 }
 
-// Mirrors the server's minimums so a bad submit never round-trips.
 const MIN_PASSWORD_LEN = 8;
 const MAX_NAME_LEN = 80;
 
@@ -98,7 +105,10 @@ export function CustomersTab() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Onboard form state.
+  // Project filtering
+  const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>('all');
+
+  // Onboard form state
   const [open, setOpen] = useState(false);
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -107,10 +117,14 @@ export function CustomersTab() {
   const [role, setRole] = useState<'agent' | 'admin'>('agent');
   const [submitting, setSubmitting] = useState(false);
 
-  // Projects list.
+  // Delete customer state
+  const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // Projects list
   const [projects, setProjects] = useState<Project[]>([]);
 
-  // One-time credential handover.
+  // One-time credential handover
   const [created, setCreated] = useState<CreatedCredentials | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -123,7 +137,7 @@ export function CustomersTab() {
         return;
       }
       const data = (await res.json()) as { customers: Customer[] };
-      setCustomers(data.customers);
+      setCustomers(data.customers ?? []);
     } catch (err) {
       console.error('[CustomersTab] load error:', err);
       toast.error(t('networkError'));
@@ -137,9 +151,9 @@ export function CustomersTab() {
       const res = await fetch('/api/projects', { cache: 'no-store' });
       if (!res.ok) return;
       const data = (await res.json()) as { projects: Project[] };
-      setProjects(data.projects);
+      setProjects(data.projects ?? []);
     } catch {
-      // Projects will be empty; the form will show a message.
+      // Projects will be empty
     }
   }, []);
 
@@ -148,6 +162,18 @@ export function CustomersTab() {
     void loadProjects();
   }, [load, loadProjects]);
 
+  const filteredCustomers = useMemo(() => {
+    if (!selectedProjectFilter || selectedProjectFilter === 'all') {
+      return customers;
+    }
+    return customers.filter((c) => c.project_id === selectedProjectFilter);
+  }, [customers, selectedProjectFilter]);
+
+  const activeFilteredProject = useMemo(() => {
+    if (!selectedProjectFilter || selectedProjectFilter === 'all') return null;
+    return projects.find((p) => p.id === selectedProjectFilter) || null;
+  }, [projects, selectedProjectFilter]);
+
   function resetForm() {
     setFullName('');
     setEmail('');
@@ -155,6 +181,16 @@ export function CustomersTab() {
     setProjectId('');
     setRole('agent');
     setSubmitting(false);
+  }
+
+  function handleOpenDialog() {
+    resetForm();
+    if (selectedProjectFilter && selectedProjectFilter !== 'all') {
+      setProjectId(selectedProjectFilter);
+    } else if (projects.length > 0) {
+      setProjectId(projects[0].id);
+    }
+    setOpen(true);
   }
 
   async function handleCreate() {
@@ -172,7 +208,7 @@ export function CustomersTab() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email,
+          email: email.trim().toLowerCase(),
           password,
           fullName: fullName.trim() ? fullName.trim() : undefined,
           projectId,
@@ -188,6 +224,7 @@ export function CustomersTab() {
         email: payload.credentials?.email ?? email,
         password: payload.credentials?.password ?? password,
         role: payload.credentials?.role ?? role,
+        projectName: payload.credentials?.projectName,
         signInUrl: payload.signInUrl ?? '/login',
       });
       setOpen(false);
@@ -201,11 +238,35 @@ export function CustomersTab() {
     }
   }
 
+  async function handleDeleteCustomer() {
+    if (!customerToDelete || deleting) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(
+        `/api/admin/users?userId=${encodeURIComponent(customerToDelete.user_id)}&id=${encodeURIComponent(customerToDelete.id)}`,
+        { method: 'DELETE' }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to delete customer');
+        return;
+      }
+      toast.success('Customer account deleted successfully');
+      setCustomerToDelete(null);
+      void load();
+    } catch (err) {
+      console.error('[handleDeleteCustomer] error:', err);
+      toast.error('Network error while deleting customer');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   async function copyCredentials() {
     if (!created) return;
     try {
       await navigator.clipboard.writeText(
-        `${t('email')}: ${created.email}\n${t('password')}: ${created.password}\n${t('signInUrl')}: ${created.signInUrl}`,
+        `${t('email')}: ${created.email}\nProject: ${created.projectName ?? ''}\n${t('password')}: ${created.password}\n${t('signInUrl')}: ${created.signInUrl}`,
       );
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -230,7 +291,7 @@ export function CustomersTab() {
         description={t('description')}
         action={
           <RequireRole min="admin">
-            <Button onClick={() => setOpen(true)}>
+            <Button onClick={handleOpenDialog}>
               <Plus className="size-4" />
               {t('onboard')}
             </Button>
@@ -238,23 +299,87 @@ export function CustomersTab() {
         }
       />
 
-      {customers.length === 0 ? (
+      {/* Project Filter Selector */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-3.5">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            <Filter className="h-3.5 w-3.5 text-primary" />
+            <span>Filter by Project:</span>
+          </div>
+          <Select
+            value={selectedProjectFilter}
+            onValueChange={(val) => setSelectedProjectFilter(val ?? 'all')}
+          >
+            <SelectTrigger className="h-8 w-[200px] text-xs">
+              <SelectValue placeholder="All Projects" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">
+                All Projects ({customers.length})
+              </SelectItem>
+              {projects.map((p) => {
+                const count = customers.filter((c) => c.project_id === p.id).length;
+                return (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name} ({count})
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {activeFilteredProject && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">
+              Showing users for{' '}
+              <strong className="text-foreground">{activeFilteredProject.name}</strong>
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedProjectFilter('all')}
+              className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="mr-1 h-3 w-3" />
+              Clear Filter
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {filteredCustomers.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <UserPlus className="size-6 text-muted-foreground" />
-            <p className="mt-2 text-sm text-muted-foreground">
-              {t('emptyTitle')}
+            <p className="mt-2 text-sm font-medium text-muted-foreground">
+              {activeFilteredProject
+                ? `No customers found for project "${activeFilteredProject.name}"`
+                : t('emptyTitle')}
             </p>
             <p className="mt-1 max-w-[42ch] text-xs text-muted-foreground">
-              {t('emptyDesc')}
+              {activeFilteredProject
+                ? 'Create a customer to assign them directly to this project.'
+                : t('emptyDesc')}
             </p>
+            {activeFilteredProject && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleOpenDialog}
+                className="mt-4"
+              >
+                <Plus className="mr-2 h-3.5 w-3.5" />
+                Add User to {activeFilteredProject.name}
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (
         <Card>
           <CardContent className="p-0">
             <ul className="divide-y divide-border">
-              {customers.map((customer) => {
+              {filteredCustomers.map((customer) => {
                 const projectName =
                   customer.project_name ||
                   customer.project?.name ||
@@ -264,51 +389,55 @@ export function CustomersTab() {
                 return (
                   <li
                     key={customer.id}
-                    className="flex items-center gap-4 px-4 py-3.5"
+                    className="flex items-center justify-between gap-4 px-4 py-3.5 hover:bg-muted/30 transition-colors"
                   >
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
-                      <UserRound className="size-4" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate text-sm font-medium text-foreground">
-                          {customer.full_name || customer.email}
-                        </p>
-                        <span
-                          className={cn(
-                            "rounded-full px-2 py-0.5 text-[10px] font-medium capitalize",
-                            customer.role === "admin"
-                              ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
-                              : "bg-primary/10 text-primary border border-primary/20"
-                          )}
-                        >
-                          {customer.role === "admin" ? "Admin" : "Agent"}
-                        </span>
-                        {projectName ? (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/70 px-2 py-0.5 text-[10px] font-medium text-foreground">
-                            <FolderKanban className="size-3 text-primary shrink-0" />
-                            {projectName}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] text-muted-foreground">
-                            No project
-                          </span>
-                        )}
-                      </div>
-                      <p className="truncate text-xs text-muted-foreground mt-0.5">
-                        {customer.full_name ? customer.email : t('unnamed')}
-                        {projectName && (
-                          <>
-                            {' · '}
-                            <span className="font-medium text-foreground/80">
-                              Project: {projectName}
+                    <div className="flex items-center gap-4 min-w-0">
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
+                        <UserRound className="size-4" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="truncate text-sm font-medium text-foreground">
+                            {customer.full_name || customer.email}
+                          </p>
+                          <Badge
+                            className={cn(
+                              "text-[10px] px-2 py-0 capitalize",
+                              customer.role === "admin"
+                                ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
+                                : "bg-primary/10 text-primary border border-primary/20"
+                            )}
+                          >
+                            {customer.role === "admin" ? "Admin" : "Agent"}
+                          </Badge>
+                          {projectName ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/70 px-2 py-0.5 text-[10px] font-medium text-foreground">
+                              <FolderKanban className="size-3 text-primary shrink-0" />
+                              {projectName}
                             </span>
-                          </>
-                        )}
-                        {' · '}
-                        {t('created', { date: fmtDate(customer.created_at) })}
-                      </p>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] text-muted-foreground">
+                              No project
+                            </span>
+                          )}
+                        </div>
+                        <p className="truncate text-xs text-muted-foreground mt-0.5 font-mono">
+                          {customer.email}
+                          {' · '}
+                          {t('created', { date: fmtDate(customer.created_at) })}
+                        </p>
+                      </div>
                     </div>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setCustomerToDelete(customer)}
+                      className="size-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                      title="Delete Customer Account"
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
                   </li>
                 );
               })}
@@ -316,6 +445,65 @@ export function CustomersTab() {
           </CardContent>
         </Card>
       )}
+
+      {/* Delete Customer Confirmation Dialog */}
+      <Dialog
+        open={Boolean(customerToDelete)}
+        onOpenChange={(openState) => {
+          if (!openState) setCustomerToDelete(null);
+        }}
+      >
+        <DialogContent className="bg-popover border-border sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="size-5" />
+              Delete Customer Account
+            </DialogTitle>
+            <DialogDescription className="space-y-2 pt-2 text-muted-foreground">
+              <p>
+                Are you sure you want to delete{' '}
+                <strong className="text-foreground">
+                  {customerToDelete?.full_name || customerToDelete?.email}
+                </strong>
+                ?
+              </p>
+              <p className="text-xs">
+                This will delete their user profile, remove their project assignments, and completely revoke their CRM login access.
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCustomerToDelete(null)}
+              disabled={deleting}
+              className="border-border text-muted-foreground"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleDeleteCustomer()}
+              disabled={deleting}
+              className="gap-1.5"
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="size-4" />
+                  Delete Account
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Onboard dialog */}
       <Dialog
@@ -331,7 +519,9 @@ export function CustomersTab() {
               {t('onboardDialogTitle')}
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              {t('onboardDialogDesc')}
+              {activeFilteredProject
+                ? `Creating user for project "${activeFilteredProject.name}" by default.`
+                : t('onboardDialogDesc')}
             </DialogDescription>
           </DialogHeader>
 
@@ -342,6 +532,41 @@ export function CustomersTab() {
               void handleCreate();
             }}
           >
+            {/* Target Project */}
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="customer-project">{t('project')} *</Label>
+                {activeFilteredProject && (
+                  <Badge variant="outline" className="text-[10px] text-primary border-primary/30">
+                    Project Default Selected
+                  </Badge>
+                )}
+              </div>
+              {projects.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  {t('noProjects')}
+                </p>
+              ) : (
+                <Select
+                  value={projectId}
+                  onValueChange={(v) => setProjectId(v ?? "")}
+                >
+                  <SelectTrigger id="customer-project">
+                    <SelectValue placeholder={t('selectProject')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {projects
+                      .filter((p) => !p.archived_at)
+                      .map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+
             <div className="grid gap-2">
               <Label htmlFor="customer-name">{t('fullName')}</Label>
               <Input
@@ -354,7 +579,7 @@ export function CustomersTab() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="customer-email">{t('email')}</Label>
+              <Label htmlFor="customer-email">{t('email')} *</Label>
               <Input
                 id="customer-email"
                 type="email"
@@ -366,23 +591,36 @@ export function CustomersTab() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="customer-password">{t('password')}</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="customer-password">{t('password')} *</Label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const rand = Math.random().toString(36).slice(-8) + "Aa1!";
+                    setPassword(rand);
+                  }}
+                  className="text-[11px] text-primary hover:underline"
+                >
+                  Generate Secure
+                </button>
+              </div>
               <Input
                 id="customer-password"
-                type="password"
+                type="text"
                 required
                 minLength={MIN_PASSWORD_LEN}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={t('passwordPlaceholder', { min: MIN_PASSWORD_LEN })}
-                autoComplete="new-password"
+                className="font-mono text-sm"
+                autoComplete="off"
               />
               <p className="text-xs text-muted-foreground">
                 {t('passwordHint')}
               </p>
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="customer-role">Role</Label>
+              <Label htmlFor="customer-role">Role *</Label>
               <Select
                 value={role}
                 onValueChange={(v) => setRole((v as 'agent' | 'admin') ?? 'agent')}
@@ -410,29 +648,6 @@ export function CustomersTab() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-2">
-              <Label>{t('project')}</Label>
-              {projects.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  {t('noProjects')}
-                </p>
-              ) : (
-                <Select value={projectId} onValueChange={(v) => setProjectId(v ?? "")}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={t('selectProject')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {projects
-                      .filter((p) => !p.archived_at)
-                      .map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.name}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
 
             <DialogFooter>
               <Button
@@ -458,62 +673,68 @@ export function CustomersTab() {
         </DialogContent>
       </Dialog>
 
-      {/* One-time credential handover */}
-      <Dialog open={created !== null} onOpenChange={() => setCreated(null)}>
+      {/* Credential handover dialog */}
+      <Dialog
+        open={Boolean(created)}
+        onOpenChange={(next) => {
+          if (!next) setCreated(null);
+        }}
+      >
         <DialogContent className="bg-popover border-border sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="text-popover-foreground">
-              {t('successTitle')}
+              {t('credentialsTitle')}
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              {t('successDesc')}
+              {t('credentialsDesc')}
             </DialogDescription>
           </DialogHeader>
 
-          {created ? (
-            <div className="rounded-lg border border-border bg-muted p-4">
-              <dl className="grid gap-3 text-sm">
-                <div className="grid grid-cols-[90px_minmax(0,1fr)] gap-3">
-                  <dt className="text-muted-foreground">{t('email')}</dt>
-                  <dd className="truncate font-medium text-foreground">
-                    {created.email}
-                  </dd>
+          {created && (
+            <div className="grid gap-3">
+              <div className="rounded-lg border border-border bg-muted/40 p-3.5 space-y-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">{t('email')}:</span>
+                  <span className="font-semibold text-foreground">{created.email}</span>
                 </div>
-                <div className="grid grid-cols-[90px_minmax(0,1fr)] gap-3">
-                  <dt className="text-muted-foreground">Role</dt>
-                  <dd className="font-medium text-foreground capitalize">
-                    {created.role ?? 'customer'}
-                  </dd>
+                {created.projectName && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Project:</span>
+                    <span className="font-semibold text-primary">{created.projectName}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Role:</span>
+                  <Badge variant="outline" className="capitalize text-[10px]">
+                    {created.role}
+                  </Badge>
                 </div>
-                <div className="grid grid-cols-[90px_minmax(0,1fr)] gap-3">
-                  <dt className="text-muted-foreground">{t('password')}</dt>
-                  <dd className="font-medium text-foreground">
+                <div className="flex justify-between items-center pt-1 border-t border-border">
+                  <span className="text-muted-foreground">{t('password')}:</span>
+                  <code className="rounded bg-background px-2 py-0.5 font-mono font-bold text-primary border border-border">
                     {created.password}
-                  </dd>
+                  </code>
                 </div>
-                <div className="grid grid-cols-[90px_minmax(0,1fr)] gap-3">
-                  <dt className="text-muted-foreground">{t('signInUrl')}</dt>
-                  <dd className="truncate text-foreground">{created.signInUrl}</dd>
-                </div>
-              </dl>
-            </div>
-          ) : null}
+              </div>
 
-          <DialogFooter>
+              <div className="rounded-md bg-emerald-500/10 border border-emerald-500/20 p-2.5 text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>Login instructions and temporary credentials have been dispatched.</span>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
             <Button
               variant="outline"
-              onClick={() => setCreated(null)}
-              className="border-border text-muted-foreground hover:bg-muted"
+              onClick={() => void copyCredentials()}
+              className="gap-1.5"
             >
-              {t('done')}
+              <Copy className="size-4" />
+              {copied ? t('copied') : t('copy')}
             </Button>
-            <Button onClick={() => void copyCredentials()}>
-              {copied ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Copy className="size-4" />
-              )}
-              {copied ? t('copied') : t('copyCredentials')}
+            <Button onClick={() => setCreated(null)}>
+              {t('done')}
             </Button>
           </DialogFooter>
         </DialogContent>

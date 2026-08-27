@@ -10,11 +10,34 @@ import {
   Trash2,
   Users,
   UserPlus,
+  Copy,
+  Check,
+  Mail,
+  ExternalLink,
+  ShieldCheck,
+  X,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DeleteProjectDialog,
   type ProjectToDelete,
@@ -38,11 +61,39 @@ interface Project {
   members: ProjectMember[];
 }
 
+interface CreatedCredentials {
+  email: string;
+  password: string;
+  role?: "agent" | "admin";
+  projectName?: string;
+  signInUrl: string;
+}
+
+const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+const MIN_PASSWORD_LEN = 8;
+const MAX_NAME_LEN = 80;
+
 export default function AdminProjectsPage() {
   const t = useTranslations("Admin.projects");
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [projectToDelete, setProjectToDelete] = useState<ProjectToDelete | null>(null);
+
+  // Add Customer modal for a specific project
+  const [targetProject, setTargetProject] = useState<Project | null>(null);
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState<"agent" | "admin">("agent");
+  const [submitting, setSubmitting] = useState(false);
+
+  // Delete customer modal
+  const [memberToDelete, setMemberToDelete] = useState<{ member: ProjectMember; projectName: string } | null>(null);
+  const [deletingMember, setDeletingMember] = useState(false);
+
+  // Credential handover
+  const [credentials, setCredentials] = useState<CreatedCredentials | null>(null);
+  const [copied, setCopied] = useState(false);
 
   async function load() {
     try {
@@ -72,6 +123,93 @@ export default function AdminProjectsPage() {
   useEffect(() => {
     void load();
   }, []);
+
+  const openAddCustomer = (p: Project) => {
+    setTargetProject(p);
+    setFullName("");
+    setEmail("");
+    setPassword("");
+    setRole("agent");
+  };
+
+  const handleCreateCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!targetProject || submitting) return;
+
+    if (!email.trim() || !EMAIL_RE.test(email.trim())) {
+      toast.error("Please provide a valid email address");
+      return;
+    }
+    if (password.length < MIN_PASSWORD_LEN) {
+      toast.error(`Password must be at least ${MIN_PASSWORD_LEN} characters long`);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          password,
+          fullName: fullName.trim() || undefined,
+          projectId: targetProject.id,
+          role,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        toast.error(data.error ?? "Failed to create customer");
+        return;
+      }
+
+      toast.success(`Customer created and assigned to "${targetProject.name}"! Welcome email sent.`);
+      const creds = data.credentials;
+      setTargetProject(null);
+      setCredentials(creds);
+      void load();
+    } catch {
+      toast.error("Failed to create customer");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteMember = async () => {
+    if (!memberToDelete || deletingMember) return;
+    setDeletingMember(true);
+    try {
+      const res = await fetch(
+        `/api/admin/users?userId=${encodeURIComponent(memberToDelete.member.user_id)}`,
+        { method: "DELETE" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "Failed to delete customer");
+        return;
+      }
+      toast.success(`Customer ${memberToDelete.member.email} deleted successfully`);
+      setMemberToDelete(null);
+      void load();
+    } catch (err) {
+      console.error("[handleDeleteMember] error:", err);
+      toast.error("Network error while deleting customer");
+    } finally {
+      setDeletingMember(false);
+    }
+  };
+
+  const copyCredentials = () => {
+    if (!credentials) return;
+    const text = `Email: ${credentials.email}\nRole: ${credentials.role ?? "agent"}\nProject: ${credentials.projectName ?? ""}\nPassword: ${credentials.password}\nLogin: ${credentials.signInUrl}`;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -150,33 +288,53 @@ export default function AdminProjectsPage() {
                 </div>
 
                 {/* Assigned Customers / Team Members Section */}
-                <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-                  <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="rounded-lg border border-border/60 bg-muted/30 p-3.5">
+                  <div className="flex items-center justify-between gap-2 mb-2.5">
                     <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
                       <Users className="h-3.5 w-3.5 text-primary" />
-                      <span>Assigned Customers & Team Members ({p.members.length})</span>
+                      <span>Existing Users in this Project ({p.members.length})</span>
                     </div>
-                    <Link
-                      href="/admin/customers"
-                      className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
-                    >
-                      <UserPlus className="h-3 w-3" />
-                      Add Customer
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/admin/customers?projectId=${p.id}`}
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+                      >
+                        View in Customers
+                      </Link>
+                      <Button
+                        size="sm"
+                        variant="default"
+                        onClick={() => openAddCustomer(p)}
+                        className="h-7 gap-1 text-xs px-2.5"
+                      >
+                        <UserPlus className="h-3 w-3" />
+                        Add Customer
+                      </Button>
+                    </div>
                   </div>
 
                   {p.members.length === 0 ? (
-                    <p className="text-xs text-muted-foreground italic">
-                      No customer or agent assigned yet. Create or allocate a customer in the Customers tab.
-                    </p>
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded-md border border-dashed border-border bg-background/50 p-2.5 text-xs">
+                      <p className="text-muted-foreground italic">
+                        No customer or agent assigned to this project yet.
+                      </p>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openAddCustomer(p)}
+                        className="h-6 text-xs text-primary px-2"
+                      >
+                        + Add first user to {p.name}
+                      </Button>
+                    </div>
                   ) : (
                     <div className="flex flex-wrap gap-2 pt-1">
                       {p.members.map((m) => (
                         <div
                           key={m.user_id}
-                          className="flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs shadow-sm"
+                          className="group flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs shadow-sm hover:border-primary/40 transition-colors"
                         >
-                          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">
+                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">
                             {(m.full_name || m.email).charAt(0).toUpperCase()}
                           </div>
                           <div className="flex flex-col">
@@ -199,6 +357,14 @@ export default function AdminProjectsPage() {
                           >
                             {m.role}
                           </Badge>
+                          <button
+                            type="button"
+                            onClick={() => setMemberToDelete({ member: m, projectName: p.name })}
+                            className="opacity-60 hover:opacity-100 p-0.5 text-muted-foreground hover:text-destructive transition-opacity"
+                            title="Delete Customer Account"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -209,6 +375,293 @@ export default function AdminProjectsPage() {
           )}
         </div>
       </div>
+
+      {/* Add Customer Modal for this specific project */}
+      <Dialog
+        open={Boolean(targetProject)}
+        onOpenChange={(openState) => {
+          if (!openState) setTargetProject(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <form onSubmit={handleCreateCustomer}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <UserPlus className="h-5 w-5 text-primary" />
+                Add Customer / User
+              </DialogTitle>
+              <DialogDescription>
+                Create a new customer account assigned directly to{" "}
+                <strong className="text-foreground">
+                  {targetProject?.name}
+                </strong>
+                .
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 py-4">
+              {/* Project display (pre-selected / locked) */}
+              <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-primary">
+                    <FolderKanban className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Target Project</p>
+                    <p className="text-sm font-semibold text-foreground">
+                      {targetProject?.name}
+                    </p>
+                  </div>
+                </div>
+                <Badge variant="outline" className="text-[10px]">
+                  Default Selected
+                </Badge>
+              </div>
+
+              {/* Full Name */}
+              <div className="space-y-1.5">
+                <Label htmlFor="proj-cust-name" className="text-xs font-medium">
+                  Full Name (Optional)
+                </Label>
+                <Input
+                  id="proj-cust-name"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="e.g. John Doe"
+                  maxLength={MAX_NAME_LEN}
+                  className="h-9 text-sm"
+                />
+              </div>
+
+              {/* Email */}
+              <div className="space-y-1.5">
+                <Label htmlFor="proj-cust-email" className="text-xs font-medium">
+                  Email Address <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="proj-cust-email"
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="customer@example.com"
+                  className="h-9 text-sm"
+                />
+              </div>
+
+              {/* Role */}
+              <div className="space-y-1.5">
+                <Label htmlFor="proj-cust-role" className="text-xs font-medium">
+                  Assigned Project Role <span className="text-destructive">*</span>
+                </Label>
+                <Select
+                  value={role}
+                  onValueChange={(val) => setRole((val as "agent" | "admin") ?? "agent")}
+                >
+                  <SelectTrigger id="proj-cust-role" className="h-9 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="agent">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">Agent</span>
+                        <span className="text-xs text-muted-foreground">
+                          (Inbox & messaging access)
+                        </span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="admin">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">Admin</span>
+                        <span className="text-xs text-muted-foreground">
+                          (Manage project settings & workflows)
+                        </span>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Password */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="proj-cust-pass" className="text-xs font-medium">
+                    Temporary Password <span className="text-destructive">*</span>
+                  </Label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const rand = Math.random().toString(36).slice(-8) + "Aa1!";
+                      setPassword(rand);
+                    }}
+                    className="text-[11px] text-primary hover:underline"
+                  >
+                    Generate Secure
+                  </button>
+                </div>
+                <Input
+                  id="proj-cust-pass"
+                  type="text"
+                  required
+                  minLength={MIN_PASSWORD_LEN}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Minimum 8 characters"
+                  className="h-9 text-sm font-mono"
+                />
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setTargetProject(null)}
+                disabled={submitting}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creating User...
+                  </>
+                ) : (
+                  "Create & Assign User"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Member Confirmation Modal */}
+      <Dialog
+        open={Boolean(memberToDelete)}
+        onOpenChange={(openState) => {
+          if (!openState) setMemberToDelete(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" />
+              Delete Customer Account
+            </DialogTitle>
+            <DialogDescription className="space-y-2 pt-2">
+              <p>
+                Are you sure you want to permanently delete{" "}
+                <strong className="text-foreground">
+                  {memberToDelete?.member.full_name || memberToDelete?.member.email}
+                </strong>
+                ?
+              </p>
+              <p className="text-xs text-muted-foreground">
+                This will delete their user profile, remove their assignment from{" "}
+                <strong>{memberToDelete?.projectName}</strong>, and revoke their CRM login access.
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setMemberToDelete(null)}
+              disabled={deletingMember}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleDeleteMember}
+              disabled={deletingMember}
+              className="gap-1.5"
+            >
+              {deletingMember ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4" />
+                  Delete Account
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Handover Dialog */}
+      <Dialog
+        open={Boolean(credentials)}
+        onOpenChange={(openState) => {
+          if (!openState) setCredentials(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-primary">
+              <ShieldCheck className="h-5 w-5" />
+              Customer Account Created
+            </DialogTitle>
+            <DialogDescription>
+              The user has been created and assigned to{" "}
+              <strong>{credentials?.projectName}</strong>. A welcome email with login
+              instructions was dispatched.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-3">
+            <div className="rounded-lg border border-border bg-muted/40 p-3 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Email:</span>
+                <span className="font-semibold text-foreground">{credentials?.email}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Role:</span>
+                <Badge variant="outline" className="capitalize text-[10px]">
+                  {credentials?.role}
+                </Badge>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Assigned Project:</span>
+                <span className="font-semibold text-foreground">{credentials?.projectName}</span>
+              </div>
+              <div className="flex justify-between items-center pt-1 border-t border-border">
+                <span className="text-muted-foreground">Temporary Password:</span>
+                <code className="rounded bg-background px-2 py-0.5 font-mono font-bold text-primary border border-border">
+                  {credentials?.password}
+                </code>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={copyCredentials}
+              className="gap-1.5"
+            >
+              {copied ? (
+                <>
+                  <Check className="h-4 w-4 text-emerald-500" />
+                  Copied!
+                </>
+              ) : (
+                <>
+                  <Copy className="h-4 w-4" />
+                  Copy Credentials
+                </>
+              )}
+            </Button>
+            <Button onClick={() => setCredentials(null)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <DeleteProjectDialog
         open={Boolean(projectToDelete)}
@@ -224,4 +677,3 @@ export default function AdminProjectsPage() {
     </div>
   );
 }
-

@@ -14,11 +14,11 @@ const SPEC_DEFAULT_STAGES = [
 
 export async function POST() {
   try {
-    const { projectId, accountId, userId } = await getCurrentProject();
+    const { projectId, accountId, userId, supabase } = await getCurrentProject();
     const admin = supabaseAdmin();
 
     // Check if pipelines already exist for this project
-    const { data: existing } = await admin
+    const { data: existing } = await supabase
       .from('pipelines')
       .select('id, name')
       .eq('project_id', projectId)
@@ -28,8 +28,9 @@ export async function POST() {
       return NextResponse.json({ pipeline: existing[0], created: false });
     }
 
-    // Insert default Sales Pipeline
-    const { data: pipeline, error: pipelineError } = await admin
+    // Insert default Sales Pipeline (try authenticated client first, then admin fallback)
+    let pipeline = null;
+    const { data: userCreated, error: userError } = await supabase
       .from('pipelines')
       .insert({
         user_id: userId,
@@ -38,14 +39,31 @@ export async function POST() {
         name: 'Sales Pipeline',
       })
       .select()
-      .single();
+      .maybeSingle();
 
-    if (pipelineError || !pipeline) {
-      console.error('[POST /api/pipelines/seed] error:', pipelineError);
-      return NextResponse.json(
-        { error: pipelineError?.message ?? 'Failed to seed pipeline' },
-        { status: 500 },
-      );
+    if (userCreated) {
+      pipeline = userCreated;
+    } else {
+      const { data: adminCreated, error: adminError } = await admin
+        .from('pipelines')
+        .insert({
+          user_id: userId,
+          account_id: accountId,
+          project_id: projectId,
+          name: 'Sales Pipeline',
+        })
+        .select()
+        .maybeSingle();
+
+      if (adminCreated) {
+        pipeline = adminCreated;
+      } else {
+        console.error('[POST /api/pipelines/seed] insert error:', userError || adminError);
+        return NextResponse.json(
+          { error: userError?.message || adminError?.message || 'Failed to seed pipeline' },
+          { status: 500 },
+        );
+      }
     }
 
     const stagesPayload = SPEC_DEFAULT_STAGES.map((s) => ({
@@ -55,7 +73,10 @@ export async function POST() {
       position: s.position,
     }));
 
-    await admin.from('pipeline_stages').insert(stagesPayload);
+    const { error: stageErr } = await supabase.from('pipeline_stages').insert(stagesPayload);
+    if (stageErr) {
+      await admin.from('pipeline_stages').insert(stagesPayload);
+    }
 
     return NextResponse.json({ pipeline, created: true }, { status: 201 });
   } catch (err) {

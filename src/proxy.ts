@@ -76,7 +76,7 @@ export async function proxy(request: NextRequest) {
   }
 
   // Protected pages - redirect to login if not authenticated
-  const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/pipelines', '/broadcasts', '/automations', '/settings', '/admin', '/agents', '/flows', '/notifications', '/join', '/whatsapp', '/profile']
+  const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/pipelines', '/broadcasts', '/automations', '/settings', '/admin', '/agents', '/flows', '/notifications', '/join', '/whatsapp', '/instagram', '/facebook', '/profile']
   if (!user && protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
@@ -122,13 +122,6 @@ export async function proxy(request: NextRequest) {
 
       // Customers must not access the admin area
       if (platformRole !== 'super_admin' && request.nextUrl.pathname.startsWith('/admin')) {
-        const url = request.nextUrl.clone()
-        url.pathname = '/dashboard'
-        return withRefreshedCookies(NextResponse.redirect(url))
-      }
-
-      // Super admins do not access the inbox
-      if (platformRole === 'super_admin' && (request.nextUrl.pathname === '/inbox' || request.nextUrl.pathname.startsWith('/inbox/'))) {
         const url = request.nextUrl.clone()
         url.pathname = '/dashboard'
         return withRefreshedCookies(NextResponse.redirect(url))

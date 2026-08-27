@@ -29,6 +29,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Instagram } from "@/components/icons/instagram";
+import { Facebook } from "@/components/icons/facebook";
 import type { AccountRole } from "@/lib/auth/roles";
 
 // Per-role chip metadata used in the sidebar's account strip + the
@@ -101,6 +102,7 @@ const navItems: NavItem[] = [
   { href: "/inbox", labelKey: "inbox", icon: MessageSquare, roles: ["admin", "agent"] },
   { href: "/whatsapp", labelKey: "whatsapp", icon: QrCode, roles: ["admin"] },
   { href: "/instagram", labelKey: "instagram", icon: Instagram, roles: ["admin", "agent"] },
+  { href: "/facebook", labelKey: "facebook", icon: Facebook, roles: ["admin", "agent"] },
   { href: "/contacts", labelKey: "contacts", icon: Users, roles: ["admin", "agent"] },
   { href: "/broadcasts", labelKey: "broadcasts", icon: Radio, roles: ["admin", "agent"] },
   { href: "/templates", labelKey: "templates", icon: FileText, roles: ["admin"] },
@@ -220,11 +222,10 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           <ul className="flex flex-col gap-1">
             {navItems
               .filter((item) => {
+                if (platformRole === "super_admin") return true;
                 if (!item.roles || item.roles.length === 0) return true;
                 const currentRole: "super_admin" | "admin" | "agent" =
-                  platformRole === "super_admin"
-                    ? "super_admin"
-                    : accountRole === "admin" || accountRole === "owner" || profile?.role === "admin"
+                  accountRole === "admin" || accountRole === "owner" || profile?.role === "admin"
                     ? "admin"
                     : "agent";
                 return item.roles.includes(currentRole);
@@ -295,11 +296,10 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           <ul className="flex flex-col gap-1">
             {bottomNavItems
               .filter((item) => {
+                if (platformRole === "super_admin") return true;
                 if (!item.roles || item.roles.length === 0) return true;
                 const currentRole: "super_admin" | "admin" | "agent" =
-                  platformRole === "super_admin"
-                    ? "super_admin"
-                    : accountRole === "admin" || accountRole === "owner" || profile?.role === "admin"
+                  accountRole === "admin" || accountRole === "owner" || profile?.role === "admin"
                     ? "admin"
                     : "agent";
                 return item.roles.includes(currentRole);
@@ -364,70 +364,82 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               ) : null}
             </div>
           ) : null}
-          <DropdownMenu>
-            <DropdownMenuTrigger className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-muted/60 focus:bg-muted/60 focus:outline-none data-popup-open:bg-muted/60">
-              <Avatar className="size-8 shrink-0">
-                {profile?.avatar_url ? (
-                  <AvatarImage
-                    src={profile.avatar_url}
-                    alt={profile.full_name ?? t("defaultAvatar")}
-                  />
-                ) : null}
-                <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
-                  {profile?.full_name?.charAt(0)?.toUpperCase() ??
-                    profile?.email?.charAt(0)?.toUpperCase() ??
-                    "U"}
-                </AvatarFallback>
-              </Avatar>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">
-                  {profile?.full_name ?? t("defaultUser")}
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {activeProjectName ? `Project: ${activeProjectName}` : (profile?.email ?? "")}
-                </p>
-              </div>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              side="top"
-              sideOffset={6}
-              className="min-w-56 bg-popover text-popover-foreground ring-border"
+          <div className="flex items-center justify-between gap-1">
+            <DropdownMenu>
+              <DropdownMenuTrigger className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-muted/60 focus:bg-muted/60 focus:outline-none data-popup-open:bg-muted/60">
+                <Avatar className="size-8 shrink-0">
+                  {profile?.avatar_url ? (
+                    <AvatarImage
+                      src={profile.avatar_url}
+                      alt={profile.full_name ?? t("defaultAvatar")}
+                    />
+                  ) : null}
+                  <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
+                    {profile?.full_name?.charAt(0)?.toUpperCase() ??
+                      profile?.email?.charAt(0)?.toUpperCase() ??
+                      "U"}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {profile?.full_name ?? t("defaultUser")}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {activeProjectName ? `Project: ${activeProjectName}` : (profile?.email ?? "")}
+                  </p>
+                </div>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                side="top"
+                sideOffset={6}
+                className="min-w-56 bg-popover text-popover-foreground ring-border"
+              >
+                <DropdownMenuItem
+                  render={
+                    <Link
+                      href="/settings?tab=profile"
+                      onClick={onClose}
+                      className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
+                    />
+                  }
+                >
+                  <User className="size-4" />
+                  {t("menuProfile")}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  render={
+                    <Link
+                      href="/settings?tab=whatsapp"
+                      onClick={onClose}
+                      className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
+                    />
+                  }
+                >
+                  <Settings className="size-4" />
+                  {t("menuSettings")}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="bg-border" />
+                <DropdownMenuItem
+                  onClick={signOut}
+                  className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
+                >
+                  <LogOut className="size-4" />
+                  {t("menuSignOut")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <button
+              type="button"
+              onClick={signOut}
+              title={t("menuSignOut")}
+              aria-label={t("menuSignOut")}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus:outline-none"
             >
-              <DropdownMenuItem
-                render={
-                  <Link
-                    href="/settings?tab=profile"
-                    onClick={onClose}
-                    className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
-                  />
-                }
-              >
-                <User className="size-4" />
-                {t("menuProfile")}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                render={
-                  <Link
-                    href="/settings?tab=whatsapp"
-                    onClick={onClose}
-                    className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
-                  />
-                }
-              >
-                <Settings className="size-4" />
-                {t("menuSettings")}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator className="bg-border" />
-              <DropdownMenuItem
-                onClick={signOut}
-                className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
-              >
-                <LogOut className="size-4" />
-                {t("menuSignOut")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+              <LogOut className="size-4" />
+            </button>
+          </div>
         </div>
       </aside>
     </>

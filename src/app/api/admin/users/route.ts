@@ -29,9 +29,11 @@ function isDuplicateEmailError(err: { message?: string } | null): boolean {
 }
 
 // GET — the onboarding admin's list of customers/users they've created.
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const ctx = await requireSuperAdmin();
+    const { searchParams } = new URL(request.url);
+    const filterProjectId = searchParams.get('projectId')?.trim();
 
     const { data, error } = await ctx.supabase
       .from('onboarded_customers')
@@ -84,7 +86,7 @@ export async function GET() {
       }
     }
 
-    const customersWithRole = (data ?? []).map((c: any) => {
+    let customersWithRole = (data ?? []).map((c: any) => {
       const prof = userProfilesMap[c.user_id];
       const assignedRole = prof?.role === 'admin' ? 'admin' : 'agent';
       const rawProj = Array.isArray(c.project) ? c.project[0] : c.project;
@@ -99,6 +101,12 @@ export async function GET() {
         project_name: projectObj?.name ?? null,
       };
     });
+
+    if (filterProjectId && filterProjectId !== 'all') {
+      customersWithRole = customersWithRole.filter(
+        (c) => c.project_id === filterProjectId || c.project?.id === filterProjectId
+      );
+    }
 
     return NextResponse.json({ customers: customersWithRole });
   } catch (err) {
@@ -315,3 +323,87 @@ export async function POST(request: Request) {
   );
 }
 
+// DELETE — permanently delete a customer user account (Super Admin only)
+export async function DELETE(request: Request) {
+  let ctx;
+  try {
+    ctx = await requireSuperAdmin();
+  } catch (err) {
+    return toErrorResponse(err);
+  }
+
+  const { searchParams } = new URL(request.url);
+  let userId = searchParams.get('userId')?.trim();
+  let customerId = searchParams.get('id')?.trim();
+
+  if (!userId && !customerId) {
+    const body = (await request.json().catch(() => null)) as {
+      userId?: string;
+      customerId?: string;
+      id?: string;
+    } | null;
+    userId = body?.userId?.trim() || body?.id?.trim();
+    customerId = body?.customerId?.trim();
+  }
+
+  if (!userId && customerId) {
+    // Resolve user_id from onboarded_customers
+    const { data: cust } = await ctx.supabase
+      .from('onboarded_customers')
+      .select('user_id')
+      .eq('id', customerId)
+      .maybeSingle();
+    if (cust?.user_id) {
+      userId = cust.user_id;
+    }
+  }
+
+  if (!userId) {
+    return NextResponse.json(
+      { error: 'User ID or Customer ID is required' },
+      { status: 400 },
+    );
+  }
+
+  // Prevent superadmin from deleting themselves
+  if (userId === ctx.userId) {
+    return NextResponse.json(
+      { error: 'You cannot delete your own super admin account' },
+      { status: 400 },
+    );
+  }
+
+  try {
+    // 1. Remove from onboarded_customers
+    await supabaseAdmin()
+      .from('onboarded_customers')
+      .delete()
+      .or(`user_id.eq.${userId},id.eq.${customerId || userId}`);
+
+    // 2. Remove project memberships
+    await supabaseAdmin()
+      .from('project_members')
+      .delete()
+      .eq('user_id', userId);
+
+    // 3. Remove user profile
+    await supabaseAdmin()
+      .from('profiles')
+      .delete()
+      .eq('user_id', userId);
+
+    // 4. Delete Supabase Auth User
+    const { error: authErr } = await supabaseAdmin().auth.admin.deleteUser(userId);
+    if (authErr) {
+      console.warn('[DELETE /api/admin/users] auth deleteUser notice:', authErr);
+    }
+
+    return NextResponse.json({ success: true, message: 'Customer deleted successfully' });
+  } catch (err) {
+    console.error('[DELETE /api/admin/users] delete error:', err);
+    return NextResponse.json(
+      { error: 'Failed to delete customer' },
+      { status: 500 },
+    );
+  }
+}

@@ -183,7 +183,7 @@ export async function DELETE(
     await admin.from("custom_fields").delete().eq("project_id", id);
     await admin.from("quick_replies").delete().eq("project_id", id);
     await admin.from("project_members").delete().eq("project_id", id);
-    await admin.from("onboarded_customers").update({ assigned_project_id: null }).eq("assigned_project_id", id);
+    await admin.from("onboarded_customers").update({ project_id: null }).eq("project_id", id);
 
     // Delete the project
     const { error: delErr } = await admin.from("projects").delete().eq("id", id);
