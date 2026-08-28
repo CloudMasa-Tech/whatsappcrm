@@ -86,18 +86,18 @@ export function FacebookHub({ canDisconnect = true }: FacebookHubProps) {
         isFullscreen ? "fixed inset-0 z-50 h-screen w-screen rounded-none border-0 p-0" : ""
       )}
     >
-      {/* Sleek Minimal Toolbar (No URL bar, no extra tabs) */}
-      <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3.5 py-2">
+      {/* Sleek Minimal Toolbar (Responsive on mobile & desktop) */}
+      <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-2 gap-2">
         {/* Left: Branding & Quick View Switcher */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 mr-2">
-            <FacebookBrandIcon className="size-5" />
+        <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-1.5 mr-1 shrink-0">
+            <FacebookBrandIcon className="size-5 shrink-0" />
             <span className="text-xs font-semibold text-foreground hidden sm:inline">
               Facebook
             </span>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 shrink-0">
             {PRESET_URLS.map((preset) => {
               const Icon = preset.icon;
               const isActive = frameUrl === preset.url;
@@ -107,13 +107,13 @@ export function FacebookHub({ canDisconnect = true }: FacebookHubProps) {
                   variant={isActive ? "default" : "ghost"}
                   size="sm"
                   className={cn(
-                    "h-7 px-2.5 text-xs gap-1.5",
+                    "h-7 px-2.5 text-xs gap-1.5 shrink-0",
                     isActive ? "bg-blue-600 text-white shadow-xs hover:bg-blue-700 font-medium" : "text-muted-foreground"
                   )}
                   onClick={() => handleNavigate(preset.url)}
                 >
                   <Icon className="size-3.5" />
-                  <span>{preset.label}</span>
+                  <span className="hidden xs:inline">{preset.label}</span>
                 </Button>
               );
             })}
@@ -121,7 +121,7 @@ export function FacebookHub({ canDisconnect = true }: FacebookHubProps) {
         </div>
 
         {/* Right: Actions (Reload, Popout, Fullscreen) */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           <Button
             variant="ghost"
             size="icon"

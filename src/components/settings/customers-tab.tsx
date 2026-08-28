@@ -460,16 +460,16 @@ export function CustomersTab() {
               Delete Customer Account
             </DialogTitle>
             <DialogDescription className="space-y-2 pt-2 text-muted-foreground">
-              <p>
+              <span className="block">
                 Are you sure you want to delete{' '}
                 <strong className="text-foreground">
                   {customerToDelete?.full_name || customerToDelete?.email}
                 </strong>
                 ?
-              </p>
-              <p className="text-xs">
+              </span>
+              <span className="block text-xs">
                 This will delete their user profile, remove their project assignments, and completely revoke their CRM login access.
-              </p>
+              </span>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">

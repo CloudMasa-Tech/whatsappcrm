@@ -694,6 +694,14 @@ export function MessageComposer({
                 <Zap className="mr-2 h-4 w-4" />
                 {t("quickReplies")}
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={onOpenTemplates} className="sm:hidden">
+                <LayoutTemplate className="mr-2 h-4 w-4" />
+                {t("sendTemplate")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleDraft} className="sm:hidden">
+                <Sparkles className="mr-2 h-4 w-4" />
+                {t("draftWithAI")}
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -703,7 +711,7 @@ export function MessageComposer({
             canAct={!readOnly}
             gateReason="send messages"
             title={readOnly ? undefined : t("sendTemplate")}
-            className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+            className="hidden sm:inline-flex h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground"
             onClick={onOpenTemplates}
           >
             <LayoutTemplate className="h-4 w-4" />
@@ -716,7 +724,7 @@ export function MessageComposer({
             gateReason="send messages"
             disabled={drafting}
             title={readOnly ? undefined : t("draftWithAI")}
-            className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-primary"
+            className="hidden sm:inline-flex h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-primary"
             onClick={handleDraft}
           >
             {drafting ? (

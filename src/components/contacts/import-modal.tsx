@@ -36,6 +36,7 @@ import {
   XCircle,
   AlertTriangle,
   Tag,
+  Download,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
@@ -454,6 +455,15 @@ export function ImportModal({
                 <p className="text-[11px] text-muted-foreground">
                   {t('uploadHint')}
                 </p>
+                <a
+                  href="/sample-contacts.csv"
+                  download="sample-contacts.csv"
+                  onClick={(e) => e.stopPropagation()}
+                  className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline font-medium mt-1 transition-colors"
+                >
+                  <Download className="size-3.5" />
+                  Download Sample CSV Template
+                </a>
               </>
             )}
           </div>

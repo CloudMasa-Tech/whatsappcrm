@@ -20,6 +20,7 @@ import { MembersTab } from '@/components/settings/members-tab';
 import { CustomersTab } from '@/components/settings/customers-tab';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import { ProjectsSettings } from '@/components/settings/projects-settings';
+import { EmailConfigPanel } from '@/components/settings/email-config';
 import {
   resolveSection,
   SECTION_META,
@@ -83,6 +84,7 @@ function SettingsPageInner() {
     appearance: <AppearancePanel />,
     projects: isAgentUser ? <SettingsOverview onSelect={go} /> : <ProjectsSettings canManage={canEditSettings} />,
     whatsapp: isAgentUser ? <SettingsOverview onSelect={go} /> : <WhatsAppConfig />,
+    email: isAgentUser ? <SettingsOverview onSelect={go} /> : <EmailConfigPanel />,
     templates: isAgentUser ? <SettingsOverview onSelect={go} /> : <TemplateManager />,
     'quick-replies': isAgentUser ? <SettingsOverview onSelect={go} /> : <QuickRepliesManager />,
     fields: isAgentUser ? <SettingsOverview onSelect={go} /> : <FieldsAndTagsPanel />,

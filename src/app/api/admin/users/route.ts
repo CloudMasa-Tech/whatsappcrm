@@ -16,10 +16,9 @@ const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 const MIN_PASSWORD_LEN = 8;
 const MAX_NAME_LEN = 80;
 
-function signInUrl(request: Request): string {
-  const site = process.env.NEXT_PUBLIC_SITE_URL?.trim()?.replace(/\/+$/, '');
-  if (site) return `${site}/login`;
-  return `${new URL(request.url).origin}/login`;
+function signInUrl(request?: Request): string {
+  const site = (process.env.NEXT_PUBLIC_SITE_URL || 'https://wacrm.cloudmasa.com').trim().replace(/\/+$/, '');
+  return `${site}/login`;
 }
 
 function isDuplicateEmailError(err: { message?: string } | null): boolean {
@@ -200,7 +199,9 @@ export async function POST(request: Request) {
     fullName = trimmed === '' ? null : trimmed;
   }
 
-  // Create the auth user via the service role
+  let userId: string;
+
+  // Create or retrieve auth user
   const { data: created, error: createErr } = await supabaseAdmin().auth.admin
     .createUser({
       email,
@@ -215,45 +216,87 @@ export async function POST(request: Request) {
 
   if (createErr || !created?.user) {
     if (isDuplicateEmailError(createErr as { message?: string } | null)) {
+      // Find the existing auth user
+      const { data: userList } = await supabaseAdmin().auth.admin.listUsers();
+      const existingAuthUser = (userList?.users ?? []).find(
+        (u) => u.email?.toLowerCase() === email.toLowerCase(),
+      );
+
+      if (!existingAuthUser) {
+        return NextResponse.json(
+          { error: 'A user with this email address already exists in authentication.' },
+          { status: 409 },
+        );
+      }
+
+      // Check if the user is a super admin
+      const { data: existingProfile } = await supabaseAdmin()
+        .from('profiles')
+        .select('platform_role')
+        .eq('user_id', existingAuthUser.id)
+        .maybeSingle();
+
+      if (existingProfile?.platform_role === 'super_admin') {
+        return NextResponse.json(
+          { error: 'This email belongs to a Super Administrator account and cannot be modified as a customer.' },
+          { status: 400 },
+        );
+      }
+
+      // Update password & metadata for the existing user
+      await supabaseAdmin().auth.admin.updateUserById(existingAuthUser.id, {
+        password,
+        email_confirm: true,
+        user_metadata: {
+          ...(fullName ? { full_name: fullName } : {}),
+          created_by_admin: true,
+        },
+      });
+
+      userId = existingAuthUser.id;
+    } else {
+      console.error('[POST /api/admin/users] createUser error:', createErr);
       return NextResponse.json(
-        { error: 'A user with this email address already exists' },
-        { status: 409 },
+        { error: 'Failed to create the user account: ' + ((createErr as { message?: string })?.message || 'Unknown error') },
+        { status: 500 },
       );
     }
-    console.error('[POST /api/admin/users] createUser error:', createErr);
-    return NextResponse.json(
-      { error: 'Failed to create the user account' },
-      { status: 500 },
-    );
+  } else {
+    userId = created.user.id;
   }
 
-  const userId = created.user.id;
-
-  // Create the profile in the account
+  // Create or update the profile in the account
   const accountRoleForProfile = assignedRole === 'admin' ? 'admin' : 'agent';
 
   const { error: profileErr } = await supabaseAdmin()
     .from('profiles')
-    .insert({
-      user_id: userId,
-      full_name: fullName,
-      email,
-      account_id: ctx.accountId,
-      account_role: accountRoleForProfile,
-      role: assignedRole,
-      platform_role: 'customer',
-    });
+    .upsert(
+      {
+        user_id: userId,
+        full_name: fullName,
+        email,
+        account_id: ctx.accountId,
+        account_role: accountRoleForProfile,
+        role: assignedRole,
+        platform_role: 'customer',
+      },
+      { onConflict: 'user_id' },
+    );
 
   if (profileErr) {
-    console.error('[POST /api/admin/users] profile insert error:', profileErr);
-    await supabaseAdmin().auth.admin.deleteUser(userId).catch(() => {});
+    console.error('[POST /api/admin/users] profile upsert error:', profileErr);
     return NextResponse.json(
-      { error: 'Failed to create the customer profile' },
+      { error: 'Failed to create or update the customer profile' },
       { status: 500 },
     );
   }
 
-  // Grant project access in project_members
+  // Grant project access in project_members (clean previous project membership for single project isolation)
+  await supabaseAdmin()
+    .from('project_members')
+    .delete()
+    .eq('user_id', userId);
+
   const { error: memberErr } = await supabaseAdmin()
     .from('project_members')
     .insert({
@@ -264,13 +307,6 @@ export async function POST(request: Request) {
 
   if (memberErr) {
     console.error('[POST /api/admin/users] project_members insert error:', memberErr);
-    try {
-      await supabaseAdmin()
-        .from('profiles')
-        .delete()
-        .eq('user_id', userId);
-    } catch { /* best-effort */ }
-    await supabaseAdmin().auth.admin.deleteUser(userId).catch(() => {});
     return NextResponse.json(
       { error: 'Failed to assign project to customer' },
       { status: 500 },
@@ -278,31 +314,49 @@ export async function POST(request: Request) {
   }
 
   // Track the onboarding
-  const { error: trackErr } = await ctx.supabase.from('onboarded_customers').insert({
-    user_id: userId,
-    email,
-    full_name: fullName,
-    project_id: projectId,
-    onboarded_by_account_id: ctx.accountId,
-    onboarded_by_user_id: ctx.userId,
-  });
+  const { data: existingCust } = await supabaseAdmin()
+    .from('onboarded_customers')
+    .select('id')
+    .eq('user_id', userId)
+    .maybeSingle();
 
-  if (trackErr) {
-    console.error('[POST /api/admin/users] tracking insert error:', trackErr);
+  if (existingCust) {
+    await supabaseAdmin()
+      .from('onboarded_customers')
+      .update({
+        email,
+        full_name: fullName,
+        project_id: projectId,
+        onboarded_by_account_id: ctx.accountId,
+        onboarded_by_user_id: ctx.userId,
+      })
+      .eq('id', existingCust.id);
+  } else {
+    await ctx.supabase.from('onboarded_customers').insert({
+      user_id: userId,
+      email,
+      full_name: fullName,
+      project_id: projectId,
+      onboarded_by_account_id: ctx.accountId,
+      onboarded_by_user_id: ctx.userId,
+    });
   }
 
   const loginUrl = signInUrl(request);
 
-  // Send onboarding welcome email notification
-  await sendOnboardingWelcomeEmail({
+  // Send onboarding welcome email notification via nodemailer / SMTP
+  const emailResult = await sendOnboardingWelcomeEmail({
     toEmail: email,
     fullName,
     temporaryPassword: password,
     role: assignedRole,
     projectName: project.name,
     signInUrl: loginUrl,
+    projectId,
+    accountId: ctx.accountId,
   }).catch((emailErr) => {
     console.error('[POST /api/admin/users] email delivery notification error:', emailErr);
+    return { success: false, error: String(emailErr) };
   });
 
   return NextResponse.json(
@@ -315,9 +369,15 @@ export async function POST(request: Request) {
         project_id: projectId,
         project_name: project.name,
       },
-      credentials: { email, password, role: assignedRole, projectName: project.name },
+      credentials: {
+        email,
+        password,
+        role: assignedRole,
+        projectName: project.name,
+        signInUrl: loginUrl,
+      },
       signInUrl: loginUrl,
-      emailDispatched: true,
+      emailDispatched: emailResult?.success ?? true,
     },
     { status: 201 },
   );

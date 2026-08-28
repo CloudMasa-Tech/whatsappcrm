@@ -222,9 +222,11 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           <ul className="flex flex-col gap-1">
             {navItems
               .filter((item) => {
-                if (platformRole === "super_admin") return true;
+                if (platformRole === "super_admin") {
+                  return !item.roles || item.roles.includes("super_admin");
+                }
                 if (!item.roles || item.roles.length === 0) return true;
-                const currentRole: "super_admin" | "admin" | "agent" =
+                const currentRole: "admin" | "agent" =
                   accountRole === "admin" || accountRole === "owner" || profile?.role === "admin"
                     ? "admin"
                     : "agent";
@@ -258,14 +260,11 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                         : "text-muted-foreground hover:bg-muted hover:text-foreground",
                     )}
                   >
-                    <item.icon className="h-4 w-4" />
-                    <span className="flex-1">{t(item.labelKey as string)}</span>
+                    <item.icon className="h-4 w-4 shrink-0" />
+                    <span className="flex-1 truncate">{t(item.labelKey as string)}</span>
                     {item.beta && (
-                      <span
-                        aria-label={t("beta")}
-                        className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-300"
-                      >
-                        {t("beta")}
+                      <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                        Beta
                       </span>
                     )}
                     {showUnreadDot && (
@@ -296,9 +295,11 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           <ul className="flex flex-col gap-1">
             {bottomNavItems
               .filter((item) => {
-                if (platformRole === "super_admin") return true;
+                if (platformRole === "super_admin") {
+                  return !item.roles || item.roles.includes("super_admin");
+                }
                 if (!item.roles || item.roles.length === 0) return true;
-                const currentRole: "super_admin" | "admin" | "agent" =
+                const currentRole: "admin" | "agent" =
                   accountRole === "admin" || accountRole === "owner" || profile?.role === "admin"
                     ? "admin"
                     : "agent";

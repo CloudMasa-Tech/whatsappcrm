@@ -63,12 +63,14 @@
     }
   },
   "CustomerDashboard": {
-    "title": "WhatsApp Marketing",
-    "description": "Manage your WhatsApp campaigns and contacts.",
+    "title": "Agent Dashboard",
+    "description": "Overview of your assigned campaigns, contacts, and messaging status.",
     "checkingWhatsApp": "Checking WhatsApp connection…",
     "whatsappConnected": "WhatsApp Connected",
-    "whatsappNotConnected": "WhatsApp Not Connected",
-    "methodQR": "QR Code",
+    "whatsappNotConnected": "WhatsApp Disconnected",
+    "whatsappConnectedDesc": "Online & Ready · Messages can be sent and received",
+    "whatsappNotConnectedDesc": "Please contact your project administrator to connect WhatsApp.",
+    "methodQR": "WhatsApp QR Gateway",
     "methodMeta": "Meta Cloud API",
     "connectWhatsApp": "Connect WhatsApp",
     "totalContacts": "Total Contacts",
@@ -76,11 +78,11 @@
     "messagesSent": "Messages Sent",
     "delivered": "Delivered",
     "recentCampaigns": "Recent Campaigns",
-    "viewAll": "View All",
+    "viewAll": "View all",
     "noCampaignsYet": "No campaigns yet",
     "recipients": "recipients",
     "noProjectAssigned": "No project assigned",
-    "noProjectAssignedHint": "Your administrator needs to assign a project before you can use WhatsApp marketing."
+    "noProjectAssignedHint": "Please contact your administrator to assign you to a project."
   },
   "Header": {
     "dashboard": "Dashboard",
@@ -1334,10 +1336,16 @@
       "creating": "Creating...",
       "successTitle": "Customer created",
       "successDesc": "Share these credentials with the customer. They can sign in right away.",
+      "credentialsTitle": "Customer Credentials",
+      "credentialsDesc": "Share these credentials with the customer. They can sign in right away.",
+      "credentialsDescription": "Share these credentials with the customer. They can sign in right away.",
       "signInUrl": "Sign-in URL",
+      "copy": "Copy credentials",
       "copyCredentials": "Copy credentials",
       "copied": "Copied!",
       "copyError": "Could not copy to clipboard",
+      "openLogin": "Open login page",
+      "credentialsWarning": "Important: Copy or share these credentials now. The password cannot be retrieved later.",
       "done": "Done"
     },
     "invite": {
@@ -1598,6 +1606,7 @@
       "security": "Login & security",
       "appearance": "Appearance",
       "whatsapp": "WhatsApp",
+      "email": "Email connection",
       "templates": "Templates",
       "quick-replies": "Quick replies",
       "fields": "Fields & tags",
@@ -1906,26 +1915,5 @@
       "notesTitle": "Platform notes",
       "notesDesc": "Customers are created by the Super Admin. Each customer gets their own isolated project with WhatsApp connection, contacts, templates, and campaign capabilities."
     }
-  },
-  "CustomerDashboard": {
-    "title": "Agent Dashboard",
-    "description": "Overview of your assigned campaigns, contacts, and messaging status.",
-    "checkingWhatsApp": "Checking WhatsApp connection…",
-    "whatsappConnected": "WhatsApp Connected",
-    "whatsappNotConnected": "WhatsApp Disconnected",
-    "whatsappConnectedDesc": "Online & Ready · Messages can be sent and received",
-    "whatsappNotConnectedDesc": "Please contact your project administrator to connect WhatsApp.",
-    "methodQR": "WhatsApp QR Gateway",
-    "methodMeta": "Meta Cloud API",
-    "totalContacts": "Total Contacts",
-    "totalCampaigns": "Total Campaigns",
-    "messagesSent": "Messages Sent",
-    "delivered": "Delivered",
-    "recentCampaigns": "Recent Campaigns",
-    "noCampaignsYet": "No campaigns yet",
-    "viewAll": "View all",
-    "recipients": "recipients",
-    "noProjectAssigned": "No project assigned",
-    "noProjectAssignedHint": "Please contact your administrator to assign you to a project."
   }
 }

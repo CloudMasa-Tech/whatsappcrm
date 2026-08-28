@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   FolderKanban,
+  FolderPlus,
   Loader2,
   MessageSquare,
   Radio,
@@ -91,9 +92,50 @@ export default function AdminProjectsPage() {
   const [memberToDelete, setMemberToDelete] = useState<{ member: ProjectMember; projectName: string } | null>(null);
   const [deletingMember, setDeletingMember] = useState(false);
 
+  // Create Project modal
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectChannel, setNewProjectChannel] = useState<"qr" | "cloud_api">("qr");
+  const [creatingProject, setCreatingProject] = useState(false);
+
   // Credential handover
   const [credentials, setCredentials] = useState<CreatedCredentials | null>(null);
   const [copied, setCopied] = useState(false);
+
+  const handleCreateProject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProjectName.trim() || creatingProject) return;
+
+    setCreatingProject(true);
+    try {
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newProjectName.trim(),
+          channel_type: newProjectChannel,
+          allowed_channels: [newProjectChannel],
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Failed to create project");
+        return;
+      }
+
+      toast.success(`Project "${newProjectName.trim()}" created successfully!`);
+      setIsCreateOpen(false);
+      setNewProjectName("");
+      setNewProjectChannel("qr");
+      void load();
+    } catch (err) {
+      console.error("[handleCreateProject] error:", err);
+      toast.error("Network error creating project");
+    } finally {
+      setCreatingProject(false);
+    }
+  };
 
   async function load() {
     try {
@@ -220,6 +262,10 @@ export default function AdminProjectsPage() {
             {t("description")}
           </p>
         </div>
+        <Button onClick={() => setIsCreateOpen(true)} className="gap-2">
+          <FolderPlus className="h-4 w-4" />
+          Create Project
+        </Button>
       </div>
 
       <div className="rounded-xl border border-border bg-card">
@@ -550,17 +596,17 @@ export default function AdminProjectsPage() {
               Delete Customer Account
             </DialogTitle>
             <DialogDescription className="space-y-2 pt-2">
-              <p>
+              <span className="block">
                 Are you sure you want to permanently delete{" "}
                 <strong className="text-foreground">
                   {memberToDelete?.member.full_name || memberToDelete?.member.email}
                 </strong>
                 ?
-              </p>
-              <p className="text-xs text-muted-foreground">
+              </span>
+              <span className="block text-xs text-muted-foreground">
                 This will delete their user profile, remove their assignment from{" "}
                 <strong>{memberToDelete?.projectName}</strong>, and revoke their CRM login access.
-              </p>
+              </span>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">
@@ -660,6 +706,97 @@ export default function AdminProjectsPage() {
             </Button>
             <Button onClick={() => setCredentials(null)}>Done</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Project Modal */}
+      <Dialog
+        open={isCreateOpen}
+        onOpenChange={(openState) => {
+          if (!openState) {
+            setIsCreateOpen(false);
+            setNewProjectName("");
+            setNewProjectChannel("qr");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-foreground">
+              <FolderPlus className="h-5 w-5 text-primary" />
+              Create New Project
+            </DialogTitle>
+            <DialogDescription>
+              Set up a new isolated workspace with its own contacts, inbox, and WhatsApp connection.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleCreateProject} className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="create-proj-name" className="text-xs font-semibold">
+                Project Name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="create-proj-name"
+                required
+                maxLength={80}
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                placeholder="e.g. Sales Team, Regional Support"
+                className="h-9 text-sm"
+                autoFocus
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="create-proj-channel" className="text-xs font-semibold">
+                Default Connection Channel
+              </Label>
+              <Select
+                value={newProjectChannel}
+                onValueChange={(val) => setNewProjectChannel(val as "qr" | "cloud_api")}
+              >
+                <SelectTrigger id="create-proj-channel" className="h-9 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="qr">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare className="h-4 w-4 text-emerald-500" />
+                      <span>WhatsApp QR Code Gateway</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="cloud_api">
+                    <div className="flex items-center gap-2">
+                      <Radio className="h-4 w-4 text-blue-500" />
+                      <span>Meta WhatsApp Cloud API</span>
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-0 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsCreateOpen(false)}
+                disabled={creatingProject}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={creatingProject || !newProjectName.trim()}>
+                {creatingProject ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creating Project...
+                  </>
+                ) : (
+                  "Create Project"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 

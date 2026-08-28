@@ -88,18 +88,18 @@ export function InstagramHub({ canDisconnect = true }: InstagramHubProps) {
         isFullscreen ? "fixed inset-0 z-50 h-screen w-screen rounded-none border-0 p-0" : ""
       )}
     >
-      {/* Sleek Minimal Toolbar (No URL bar, no extra tabs) */}
-      <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3.5 py-2">
+      {/* Sleek Minimal Toolbar (Responsive on mobile & desktop) */}
+      <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-2 gap-2">
         {/* Left: Branding & Quick View Switcher */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 mr-2">
-            <InstagramGradientIcon className="size-5 rounded-md" />
+        <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-1.5 mr-1 shrink-0">
+            <InstagramGradientIcon className="size-5 rounded-md shrink-0" />
             <span className="text-xs font-semibold text-foreground hidden sm:inline">
               Instagram
             </span>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 shrink-0">
             {PRESET_URLS.map((preset) => {
               const Icon = preset.icon;
               const isActive = frameUrl === preset.url;
@@ -109,7 +109,7 @@ export function InstagramHub({ canDisconnect = true }: InstagramHubProps) {
                   variant={isActive ? "default" : "ghost"}
                   size="sm"
                   className={cn(
-                    "h-7 px-2.5 text-xs gap-1.5",
+                    "h-7 px-2.5 text-xs gap-1.5 shrink-0",
                     isActive
                       ? "bg-gradient-to-r from-pink-500 via-rose-500 to-purple-600 text-white shadow-xs hover:opacity-90 font-medium"
                       : "text-muted-foreground"
@@ -117,7 +117,7 @@ export function InstagramHub({ canDisconnect = true }: InstagramHubProps) {
                   onClick={() => handleNavigate(preset.url)}
                 >
                   <Icon className="size-3.5" />
-                  <span>{preset.label}</span>
+                  <span className="hidden xs:inline">{preset.label}</span>
                 </Button>
               );
             })}
@@ -125,7 +125,7 @@ export function InstagramHub({ canDisconnect = true }: InstagramHubProps) {
         </div>
 
         {/* Right: Actions (Reload, Popout, Fullscreen) */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           <Button
             variant="ghost"
             size="icon"

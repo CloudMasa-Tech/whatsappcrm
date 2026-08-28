@@ -407,26 +407,28 @@ export function CustomerDashboard() {
       {/* Tabbed Agent Workspace: Assigned Contacts, Active Chats, Campaigns, and Activity */}
       <Tabs defaultValue="contacts" className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-3">
-          <TabsList className="h-9">
-            <TabsTrigger value="contacts" className="gap-1.5 text-xs">
-              <Users className="h-3.5 w-3.5" />
-              Assigned Contacts ({contactsCount})
-            </TabsTrigger>
-            <TabsTrigger value="conversations" className="gap-1.5 text-xs">
-              <MessageSquare className="h-3.5 w-3.5" />
-              Active Chats ({activeConversationsCount})
-            </TabsTrigger>
-            <TabsTrigger value="campaigns" className="gap-1.5 text-xs">
-              <Radio className="h-3.5 w-3.5" />
-              Campaigns ({totalCampaigns})
-            </TabsTrigger>
-            <TabsTrigger value="activity" className="gap-1.5 text-xs">
-              <Activity className="h-3.5 w-3.5" />
-              Processed Activity
-            </TabsTrigger>
-          </TabsList>
+          <div className="w-full sm:w-auto overflow-x-auto no-scrollbar">
+            <TabsList className="h-9 inline-flex w-max">
+              <TabsTrigger value="contacts" className="gap-1.5 text-xs">
+                <Users className="h-3.5 w-3.5" />
+                Assigned Contacts ({contactsCount})
+              </TabsTrigger>
+              <TabsTrigger value="conversations" className="gap-1.5 text-xs">
+                <MessageSquare className="h-3.5 w-3.5" />
+                Active Chats ({activeConversationsCount})
+              </TabsTrigger>
+              <TabsTrigger value="campaigns" className="gap-1.5 text-xs">
+                <Radio className="h-3.5 w-3.5" />
+                Campaigns ({totalCampaigns})
+              </TabsTrigger>
+              <TabsTrigger value="activity" className="gap-1.5 text-xs">
+                <Activity className="h-3.5 w-3.5" />
+                Processed Activity
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs text-muted-foreground shrink-0">
             Total Processed: <strong>{totalMessagesProcessed.toLocaleString()}</strong> messages
           </span>
         </div>

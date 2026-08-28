@@ -12,6 +12,7 @@ import {
   UserPlus,
   UsersRound,
   Zap,
+  Mail,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -30,6 +31,7 @@ export const SETTINGS_SECTIONS = [
   'appearance',
   'projects',
   'whatsapp',
+  'email',
   'templates',
   'quick-replies',
   'fields',
@@ -58,6 +60,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   appearance: { id: 'appearance', label: 'Appearance', icon: Palette, group: 'account' },
   projects: { id: 'projects', label: 'Projects', icon: FolderKanban, group: 'workspace' },
   whatsapp: { id: 'whatsapp', label: 'WhatsApp', icon: PlugZap, group: 'workspace' },
+  email: { id: 'email', label: 'Email connection', icon: Mail, group: 'workspace' },
   templates: { id: 'templates', label: 'Templates', icon: FileText, group: 'workspace' },
   'quick-replies': { id: 'quick-replies', label: 'Quick replies', icon: Zap, group: 'workspace' },
   fields: { id: 'fields', label: 'Fields & tags', icon: Tags, group: 'workspace' },

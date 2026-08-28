@@ -154,7 +154,61 @@ export async function DELETE(
   }
 
   try {
-    // Delete/clean child records
+    // 1. Identify all users associated with this project
+    const { data: memberRows } = await admin
+      .from("project_members")
+      .select("user_id")
+      .eq("project_id", id);
+
+    const { data: customerRows } = await admin
+      .from("onboarded_customers")
+      .select("user_id")
+      .eq("project_id", id);
+
+    const targetUserIds = Array.from(
+      new Set(
+        [
+          ...(memberRows ?? []).map((m) => m.user_id),
+          ...(customerRows ?? []).map((c) => c.user_id),
+        ].filter((uid): uid is string => Boolean(uid))
+      )
+    );
+
+    // 2. Protect super administrators from being deleted
+    let superAdminUserIds = new Set<string>();
+    superAdminUserIds.add(auth.userId);
+
+    if (targetUserIds.length > 0) {
+      const { data: userProfiles } = await admin
+        .from("profiles")
+        .select("user_id, platform_role")
+        .in("user_id", targetUserIds);
+
+      (userProfiles ?? []).forEach((p) => {
+        if (p.platform_role === "super_admin") {
+          superAdminUserIds.add(p.user_id);
+        }
+      });
+    }
+
+    const usersToDelete = targetUserIds.filter((uid) => !superAdminUserIds.has(uid));
+
+    // 3. Delete each assigned user (Auth, Profile, Memberships, Customer records)
+    for (const uid of usersToDelete) {
+      try {
+        await admin.from("onboarded_customers").delete().eq("user_id", uid);
+        await admin.from("project_members").delete().eq("user_id", uid);
+        await admin.from("profiles").delete().eq("user_id", uid);
+        const { error: authErr } = await admin.auth.admin.deleteUser(uid);
+        if (authErr) {
+          console.warn(`[projects DELETE] auth deleteUser warning for ${uid}:`, authErr.message);
+        }
+      } catch (userErr) {
+        console.error(`[projects DELETE] error deleting user ${uid}:`, userErr);
+      }
+    }
+
+    // 4. Delete/clean all child workspace data
     await admin.from("messages").delete().eq("project_id", id);
     await admin.from("conversations").delete().eq("project_id", id);
     await admin.from("contact_notes").delete().eq("project_id", id);
@@ -163,6 +217,9 @@ export async function DELETE(
     await admin.from("pipelines").delete().eq("project_id", id);
     await admin.from("broadcast_recipients").delete().eq("project_id", id);
     await admin.from("broadcasts").delete().eq("project_id", id);
+    await admin.from("email_campaign_recipients").delete().eq("project_id", id);
+    await admin.from("email_campaigns").delete().eq("project_id", id);
+    await admin.from("email_configs").delete().eq("project_id", id);
     await admin.from("automation_logs").delete().eq("project_id", id);
     await admin.from("automation_pending_executions").delete().eq("project_id", id);
     await admin.from("automations").delete().eq("project_id", id);
@@ -182,17 +239,21 @@ export async function DELETE(
     await admin.from("tags").delete().eq("project_id", id);
     await admin.from("custom_fields").delete().eq("project_id", id);
     await admin.from("quick_replies").delete().eq("project_id", id);
+    await admin.from("onboarded_customers").delete().eq("project_id", id);
     await admin.from("project_members").delete().eq("project_id", id);
-    await admin.from("onboarded_customers").update({ project_id: null }).eq("project_id", id);
 
-    // Delete the project
+    // 5. Delete the project
     const { error: delErr } = await admin.from("projects").delete().eq("id", id);
     if (delErr) {
       console.error("[projects DELETE] delete error:", delErr);
       return NextResponse.json({ error: "Failed to delete project: " + delErr.message }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, deleted_id: id });
+    return NextResponse.json({
+      success: true,
+      deleted_id: id,
+      deleted_users_count: usersToDelete.length,
+    });
   } catch (err: unknown) {
     console.error("[projects DELETE] exception:", err);
     return NextResponse.json(

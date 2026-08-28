@@ -156,7 +156,7 @@ export async function POST(request: Request) {
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const slug = attempt === 0 ? base : `${base}-${attempt + 1}`
-    const { data, error } = await ctx.supabase
+    const { data, error } = await supabaseAdmin()
       .from('projects')
       .insert({
         account_id: ctx.accountId,
@@ -168,11 +168,20 @@ export async function POST(request: Request) {
       .select('id, name, slug, channel_type, allowed_channels, archived_at')
       .single()
 
-    if (!error) {
+    if (!error && data) {
+      // Auto-assign the super admin to the project
+      await supabaseAdmin()
+        .from('project_members')
+        .insert({
+          project_id: data.id,
+          user_id: ctx.userId,
+          created_by: ctx.userId,
+        });
+
       return NextResponse.json({ project: data }, { status: 201 })
     }
     // 23505 = unique_violation. Anything else is a real failure.
-    if (error.code !== '23505') {
+    if (error?.code !== '23505') {
       lastError = error
       break
     }

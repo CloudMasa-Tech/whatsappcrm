@@ -95,7 +95,7 @@ export function DeleteProjectDialog({
 
         <div className="space-y-4 py-2">
           <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs leading-relaxed text-destructive dark:text-red-400">
-            <strong>Warning:</strong> Deleting <strong>{project.name}</strong> will permanently remove all associated contacts, conversations, messages, WhatsApp sessions, Instagram channels, and automations.
+            <strong>Warning:</strong> Deleting <strong>{project.name}</strong> will permanently delete all assigned customer accounts, team members, contacts, conversations, messages, WhatsApp sessions, Instagram channels, and automations.
           </div>
 
           <div className="space-y-2">
