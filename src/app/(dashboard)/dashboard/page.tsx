@@ -3,15 +3,22 @@
 import { useAuth } from '@/hooks/use-auth'
 import { CustomerDashboard } from '@/components/dashboard/customer-dashboard'
 import { SuperAdminDashboard } from '@/components/dashboard/superadmin-dashboard'
+import { AgentDashboard } from '@/components/dashboard/agent-dashboard'
 
 export default function DashboardPage() {
-  const { isSuperAdmin } = useAuth()
+  const { isSuperAdmin, canManageMembers } = useAuth()
 
-  // Super Admins see the dedicated platform Super Admin Dashboard
+  // 1. Platform Super Admin Dashboard
   if (isSuperAdmin) {
     return <SuperAdminDashboard />
   }
 
-  // All workspace users (customers, agents, admins) see the workspace dashboard
-  return <CustomerDashboard />
+  // 2. Project / Organization Admin Dashboard (Owner & Admin roles)
+  if (canManageMembers) {
+    return <CustomerDashboard />
+  }
+
+  // 3. Dedicated Agent Operational Workstation (Agent role)
+  return <AgentDashboard />
 }
+

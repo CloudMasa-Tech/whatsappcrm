@@ -291,19 +291,19 @@ export function CustomerDashboard() {
           <div>
             <div className="flex items-center gap-2">
               <span className="flex h-6 items-center gap-1.5 rounded-full bg-primary/10 px-3 text-xs font-semibold text-primary border border-primary/20">
-                <UserCheck className="h-3.5 w-3.5" />
-                Agent Workspace
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Workspace Administration
               </span>
               <span className="text-xs text-muted-foreground">•</span>
               <span className="text-xs font-medium text-foreground">
-                Assigned to Project Queue
+                Project Operations
               </span>
             </div>
             <h1 className="mt-2 text-2xl font-bold tracking-tight text-foreground">
               Welcome back{user?.user_metadata?.full_name ? `, ${user.user_metadata.full_name}` : ""}!
             </h1>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Here is an overview of your assigned contacts, processed communications, and active queues.
+              High-level overview of project channels, audience contacts, active conversations, and team activity.
             </p>
           </div>
 
@@ -364,13 +364,13 @@ export function CustomerDashboard() {
         </div>
       </div>
 
-      {/* Agent Performance Metric Cards */}
+      {/* Admin Performance Metric Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {contactsLoading ? (
           <SkeletonCard />
         ) : (
           <MetricCard
-            title="My Assigned Contacts"
+            title="Total Contacts"
             value={contactsCount.toLocaleString()}
             icon={Users}
           />
