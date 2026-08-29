@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
 import {
   Users,
   Radio,
@@ -28,8 +27,17 @@ import {
   CheckCircle,
   Activity,
   UserCheck,
+  TrendingUp,
+  DollarSign,
+  Workflow,
+  PlusCircle,
+  UserPlus,
+  RefreshCw,
+  MoreVertical,
+  Inbox,
 } from "lucide-react";
 import { Instagram } from "@/components/icons/instagram";
+import { Facebook } from "@/components/icons/facebook";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { SkeletonCard } from "@/components/dashboard/skeleton";
 import { Button } from "@/components/ui/button";
@@ -37,7 +45,15 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getBroadcastStatus } from "@/lib/broadcast-status";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { formatDistanceToNow, format } from "date-fns";
 import { cn } from "@/lib/utils";
 import type { Broadcast, Contact, Conversation, Message } from "@/types";
 
@@ -53,80 +69,112 @@ type SessionStatus =
   | "error"
   | null;
 
-interface AssignedConversation extends Conversation {
+interface ExtendedConversation extends Conversation {
   contact?: Contact;
+  assigned_agent?: {
+    id: string;
+    full_name?: string;
+    email?: string;
+  };
+}
+
+interface ProjectMemberItem {
+  id: string;
+  user_id: string;
+  role: string;
+  full_name: string;
+  email: string;
+  active_chats: number;
+  resolved_chats: number;
 }
 
 export function CustomerDashboard() {
-  const t = useTranslations("CustomerDashboard");
-  const tStatus = useTranslations("Broadcasts.status");
   const router = useRouter();
-  const { user, activeProjectId, activeProjectChannel } = useAuth();
+  const { user, profile, activeProjectId, activeProjectName, activeProjectChannel, accountRole } = useAuth();
 
   // Channel Connection States
   const [whatsappStatus, setWhatsappStatus] = useState<SessionStatus>(null);
+  const [whatsappPhone, setWhatsappPhone] = useState<string | null>(null);
   const [whatsappLoading, setWhatsappLoading] = useState(true);
   const [instagramConnected, setInstagramConnected] = useState(false);
+  const [instagramUsername, setInstagramUsername] = useState<string | null>(null);
   const [instagramLoading, setInstagramLoading] = useState(true);
+  const [facebookConnected, setFacebookConnected] = useState(false);
+  const [facebookPageName, setFacebookPageName] = useState<string | null>(null);
+  const [facebookLoading, setFacebookLoading] = useState(true);
 
-  // Agent Performance & Processed Metrics
-  const [contactsCount, setContactsCount] = useState(0);
+  // Project-Wide KPIs
+  const [totalContacts, setTotalContacts] = useState(0);
+  const [contactsToday, setContactsToday] = useState(0);
   const [activeConversationsCount, setActiveConversationsCount] = useState(0);
-  const [resolvedConversationsCount, setResolvedConversationsCount] = useState(0);
+  const [unassignedCount, setUnassignedCount] = useState(0);
+  const [resolvedCount, setResolvedCount] = useState(0);
   const [messagesSentToday, setMessagesSentToday] = useState(0);
   const [totalMessagesProcessed, setTotalMessagesProcessed] = useState(0);
+  const [dealsCount, setDealsCount] = useState(0);
+  const [dealsValue, setDealsValue] = useState(0);
+  const [activeFlowsCount, setActiveFlowsCount] = useState(0);
   const [metricsLoading, setMetricsLoading] = useState(true);
 
-  // Assigned Contacts List
-  const [assignedContacts, setAssignedContacts] = useState<Contact[]>([]);
-  const [contactsLoading, setContactsLoading] = useState(true);
-  const [contactSearch, setContactSearch] = useState("");
-
-  // Assigned Conversations List
-  const [assignedConversations, setAssignedConversations] = useState<AssignedConversation[]>([]);
+  // Lists
+  const [unassignedConversations, setUnassignedConversations] = useState<ExtendedConversation[]>([]);
+  const [allConversations, setAllConversations] = useState<ExtendedConversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
 
-  // Recent Broadcasts
-  const [totalCampaigns, setTotalCampaigns] = useState(0);
-  const [recentCampaigns, setRecentCampaigns] = useState<Broadcast[]>([]);
-  const [campaignsLoading, setCampaignsLoading] = useState(true);
+  const [projectMembers, setProjectMembers] = useState<ProjectMemberItem[]>([]);
+  const [membersLoading, setMembersLoading] = useState(true);
 
-  // Agent's Recent Processed Messages
+  const [recentBroadcasts, setRecentBroadcasts] = useState<Broadcast[]>([]);
+  const [broadcastsLoading, setBroadcastsLoading] = useState(true);
+
+  const [recentContacts, setRecentContacts] = useState<Contact[]>([]);
+  const [contactsLoading, setContactsLoading] = useState(true);
+
   const [recentMessages, setRecentMessages] = useState<Message[]>([]);
   const [activityLoading, setActivityLoading] = useState(true);
+
+  // Assigning state
+  const [assigningId, setAssigningId] = useState<string | null>(null);
+
+  const adminName = profile?.full_name || user?.email?.split("@")[0] || "Admin";
 
   const loadAll = useCallback(async () => {
     if (!activeProjectId) {
       setWhatsappLoading(false);
       setInstagramLoading(false);
+      setFacebookLoading(false);
       setMetricsLoading(false);
-      setContactsLoading(false);
       setConversationsLoading(false);
-      setCampaignsLoading(false);
+      setMembersLoading(false);
+      setBroadcastsLoading(false);
+      setContactsLoading(false);
       setActivityLoading(false);
       return;
     }
+
     const db = createClient();
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    // 1. WhatsApp status check
+    // 1. Channel Connections Check
     setWhatsappLoading(true);
     try {
       if (activeProjectChannel === "qr") {
         const res = await fetch(
           `/api/whatsapp/qr?project_id=${encodeURIComponent(activeProjectId)}`,
-          { cache: "no-store" },
+          { cache: "no-store" }
         );
         if (res.ok) {
           const data = await res.json();
           setWhatsappStatus(data.session?.status ?? null);
+          setWhatsappPhone(data.session?.phone ?? null);
         }
       } else {
         const res = await fetch("/api/whatsapp/config", { cache: "no-store" });
         if (res.ok) {
           const data = await res.json();
           setWhatsappStatus(data.connected ? "connected" : "disconnected");
+          setWhatsappPhone(data.display_phone_number ?? null);
         }
       }
     } catch {
@@ -135,13 +183,13 @@ export function CustomerDashboard() {
       setWhatsappLoading(false);
     }
 
-    // 2. Instagram status check
     setInstagramLoading(true);
     try {
       const res = await fetch("/api/instagram/config", { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
         setInstagramConnected(Boolean(data.connected));
+        setInstagramUsername(data.username ?? null);
       }
     } catch {
       setInstagramConnected(false);
@@ -149,64 +197,123 @@ export function CustomerDashboard() {
       setInstagramLoading(false);
     }
 
-    // 3. Assigned Contacts
+    setFacebookLoading(true);
+    try {
+      const res = await fetch("/api/facebook/config", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        setFacebookConnected(Boolean(data.connected));
+        setFacebookPageName(data.page_name ?? null);
+      }
+    } catch {
+      setFacebookConnected(false);
+    } finally {
+      setFacebookLoading(false);
+    }
+
+    // 2. Project Contacts
     setContactsLoading(true);
     try {
-      const { data: contacts, count } = await db
-        .from("contacts")
-        .select("id, name, phone, email, company, channel, created_at, updated_at", { count: "exact" })
-        .order("created_at", { ascending: false })
-        .limit(50);
+      const [{ count: totalC }, { count: todayC }, { data: contactList }] = await Promise.all([
+        db.from("contacts").select("id", { count: "exact", head: true }),
+        db.from("contacts").select("id", { count: "exact", head: true }).gte("created_at", todayStart.toISOString()),
+        db.from("contacts").select("id, name, phone, email, company, channel, created_at").order("created_at", { ascending: false }).limit(8),
+      ]);
 
-      setAssignedContacts((contacts as Contact[]) ?? []);
-      setContactsCount(count ?? (contacts?.length ?? 0));
+      setTotalContacts(totalC ?? 0);
+      setContactsToday(todayC ?? 0);
+      setRecentContacts((contactList as Contact[]) ?? []);
     } catch (err) {
       console.error("[customer-dashboard] contacts error:", err);
     } finally {
       setContactsLoading(false);
     }
 
-    // 4. Assigned Conversations
+    // 3. Project Conversations & Unassigned Queue
     setConversationsLoading(true);
+    let loadedConvs: any[] = [];
     try {
       const { data: convs } = await db
         .from("conversations")
-        .select("id, contact_id, status, channel, unread_count, last_message_text, last_message_at, updated_at, contact:contacts(id, name, phone, email, channel)")
+        .select(
+          "id, contact_id, status, channel, unread_count, last_message_text, last_message_at, updated_at, created_at, assigned_agent_id, contact:contacts(id, name, phone, email, channel, avatar_url)"
+        )
         .order("updated_at", { ascending: false })
-        .limit(25);
+        .limit(100);
 
-      const formatted = (convs ?? []).map((c: any) => ({
+      loadedConvs = convs ?? [];
+      const formatted: ExtendedConversation[] = loadedConvs.map((c: any) => ({
         ...c,
         contact: Array.isArray(c.contact) ? c.contact[0] : c.contact,
       }));
 
-      setAssignedConversations(formatted);
-      setActiveConversationsCount(formatted.filter((c) => c.status === "open" || c.status === "pending").length);
-      setResolvedConversationsCount(formatted.filter((c) => c.status === "closed").length);
+      setAllConversations(formatted);
+      const active = formatted.filter((c) => c.status === "open" || c.status === "pending");
+      const unassigned = active.filter((c) => !c.assigned_agent_id);
+      const resolved = formatted.filter((c) => c.status === "closed");
+
+      setActiveConversationsCount(active.length);
+      setUnassignedCount(unassigned.length);
+      setUnassignedConversations(unassigned);
+      setResolvedCount(resolved.length);
     } catch (err) {
       console.error("[customer-dashboard] conversations error:", err);
     } finally {
       setConversationsLoading(false);
     }
 
-    // 5. Agent Processed Messages & Metrics
+    // 4. Team Members & Workload
+    setMembersLoading(true);
+    try {
+      const { data: members } = await db
+        .from("project_members")
+        .select("id, user_id, role, profile:profiles(id, full_name, email, avatar_url)")
+        .eq("project_id", activeProjectId);
+
+      if (members) {
+        const teamList: ProjectMemberItem[] = members.map((m: any) => {
+          const prof = Array.isArray(m.profile) ? m.profile[0] : m.profile;
+          return {
+            id: m.id,
+            user_id: m.user_id,
+            role: m.role,
+            full_name: prof?.full_name || prof?.email?.split("@")[0] || "Team Member",
+            email: prof?.email || "",
+            active_chats: 0,
+            resolved_chats: 0,
+          };
+        });
+
+        // Compute live chat counts per member
+        if (loadedConvs.length > 0) {
+          teamList.forEach((member) => {
+            member.active_chats = loadedConvs.filter(
+              (c: any) => c.assigned_agent_id === member.user_id && (c.status === "open" || c.status === "pending")
+            ).length;
+            member.resolved_chats = loadedConvs.filter(
+              (c: any) => c.assigned_agent_id === member.user_id && c.status === "closed"
+            ).length;
+          });
+        }
+
+        setProjectMembers(teamList);
+      }
+    } catch (err) {
+      console.error("[customer-dashboard] members error:", err);
+    } finally {
+      setMembersLoading(false);
+    }
+
+    // 5. Messages & Team Process Output
     setMetricsLoading(true);
     setActivityLoading(true);
     try {
       const [todayRes, totalRes, recentMsgRes] = await Promise.all([
-        db
-          .from("messages")
-          .select("id", { count: "exact", head: true })
-          .eq("sender_type", "agent")
-          .gte("created_at", todayStart.toISOString()),
-        db
-          .from("messages")
-          .select("id", { count: "exact", head: true })
-          .eq("sender_type", "agent"),
+        db.from("messages").select("id", { count: "exact", head: true }).gte("created_at", todayStart.toISOString()),
+        db.from("messages").select("id", { count: "exact", head: true }),
         db
           .from("messages")
           .select("id, conversation_id, content_text, content_type, created_at, status, sender_type, channel")
-          .eq("sender_type", "agent")
           .order("created_at", { ascending: false })
           .limit(10),
       ]);
@@ -222,7 +329,7 @@ export function CustomerDashboard() {
     }
 
     // 6. Broadcasts & Campaigns
-    setCampaignsLoading(true);
+    setBroadcastsLoading(true);
     try {
       const { data: broadcasts } = await db
         .from("broadcasts")
@@ -231,13 +338,29 @@ export function CustomerDashboard() {
         .limit(5);
 
       if (broadcasts) {
-        setTotalCampaigns(broadcasts.length);
-        setRecentCampaigns(broadcasts as Broadcast[]);
+        setRecentBroadcasts(broadcasts as Broadcast[]);
       }
     } catch (err) {
       console.error("[customer-dashboard] broadcasts error:", err);
     } finally {
-      setCampaignsLoading(false);
+      setBroadcastsLoading(false);
+    }
+
+    // 7. Deals & Flows
+    try {
+      const [{ count: dealC, data: dealData }, { count: flowC }] = await Promise.all([
+        db.from("deals").select("id, value", { count: "exact" }),
+        db.from("flows").select("id", { count: "exact", head: true }).eq("is_active", true),
+      ]);
+
+      setDealsCount(dealC ?? 0);
+      setActiveFlowsCount(flowC ?? 0);
+      if (dealData) {
+        const sum = dealData.reduce((acc, d) => acc + (Number(d.value) || 0), 0);
+        setDealsValue(sum);
+      }
+    } catch (err) {
+      console.error("[customer-dashboard] deals/flows error:", err);
     }
   }, [activeProjectId, activeProjectChannel]);
 
@@ -245,18 +368,27 @@ export function CustomerDashboard() {
     void loadAll();
   }, [loadAll]);
 
-  // Filtered assigned contacts
-  const filteredContacts = useMemo(() => {
-    if (!contactSearch.trim()) return assignedContacts;
-    const query = contactSearch.toLowerCase().trim();
-    return assignedContacts.filter(
-      (c) =>
-        c.name?.toLowerCase().includes(query) ||
-        c.phone?.toLowerCase().includes(query) ||
-        c.email?.toLowerCase().includes(query) ||
-        c.company?.toLowerCase().includes(query)
-    );
-  }, [assignedContacts, contactSearch]);
+  // Quick 1-Click Assignment from Dashboard
+  const handleAssign = async (conversationId: string, agentId: string | null) => {
+    setAssigningId(conversationId);
+    try {
+      const res = await fetch("/api/inbox/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId, agentId }),
+      });
+
+      if (res.ok) {
+        // Refresh local queues
+        setUnassignedConversations((prev) => prev.filter((c) => c.id !== conversationId));
+        setUnassignedCount((prev) => Math.max(0, prev - 1));
+      }
+    } catch (err) {
+      console.error("[customer-dashboard] assign error:", err);
+    } finally {
+      setAssigningId(null);
+    }
+  };
 
   const isWhatsAppConnected =
     whatsappStatus === "connected" ||
@@ -265,17 +397,13 @@ export function CustomerDashboard() {
 
   if (!activeProjectId) {
     return (
-      <div className="space-y-5">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t("title")}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
-        </div>
+      <div className="space-y-5 p-6 max-w-7xl mx-auto">
         <Card className="border-amber-500/30 bg-amber-500/5">
-          <CardContent className="flex items-center gap-3 p-4">
-            <AlertTriangle className="h-5 w-5 text-amber-500" />
+          <CardContent className="flex items-center gap-3 p-6">
+            <AlertTriangle className="h-6 w-6 text-amber-500" />
             <div>
-              <p className="text-sm font-medium text-foreground">{t("noProjectAssigned")}</p>
-              <p className="text-xs text-muted-foreground">{t("noProjectAssignedHint")}</p>
+              <p className="text-base font-semibold text-foreground">No Project Selected</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Please select or create an active project to view the workspace command center.</p>
             </div>
           </CardContent>
         </Card>
@@ -284,490 +412,666 @@ export function CustomerDashboard() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header & Agent Profile Banner */}
-      <div className="flex flex-col gap-3 rounded-2xl border border-border/80 bg-gradient-to-r from-card via-card to-primary/5 p-5 sm:p-6 shadow-sm">
+    <div className="space-y-6 p-4 sm:p-6 max-w-7xl mx-auto">
+      {/* 360° Project Header Banner */}
+      <div className="flex flex-col gap-4 rounded-xl border border-primary/20 bg-gradient-to-r from-card via-card to-primary/5 p-5 sm:p-6 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <span className="flex h-6 items-center gap-1.5 rounded-full bg-primary/10 px-3 text-xs font-semibold text-primary border border-primary/20">
-                <ShieldCheck className="h-3.5 w-3.5" />
-                Workspace Administration
-              </span>
-              <span className="text-xs text-muted-foreground">•</span>
-              <span className="text-xs font-medium text-foreground">
-                Project Operations
+              <Badge variant="outline" className="border-primary/40 bg-primary/10 text-primary text-xs font-semibold px-2.5 py-0.5">
+                <ShieldCheck className="h-3.5 w-3.5 mr-1" />
+                Project Command Center
+              </Badge>
+              <span className="text-xs text-muted-foreground font-medium flex items-center gap-1">
+                • {activeProjectName}
               </span>
             </div>
-            <h1 className="mt-2 text-2xl font-bold tracking-tight text-foreground">
-              Welcome back{user?.user_metadata?.full_name ? `, ${user.user_metadata.full_name}` : ""}!
+            <h1 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
+              Welcome back, {adminName}!
             </h1>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              High-level overview of project channels, audience contacts, active conversations, and team activity.
+            <p className="mt-1 text-sm text-muted-foreground">
+              Complete project control center — monitor live communication channels, triage unassigned chats, and track team output.
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Top Quick Actions */}
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
               onClick={() => router.push("/inbox")}
-              className="gap-1.5 text-xs font-medium shadow-sm"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm gap-1.5 text-xs font-medium"
             >
-              <MessageCircle className="h-4 w-4" />
+              <Inbox className="h-4 w-4" />
               Open Inbox
+              {unassignedCount > 0 && (
+                <Badge className="ml-1 bg-red-500 text-white px-1.5 py-0 text-[10px]">
+                  {unassignedCount} unassigned
+                </Badge>
+              )}
             </Button>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => router.push("/contacts")}
+              onClick={() => router.push("/broadcasts/new")}
               className="gap-1.5 text-xs font-medium"
             >
-              <Users className="h-4 w-4" />
-              All Contacts
+              <Radio className="h-3.5 w-3.5 text-indigo-500" />
+              New Broadcast
             </Button>
-          </div>
-        </div>
-
-        {/* Live Channel Connection Health Badges */}
-        <div className="flex flex-wrap items-center gap-2.5 pt-2 border-t border-border/60">
-          <span className="text-xs font-medium text-muted-foreground">Channel Status:</span>
-
-          {/* WhatsApp status */}
-          <div className="inline-flex items-center gap-1.5 rounded-full bg-background px-2.5 py-1 text-xs border border-border">
-            <QrCode className="h-3.5 w-3.5 text-emerald-500" />
-            <span className="font-medium text-foreground">WhatsApp</span>
-            <span
-              className={cn(
-                "h-2 w-2 rounded-full",
-                isWhatsAppConnected ? "bg-emerald-500 animate-pulse" : "bg-amber-500"
-              )}
-            />
-            <span className="text-[11px] text-muted-foreground">
-              {whatsappLoading ? "Checking..." : isWhatsAppConnected ? "Connected" : "Disconnected"}
-            </span>
-          </div>
-
-          {/* Instagram status */}
-          <div className="inline-flex items-center gap-1.5 rounded-full bg-background px-2.5 py-1 text-xs border border-border">
-            <Instagram className="h-3.5 w-3.5 text-pink-500" />
-            <span className="font-medium text-foreground">Instagram</span>
-            <span
-              className={cn(
-                "h-2 w-2 rounded-full",
-                instagramConnected ? "bg-pink-500 animate-pulse" : "bg-muted-foreground"
-              )}
-            />
-            <span className="text-[11px] text-muted-foreground">
-              {instagramLoading ? "Checking..." : instagramConnected ? "Active" : "Inactive"}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Admin Performance Metric Cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {contactsLoading ? (
-          <SkeletonCard />
-        ) : (
-          <MetricCard
-            title="Total Contacts"
-            value={contactsCount.toLocaleString()}
-            icon={Users}
-          />
-        )}
-        {conversationsLoading ? (
-          <SkeletonCard />
-        ) : (
-          <MetricCard
-            title="Active Conversations"
-            value={activeConversationsCount.toLocaleString()}
-            icon={MessageSquare}
-          />
-        )}
-        {metricsLoading ? (
-          <SkeletonCard />
-        ) : (
-          <MetricCard
-            title="Messages Sent Today"
-            value={messagesSentToday.toLocaleString()}
-            icon={Send}
-          />
-        )}
-        {metricsLoading ? (
-          <SkeletonCard />
-        ) : (
-          <MetricCard
-            title="Resolved Conversations"
-            value={resolvedConversationsCount.toLocaleString()}
-            icon={CheckCircle2}
-          />
-        )}
-      </div>
-
-      {/* Tabbed Agent Workspace: Assigned Contacts, Active Chats, Campaigns, and Activity */}
-      <Tabs defaultValue="contacts" className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-3">
-          <div className="w-full sm:w-auto overflow-x-auto no-scrollbar">
-            <TabsList className="h-9 inline-flex w-max">
-              <TabsTrigger value="contacts" className="gap-1.5 text-xs">
-                <Users className="h-3.5 w-3.5" />
-                Assigned Contacts ({contactsCount})
-              </TabsTrigger>
-              <TabsTrigger value="conversations" className="gap-1.5 text-xs">
-                <MessageSquare className="h-3.5 w-3.5" />
-                Active Chats ({activeConversationsCount})
-              </TabsTrigger>
-              <TabsTrigger value="campaigns" className="gap-1.5 text-xs">
-                <Radio className="h-3.5 w-3.5" />
-                Campaigns ({totalCampaigns})
-              </TabsTrigger>
-              <TabsTrigger value="activity" className="gap-1.5 text-xs">
-                <Activity className="h-3.5 w-3.5" />
-                Processed Activity
-              </TabsTrigger>
-            </TabsList>
-          </div>
-
-          <span className="text-xs text-muted-foreground shrink-0">
-            Total Processed: <strong>{totalMessagesProcessed.toLocaleString()}</strong> messages
-          </span>
-        </div>
-
-        {/* Tab 1: Assigned Contacts & Leads */}
-        <TabsContent value="contacts" className="space-y-4">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="relative w-full sm:w-80">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search assigned contacts by name, phone, email..."
-                value={contactSearch}
-                onChange={(e) => setContactSearch(e.target.value)}
-                className="pl-9 h-9 text-xs"
-              />
-            </div>
             <Button
-              size="sm"
               variant="outline"
-              onClick={() => router.push("/contacts")}
-              className="text-xs self-start sm:self-auto gap-1"
+              size="sm"
+              onClick={() => router.push("/settings?tab=members")}
+              className="gap-1.5 text-xs font-medium"
             >
-              Manage in Contacts Table
-              <ArrowRight className="h-3 w-3" />
+              <UserPlus className="h-3.5 w-3.5 text-emerald-500" />
+              Team Members
             </Button>
           </div>
+        </div>
 
-          <Card>
-            <CardContent className="p-0">
-              {contactsLoading ? (
-                <div className="flex h-48 items-center justify-center">
-                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                </div>
-              ) : filteredContacts.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center px-4">
-                  <Users className="h-10 w-10 text-muted-foreground/40 mb-2" />
-                  <p className="text-sm font-semibold text-foreground">
-                    {contactSearch ? "No matching contacts found" : "No contacts assigned yet"}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-                    {contactSearch
-                      ? "Try searching with a different name, phone number, or company."
-                      : "Contacts assigned to you or created in this project will appear here for quick messaging."}
-                  </p>
-                  <Button
-                    size="sm"
-                    onClick={() => router.push("/contacts")}
-                    className="mt-4 gap-1.5 text-xs"
-                  >
-                    + Add or Import Contacts
-                  </Button>
-                </div>
-              ) : (
-                <div className="divide-y divide-border">
-                  {filteredContacts.map((contact) => (
-                    <div
-                      key={contact.id}
-                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 hover:bg-muted/30 transition-colors"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-sm">
-                          {(contact.name || contact.phone || "U").charAt(0).toUpperCase()}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-semibold text-sm text-foreground truncate">
-                              {contact.name || "Unnamed Contact"}
-                            </span>
-                            {contact.channel === "instagram" ? (
-                              <Badge variant="outline" className="text-[10px] gap-1 text-pink-500 border-pink-500/20 bg-pink-500/5">
-                                <Instagram className="h-3 w-3" />
-                                Instagram
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" className="text-[10px] gap-1 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 bg-emerald-500/5">
-                                <QrCode className="h-3 w-3" />
-                                WhatsApp
-                              </Badge>
-                            )}
-                            {contact.company && (
-                              <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                                <Building2 className="h-3 w-3" />
-                                {contact.company}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-3 mt-1 text-xs text-muted-foreground">
-                            {contact.phone && (
-                              <span className="flex items-center gap-1 font-mono">
-                                <Phone className="h-3 w-3" />
-                                {contact.phone}
-                              </span>
-                            )}
-                            {contact.email && (
-                              <span className="flex items-center gap-1">
-                                <Mail className="h-3 w-3" />
-                                {contact.email}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 self-end sm:self-auto">
-                        <Button
-                          size="sm"
-                          onClick={() => router.push(`/inbox?contactId=${contact.id}`)}
-                          className="h-8 gap-1.5 text-xs font-medium"
-                        >
-                          <MessageCircle className="h-3.5 w-3.5" />
-                          Chat Now
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Tab 2: Active Conversations Queue */}
-        <TabsContent value="conversations" className="space-y-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between py-4">
-              <div>
-                <CardTitle className="text-base font-semibold text-foreground">
-                  Active Conversation Queue
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  Threads and conversations assigned to your active queue.
-                </CardDescription>
+        {/* Live Channel Connection Health Row */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-border/60">
+          {/* WhatsApp Card */}
+          <div
+            className={cn(
+              "flex items-center justify-between p-3 rounded-lg border bg-background/80 transition-colors cursor-pointer",
+              isWhatsAppConnected ? "border-emerald-500/30 hover:bg-emerald-500/5" : "border-amber-500/30 hover:bg-amber-500/5"
+            )}
+            onClick={() => router.push("/whatsapp")}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className={cn("p-2 rounded-md", isWhatsAppConnected ? "bg-emerald-500/10 text-emerald-600" : "bg-amber-500/10 text-amber-600")}>
+                <QrCode className="h-4 w-4" />
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => router.push("/inbox")}
-                className="text-xs text-muted-foreground hover:text-foreground gap-1"
-              >
-                Go to Inbox
-                <ArrowRight className="h-3.5 w-3.5" />
-              </Button>
-            </CardHeader>
-            <CardContent className="p-0">
-              {conversationsLoading ? (
-                <div className="flex h-48 items-center justify-center">
-                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <div>
+                <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  WhatsApp Gateway
+                  <span className={cn("h-2 w-2 rounded-full", isWhatsAppConnected ? "bg-emerald-500 animate-pulse" : "bg-amber-500")} />
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  {whatsappLoading ? "Checking..." : isWhatsAppConnected ? (whatsappPhone || "Connected & Ready") : "Disconnected • Click to Pair"}
+                </p>
+              </div>
+            </div>
+            <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+          </div>
+
+          {/* Instagram Card */}
+          <div
+            className={cn(
+              "flex items-center justify-between p-3 rounded-lg border bg-background/80 transition-colors cursor-pointer",
+              instagramConnected ? "border-pink-500/30 hover:bg-pink-500/5" : "border-border hover:bg-muted/40"
+            )}
+            onClick={() => router.push("/instagram")}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className={cn("p-2 rounded-md", instagramConnected ? "bg-pink-500/10 text-pink-600" : "bg-muted text-muted-foreground")}>
+                <Instagram className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  Instagram DM
+                  <span className={cn("h-2 w-2 rounded-full", instagramConnected ? "bg-pink-500 animate-pulse" : "bg-muted-foreground")} />
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  {instagramLoading ? "Checking..." : instagramConnected ? (instagramUsername || "Connected") : "Not Connected"}
+                </p>
+              </div>
+            </div>
+            <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+          </div>
+
+          {/* Facebook Card */}
+          <div
+            className={cn(
+              "flex items-center justify-between p-3 rounded-lg border bg-background/80 transition-colors cursor-pointer",
+              facebookConnected ? "border-blue-500/30 hover:bg-blue-500/5" : "border-border hover:bg-muted/40"
+            )}
+            onClick={() => router.push("/facebook")}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className={cn("p-2 rounded-md", facebookConnected ? "bg-blue-500/10 text-blue-600" : "bg-muted text-muted-foreground")}>
+                <Facebook className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  Facebook Messenger
+                  <span className={cn("h-2 w-2 rounded-full", facebookConnected ? "bg-blue-500 animate-pulse" : "bg-muted-foreground")} />
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  {facebookLoading ? "Checking..." : facebookConnected ? (facebookPageName || "Connected") : "Not Connected"}
+                </p>
+              </div>
+            </div>
+            <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+          </div>
+        </div>
+      </div>
+
+      {/* 360° Project KPI Matrix */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {contactsLoading || conversationsLoading || metricsLoading ? (
+          <>
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </>
+        ) : (
+          <>
+            <MetricCard
+              title="Total Contacts"
+              value={totalContacts.toLocaleString()}
+              icon={Users}
+              subtitle={contactsToday > 0 ? `+${contactsToday} new leads today` : "Total audience database"}
+            />
+            <MetricCard
+              title="Active Conversations"
+              value={activeConversationsCount.toLocaleString()}
+              icon={MessageSquare}
+              subtitle={`${resolvedCount} resolved chats`}
+            />
+            <MetricCard
+              title="Unassigned Queue"
+              value={unassignedCount.toLocaleString()}
+              icon={AlertTriangle}
+              subtitle={unassignedCount > 0 ? "Requires agent assignment" : "All chats assigned"}
+            />
+            <MetricCard
+              title="Messages Today"
+              value={messagesSentToday.toLocaleString()}
+              icon={Send}
+              subtitle={`${totalMessagesProcessed.toLocaleString()} total project messages`}
+            />
+          </>
+        )}
+      </div>
+
+      {/* Project Overview Secondary Row: Pipelines, Automations, Broadcasts */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card className="border-border shadow-sm p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center">
+              <DollarSign className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground font-medium">Pipeline Value</p>
+              <p className="text-lg font-bold text-foreground">${dealsValue.toLocaleString()}</p>
+            </div>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => router.push("/pipelines")} className="text-xs">
+            {dealsCount} deals <ArrowRight className="h-3 w-3 ml-1" />
+          </Button>
+        </Card>
+
+        <Card className="border-border shadow-sm p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-lg bg-indigo-500/10 text-indigo-600 flex items-center justify-center">
+              <Workflow className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground font-medium">Active Automations</p>
+              <p className="text-lg font-bold text-foreground">{activeFlowsCount} Flows</p>
+            </div>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => router.push("/flows")} className="text-xs">
+            Manage <ArrowRight className="h-3 w-3 ml-1" />
+          </Button>
+        </Card>
+
+        <Card className="border-border shadow-sm p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-lg bg-pink-500/10 text-pink-600 flex items-center justify-center">
+              <Radio className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground font-medium">Broadcast Campaigns</p>
+              <p className="text-lg font-bold text-foreground">{recentBroadcasts.length} Sent</p>
+            </div>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => router.push("/broadcasts")} className="text-xs">
+            View <ArrowRight className="h-3 w-3 ml-1" />
+          </Button>
+        </Card>
+      </div>
+
+      {/* Interactive Command Tabs: Triage, Team, Broadcasts, Contacts, Activity */}
+      <Tabs defaultValue={unassignedCount > 0 ? "unassigned" : "team"} className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-3">
+          <TabsList className="h-9 bg-muted/60">
+            <TabsTrigger value="unassigned" className="text-xs gap-1.5 h-7">
+              <AlertTriangle className={cn("h-3.5 w-3.5", unassignedCount > 0 ? "text-amber-500" : "text-muted-foreground")} />
+              Unassigned Queue
+              {unassignedCount > 0 && (
+                <Badge className="bg-red-500 text-white px-1.5 py-0 text-[10px] font-bold">
+                  {unassignedCount}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="team" className="text-xs gap-1.5 h-7">
+              <Users className="h-3.5 w-3.5 text-primary" />
+              Team & Agents ({projectMembers.length})
+            </TabsTrigger>
+            <TabsTrigger value="broadcasts" className="text-xs gap-1.5 h-7">
+              <Radio className="h-3.5 w-3.5 text-indigo-500" />
+              Broadcasts & Campaigns
+            </TabsTrigger>
+            <TabsTrigger value="contacts" className="text-xs gap-1.5 h-7">
+              <TagIcon className="h-3.5 w-3.5 text-emerald-500" />
+              Recent Contacts
+            </TabsTrigger>
+            <TabsTrigger value="activity" className="text-xs gap-1.5 h-7">
+              <Activity className="h-3.5 w-3.5 text-pink-500" />
+              Live Project Feed
+            </TabsTrigger>
+          </TabsList>
+        </div>
+
+        {/* Tab 1: 🚨 Unassigned Queue (Live 1-Click Triage) */}
+        <TabsContent value="unassigned" className="space-y-4">
+          <Card className="border-border shadow-sm">
+            <CardHeader className="p-4 sm:p-5 border-b border-border">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base font-semibold flex items-center gap-2">
+                    <AlertTriangle className="h-5 w-5 text-amber-500" />
+                    Unassigned Conversation Queue
+                  </CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground mt-0.5">
+                    Customer inquiries currently waiting for an agent assignment
+                  </CardDescription>
                 </div>
-              ) : assignedConversations.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center px-4">
-                  <MessageSquare className="h-10 w-10 text-muted-foreground/40 mb-2" />
-                  <p className="text-sm font-semibold text-foreground">No active conversations</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    When customers reach out via WhatsApp or Instagram, your queue will populate here.
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-8"
+                  onClick={() => router.push("/inbox?filter=unassigned")}
+                >
+                  Open in Inbox Triage <ArrowRight className="h-3 w-3 ml-1" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0 divide-y divide-border">
+              {conversationsLoading ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  Loading unassigned queue...
+                </div>
+              ) : unassignedConversations.length === 0 ? (
+                <div className="p-12 text-center">
+                  <div className="mx-auto w-12 h-12 rounded-full bg-emerald-500/10 flex items-center justify-center mb-3">
+                    <CheckCircle className="h-6 w-6 text-emerald-600" />
+                  </div>
+                  <h4 className="text-sm font-semibold text-foreground">Zero Unassigned Inquiries</h4>
+                  <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+                    All incoming customer chats are actively assigned to agents or handled by automated bots.
                   </p>
-                  <Button
-                    size="sm"
-                    onClick={() => router.push("/inbox")}
-                    className="mt-4 gap-1.5 text-xs"
-                  >
-                    Open Live Inbox
-                  </Button>
                 </div>
               ) : (
-                <div className="divide-y divide-border">
-                  {assignedConversations.map((conv) => (
+                unassignedConversations.map((conv) => {
+                  const contact = conv.contact;
+                  const displayName = contact?.name || contact?.phone || "Unknown Lead";
+                  const timeAgo = conv.last_message_at
+                    ? formatDistanceToNow(new Date(conv.last_message_at), { addSuffix: true })
+                    : "recently";
+
+                  return (
                     <div
                       key={conv.id}
-                      onClick={() => router.push(`/inbox?conversationId=${conv.id}`)}
-                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 hover:bg-muted/30 cursor-pointer transition-colors"
+                      className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 sm:p-4 hover:bg-muted/40 transition-colors gap-3"
                     >
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold text-sm">
-                          {(conv.contact?.name || conv.contact?.phone || "C").charAt(0).toUpperCase()}
+                        <div className="h-9 w-9 shrink-0 rounded-full bg-amber-500/10 text-amber-600 flex items-center justify-center text-xs font-bold border border-amber-500/20">
+                          {displayName.slice(0, 2).toUpperCase()}
                         </div>
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="font-semibold text-sm text-foreground truncate">
-                              {conv.contact?.name || conv.contact?.phone || "Customer"}
+                            <span className="text-sm font-medium text-foreground truncate">
+                              {displayName}
                             </span>
-                            <Badge
-                              className={cn(
-                                "text-[9px] px-1.5 py-0 capitalize",
-                                conv.status === "open"
-                                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
-                                  : conv.status === "pending"
-                                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
-                                  : "bg-muted text-muted-foreground"
-                              )}
-                            >
-                              {conv.status}
+                            <Badge variant="outline" className="text-[10px] py-0 px-1.5 capitalize">
+                              {conv.channel || "WhatsApp"}
                             </Badge>
-                            {conv.unread_count > 0 && (
-                              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
-                                {conv.unread_count}
-                              </span>
-                            )}
                           </div>
-                          <p className="truncate text-xs text-muted-foreground mt-0.5">
-                            {conv.last_message_text || "No messages yet in this conversation"}
+                          <p className="text-xs text-muted-foreground truncate mt-0.5">
+                            {conv.last_message_text || "No preview text"}
                           </p>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-3 self-end sm:self-auto text-xs text-muted-foreground">
-                        {conv.last_message_at && (
-                          <span className="flex items-center gap-1 text-[11px]">
-                            <Clock className="h-3 w-3" />
-                            {new Date(conv.last_message_at).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                        )}
-                        <Button size="sm" variant="ghost" className="h-7 text-xs px-2">
-                          Reply <ArrowRight className="ml-1 h-3 w-3" />
+                      <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
+                        <span className="text-[11px] text-muted-foreground">
+                          Waiting {timeAgo}
+                        </span>
+
+                        {/* Assign Dropdown */}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            disabled={assigningId === conv.id}
+                            className="inline-flex items-center justify-center h-7 px-2.5 text-xs font-medium gap-1 rounded-md border border-primary/30 text-primary hover:bg-primary/10 transition-colors focus:outline-none disabled:opacity-50 cursor-pointer"
+                          >
+                            {assigningId === conv.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <UserCheck className="h-3 w-3" />
+                            )}
+                            <span>Assign to Agent</span>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuLabel className="text-xs">Select Project Agent</DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                            {projectMembers.length === 0 ? (
+                              <div className="p-2 text-xs text-muted-foreground text-center">
+                                No agents in project
+                              </div>
+                            ) : (
+                              projectMembers.map((member) => (
+                                <DropdownMenuItem
+                                  key={member.user_id}
+                                  className="text-xs flex items-center justify-between cursor-pointer"
+                                  onClick={() => handleAssign(conv.id, member.user_id)}
+                                >
+                                  <span>{member.full_name}</span>
+                                  <Badge variant="secondary" className="text-[9px] px-1 py-0 capitalize">
+                                    {member.role} ({member.active_chats})
+                                  </Badge>
+                                </DropdownMenuItem>
+                              ))
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs"
+                          onClick={() => router.push(`/inbox?c=${conv.id}`)}
+                        >
+                          View
                         </Button>
                       </div>
                     </div>
-                  ))}
-                </div>
+                  );
+                })
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        {/* Tab 3: Configured Campaigns & Broadcasts */}
-        <TabsContent value="campaigns" className="space-y-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between py-4">
-              <div>
-                <CardTitle className="text-base font-semibold text-foreground">
-                  Processed Broadcasts & Campaigns
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  Marketing and notification campaigns created in your project.
-                </CardDescription>
+        {/* Tab 2: 👥 Team & Agent Performance Workload */}
+        <TabsContent value="team" className="space-y-4">
+          <Card className="border-border shadow-sm">
+            <CardHeader className="p-4 sm:p-5 border-b border-border">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base font-semibold flex items-center gap-2">
+                    <Users className="h-5 w-5 text-primary" />
+                    Team Member Workload & Output
+                  </CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground mt-0.5">
+                    Live operational distribution across administrators, agents, and staff
+                  </CardDescription>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-8 gap-1.5"
+                  onClick={() => router.push("/settings?tab=members")}
+                >
+                  <UserPlus className="h-3.5 w-3.5" />
+                  Manage Team
+                </Button>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => router.push("/broadcasts")}
-                className="text-xs gap-1"
-              >
-                Create Broadcast
-                <ArrowRight className="h-3 w-3" />
-              </Button>
             </CardHeader>
-            <CardContent>
-              {campaignsLoading ? (
-                <div className="flex h-32 items-center justify-center">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <CardContent className="p-0 divide-y divide-border">
+              {membersLoading ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  Loading team members...
                 </div>
-              ) : recentCampaigns.length === 0 ? (
-                <div className="flex h-32 flex-col items-center justify-center gap-2">
-                  <Radio className="h-8 w-8 text-muted-foreground/50" />
-                  <p className="text-sm text-muted-foreground">{t("noCampaignsYet")}</p>
+              ) : projectMembers.length === 0 ? (
+                <div className="p-12 text-center text-xs text-muted-foreground">
+                  No members added to this project yet.
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {recentCampaigns.map((bc) => {
-                    const status = getBroadcastStatus(bc.status);
-                    return (
-                      <div
-                        key={bc.id}
-                        className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-border p-3.5 hover:bg-muted/50 cursor-pointer transition-colors"
-                        onClick={() => router.push(`/broadcasts/${bc.id}`)}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-semibold text-foreground">{bc.name}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {bc.total_recipients} {t("recipients")} · Delivered: {bc.delivered_count ?? 0} ·{" "}
-                            {new Date(bc.created_at).toLocaleDateString()}
-                          </p>
-                        </div>
-                        <span
-                          className={`inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-xs font-medium ${status.classes}`}
-                        >
-                          {tStatus(status.label)}
-                        </span>
+                projectMembers.map((member) => (
+                  <div
+                    key={member.id}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 sm:p-4 hover:bg-muted/40 transition-colors gap-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="h-9 w-9 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold border border-primary/20">
+                        {member.full_name.slice(0, 2).toUpperCase()}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Tab 4: Processed Activity & Audit Log */}
-        <TabsContent value="activity" className="space-y-4">
-          <Card>
-            <CardHeader className="py-4">
-              <CardTitle className="text-base font-semibold text-foreground">
-                Agent Activity & Processed Messages
-              </CardTitle>
-              <CardDescription className="text-xs">
-                Log of messages and actions processed through your account.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {activityLoading ? (
-                <div className="flex h-32 items-center justify-center">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
-              ) : recentMessages.length === 0 ? (
-                <div className="flex h-32 flex-col items-center justify-center gap-2">
-                  <Activity className="h-8 w-8 text-muted-foreground/40" />
-                  <p className="text-sm text-muted-foreground">No recent messages logged.</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {recentMessages.map((msg) => (
-                    <div
-                      key={msg.id}
-                      className="flex items-start gap-3 rounded-lg border border-border/70 p-3 bg-card"
-                    >
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary mt-0.5">
-                        <Send className="h-3.5 w-3.5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-medium text-foreground">
-                            Outbound Message ({msg.channel === "instagram" ? "Instagram" : "WhatsApp"})
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-foreground truncate">
+                            {member.full_name}
                           </span>
-                          <span className="text-[10px] text-muted-foreground font-mono">
-                            {new Date(msg.created_at).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </span>
+                          <Badge variant="secondary" className="text-[10px] py-0 px-1.5 capitalize">
+                            {member.role}
+                          </Badge>
                         </div>
-                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                          {msg.content_text || `[${msg.content_type} payload]`}
-                        </p>
+                        <p className="text-xs text-muted-foreground truncate">{member.email}</p>
                       </div>
                     </div>
-                  ))}
+
+                    <div className="flex items-center gap-4 shrink-0 text-xs">
+                      <div className="text-right">
+                        <p className="font-semibold text-foreground">{member.active_chats} Active</p>
+                        <p className="text-[10px] text-muted-foreground">{member.resolved_chats} Resolved</p>
+                      </div>
+                      <Badge
+                        variant={member.active_chats > 0 ? "default" : "outline"}
+                        className="text-[10px] py-0.5 font-medium"
+                      >
+                        {member.active_chats > 0 ? "Assigned" : "Available"}
+                      </Badge>
+                    </div>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Tab 3: 📢 Broadcasts & Campaigns */}
+        <TabsContent value="broadcasts" className="space-y-4">
+          <Card className="border-border shadow-sm">
+            <CardHeader className="p-4 sm:p-5 border-b border-border">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base font-semibold flex items-center gap-2">
+                    <Radio className="h-5 w-5 text-indigo-500" />
+                    Recent Broadcast Campaigns
+                  </CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground mt-0.5">
+                    WhatsApp & Email marketing campaign performance
+                  </CardDescription>
                 </div>
+                <Button
+                  size="sm"
+                  className="text-xs h-8 gap-1.5"
+                  onClick={() => router.push("/broadcasts/new")}
+                >
+                  <PlusCircle className="h-3.5 w-3.5" />
+                  Create Campaign
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0 divide-y divide-border">
+              {broadcastsLoading ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  Loading campaigns...
+                </div>
+              ) : recentBroadcasts.length === 0 ? (
+                <div className="p-12 text-center text-xs text-muted-foreground">
+                  No broadcast campaigns sent yet. Click &quot;Create Campaign&quot; to send your first message.
+                </div>
+              ) : (
+                recentBroadcasts.map((bc) => {
+                  const deliveryRate =
+                    bc.total_recipients > 0
+                      ? Math.round(((bc.delivered_count || 0) / bc.total_recipients) * 100)
+                      : 0;
+
+                  return (
+                    <div
+                      key={bc.id}
+                      className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 sm:p-4 hover:bg-muted/40 transition-colors gap-3"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-foreground">{bc.name}</span>
+                          <Badge variant="outline" className="text-[10px] capitalize">
+                            {bc.status}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {bc.total_recipients} recipients • {formatDistanceToNow(new Date(bc.created_at), { addSuffix: true })}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-4 text-xs">
+                        <div className="text-right">
+                          <p className="font-bold text-foreground">{deliveryRate}% Delivered</p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {bc.delivered_count || 0} / {bc.total_recipients}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs"
+                          onClick={() => router.push(`/broadcasts/${bc.id}`)}
+                        >
+                          Details
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Tab 4: 📇 Recent Contacts */}
+        <TabsContent value="contacts" className="space-y-4">
+          <Card className="border-border shadow-sm">
+            <CardHeader className="p-4 sm:p-5 border-b border-border">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base font-semibold flex items-center gap-2">
+                    <Users className="h-5 w-5 text-emerald-500" />
+                    Recently Registered Audience & Contacts
+                  </CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground mt-0.5">
+                    Latest leads and subscribers synced across all channels
+                  </CardDescription>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-8"
+                  onClick={() => router.push("/contacts")}
+                >
+                  View All ({totalContacts}) <ArrowRight className="h-3 w-3 ml-1" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0 divide-y divide-border">
+              {contactsLoading ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  Loading contacts...
+                </div>
+              ) : recentContacts.length === 0 ? (
+                <div className="p-12 text-center text-xs text-muted-foreground">
+                  No contacts found in this project.
+                </div>
+              ) : (
+                recentContacts.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 sm:p-4 hover:bg-muted/40 transition-colors gap-3 cursor-pointer"
+                    onClick={() => router.push("/contacts")}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-xs font-semibold text-foreground">
+                        {(c.name || c.phone || "U").slice(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-foreground">{c.name || "Customer"}</span>
+                          {c.company && (
+                            <Badge variant="outline" className="text-[10px] py-0">
+                              {c.company}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">{c.phone || c.email || "No direct phone"}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <Badge variant="secondary" className="text-[10px] capitalize">
+                        {c.channel || "WhatsApp"}
+                      </Badge>
+                      <span>{c.created_at ? formatDistanceToNow(new Date(c.created_at), { addSuffix: true }) : ""}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Tab 5: 🕒 Live Project Feed */}
+        <TabsContent value="activity" className="space-y-4">
+          <Card className="border-border shadow-sm">
+            <CardHeader className="p-4 sm:p-5 border-b border-border">
+              <CardTitle className="text-base font-semibold flex items-center gap-2">
+                <Activity className="h-5 w-5 text-pink-500" />
+                Live Project Activity Feed
+              </CardTitle>
+              <CardDescription className="text-xs text-muted-foreground mt-0.5">
+                Real-time stream of inbound customer interactions and outbound replies
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0 divide-y divide-border">
+              {activityLoading ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  Loading activity...
+                </div>
+              ) : recentMessages.length === 0 ? (
+                <div className="p-12 text-center text-xs text-muted-foreground">
+                  No messages processed recently.
+                </div>
+              ) : (
+                recentMessages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className="p-3.5 sm:p-4 hover:bg-muted/40 transition-colors cursor-pointer"
+                    onClick={() => router.push(`/inbox?c=${msg.conversation_id}`)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                        <Badge
+                          variant={msg.sender_type === "agent" ? "default" : "secondary"}
+                          className="text-[9px] px-1 py-0 capitalize"
+                        >
+                          {msg.sender_type}
+                        </Badge>
+                        <span className="capitalize text-muted-foreground">{msg.channel || "WhatsApp"}</span>
+                      </span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {formatDistanceToNow(new Date(msg.created_at), { addSuffix: true })}
+                      </span>
+                    </div>
+                    <p className="text-xs text-foreground mt-1 line-clamp-2">
+                      {msg.content_text || `[${msg.content_type || "Message"}]`}
+                    </p>
+                  </div>
+                ))
               )}
             </CardContent>
           </Card>
