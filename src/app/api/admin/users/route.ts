@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
 
 import {
+  getCurrentAccount,
   requireSuperAdmin,
   toErrorResponse,
 } from '@/lib/auth/account';
+import { hasMinRole } from '@/lib/auth/roles';
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -381,6 +383,127 @@ export async function POST(request: Request) {
     },
     { status: 201 },
   );
+}
+
+// PATCH — reassign a customer's role between 'admin' and 'agent'.
+//
+// Allowed for a platform super_admin, or an account admin/owner acting
+// within their own account. The target is always scoped to the caller's
+// account, so an admin can never touch another tenant's users.
+export async function PATCH(request: Request) {
+  let ctx;
+  try {
+    ctx = await getCurrentAccount();
+    if (ctx.platformRole !== 'super_admin' && !hasMinRole(ctx.role, 'admin')) {
+      return NextResponse.json(
+        { error: 'This action requires super admin or account admin access' },
+        { status: 403 },
+      );
+    }
+  } catch (err) {
+    return toErrorResponse(err);
+  }
+
+  const limit = checkRateLimit(
+    `admin:customerUpdate:${ctx.userId}`,
+    RATE_LIMITS.adminAction,
+  );
+  if (!limit.success) return rateLimitResponse(limit);
+
+  const body = (await request.json().catch(() => null)) as {
+    userId?: unknown;
+    customerId?: unknown;
+    role?: unknown;
+  } | null;
+  if (!body) {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+
+  if (body.role !== 'admin' && body.role !== 'agent') {
+    return NextResponse.json(
+      { error: "Role must be either 'admin' or 'agent'" },
+      { status: 400 },
+    );
+  }
+  const nextRole = body.role;
+
+  let userId = typeof body.userId === 'string' ? body.userId.trim() : '';
+  const customerId =
+    typeof body.customerId === 'string' ? body.customerId.trim() : '';
+
+  // Resolve user_id from the onboarding record when only the row id is known.
+  if (!userId && customerId) {
+    const { data: cust } = await ctx.supabase
+      .from('onboarded_customers')
+      .select('user_id')
+      .eq('id', customerId)
+      .maybeSingle();
+    if (cust?.user_id) userId = cust.user_id;
+  }
+
+  if (!userId) {
+    return NextResponse.json(
+      { error: 'A userId or customerId is required' },
+      { status: 400 },
+    );
+  }
+
+  if (userId === ctx.userId) {
+    return NextResponse.json(
+      { error: 'You cannot change your own role' },
+      { status: 400 },
+    );
+  }
+
+  // The target must be a member of the caller's account, and must not be
+  // a super admin — those are managed outside the customer list.
+  const { data: target, error: targetErr } = await supabaseAdmin()
+    .from('profiles')
+    .select('user_id, account_id, platform_role, account_role')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (targetErr || !target) {
+    return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
+  }
+
+  if (target.account_id !== ctx.accountId) {
+    return NextResponse.json(
+      { error: 'Customer not found in your account' },
+      { status: 404 },
+    );
+  }
+
+  if (target.platform_role === 'super_admin') {
+    return NextResponse.json(
+      { error: 'A Super Administrator account cannot be reassigned' },
+      { status: 400 },
+    );
+  }
+
+  if (target.account_role === 'owner') {
+    return NextResponse.json(
+      { error: 'The account owner cannot be reassigned' },
+      { status: 400 },
+    );
+  }
+
+  // service_role bypasses the privilege-column trigger from 034/048,
+  // which blocks role edits made as `authenticated`.
+  const { error: updateErr } = await supabaseAdmin()
+    .from('profiles')
+    .update({ role: nextRole, account_role: nextRole })
+    .eq('user_id', userId);
+
+  if (updateErr) {
+    console.error('[PATCH /api/admin/users] role update error:', updateErr);
+    return NextResponse.json(
+      { error: 'Failed to update the customer role' },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json({ success: true, userId, role: nextRole });
 }
 
 // DELETE — permanently delete a customer user account (Super Admin only)

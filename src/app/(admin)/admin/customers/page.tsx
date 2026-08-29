@@ -126,6 +126,9 @@ function AdminCustomersContent() {
   // Projects list
   const [projects, setProjects] = useState<Project[]>([]);
 
+  // Role reassignment — user_id of the row currently saving
+  const [savingRoleFor, setSavingRoleFor] = useState<string | null>(null);
+
   // Credential handover
   const [credentials, setCredentials] = useState<CreatedCredentials | null>(null);
   const [copied, setCopied] = useState(false);
@@ -280,6 +283,57 @@ function AdminCustomersContent() {
     }
   };
 
+  const handleRoleChange = async (
+    customer: Customer,
+    nextRole: "agent" | "admin",
+  ) => {
+    if (customer.role === nextRole || savingRoleFor) return;
+    const previousRole = customer.role;
+    setSavingRoleFor(customer.user_id);
+
+    // Optimistic: reflect the new badge immediately, roll back on failure.
+    setCustomers((prev) =>
+      prev.map((c) =>
+        c.user_id === customer.user_id ? { ...c, role: nextRole } : c,
+      ),
+    );
+
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: customer.user_id,
+          customerId: customer.id,
+          role: nextRole,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setCustomers((prev) =>
+          prev.map((c) =>
+            c.user_id === customer.user_id ? { ...c, role: previousRole } : c,
+          ),
+        );
+        toast.error(data.error || "Failed to update role");
+        return;
+      }
+      toast.success(
+        `${customer.full_name || customer.email} is now ${nextRole === "admin" ? "an Admin" : "an Agent"}`,
+      );
+    } catch (err) {
+      console.error("[handleRoleChange] error:", err);
+      setCustomers((prev) =>
+        prev.map((c) =>
+          c.user_id === customer.user_id ? { ...c, role: previousRole } : c,
+        ),
+      );
+      toast.error("Network error while updating role");
+    } finally {
+      setSavingRoleFor(null);
+    }
+  };
+
   const copyCredentials = () => {
     if (!credentials) return;
     const text = `Email: ${credentials.email}\nRole: ${credentials.role ?? "agent"}\nProject: ${credentials.projectName ?? ""}\nPassword: ${credentials.password}\nLogin: ${credentials.signInUrl}`;
@@ -405,16 +459,30 @@ function AdminCustomersContent() {
                         <p className="truncate text-sm font-semibold text-foreground">
                           {c.full_name || t("unnamed")}
                         </p>
-                        <Badge
-                          className={cn(
-                            "text-[10px] px-2 py-0 capitalize",
-                            c.role === "admin"
-                              ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
-                              : "bg-primary/10 text-primary border border-primary/20"
-                          )}
+                        <Select
+                          value={c.role === "admin" ? "admin" : "agent"}
+                          onValueChange={(v) =>
+                            void handleRoleChange(c, v as "agent" | "admin")
+                          }
+                          disabled={savingRoleFor === c.user_id}
                         >
-                          {c.role === "admin" ? "Admin" : "Agent"}
-                        </Badge>
+                          <SelectTrigger
+                            aria-label={`Role for ${c.full_name || c.email}`}
+                            className={cn(
+                              "h-6 w-auto gap-1 rounded-full border px-2 py-0 text-[10px] font-medium capitalize focus:ring-1",
+                              c.role === "admin"
+                                ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20"
+                                : "bg-primary/10 text-primary border-primary/20",
+                              savingRoleFor === c.user_id && "opacity-60"
+                            )}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="agent">Agent</SelectItem>
+                            <SelectItem value="admin">Admin</SelectItem>
+                          </SelectContent>
+                        </Select>
                         {pName ? (
                           <span className="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs text-foreground font-medium border border-border">
                             <FolderKanban className="h-3 w-3 text-primary" />

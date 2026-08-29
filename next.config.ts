@@ -1,6 +1,15 @@
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
 
+/**
+ * Origin that serves the Facebook/Instagram in-frame proxies. Empty
+ * string when unset, which collapses to the previous same-origin CSP.
+ * See src/lib/sandbox-origin.ts for why isolating it matters.
+ */
+const SANDBOX_ORIGIN = (process.env.NEXT_PUBLIC_SANDBOX_ORIGIN ?? "")
+  .trim()
+  .replace(/\/+$/, "");
+
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
 /**
@@ -55,8 +64,11 @@ const SECURITY_HEADERS = [
       "font-src 'self' data: https://instagram.com https://*.instagram.com https://*.cdninstagram.com https://facebook.com https://*.facebook.com https://*.fbcdn.net",
       // Supabase REST + realtime (WSS). All Meta API calls happen
       // server-side, so graph.facebook.com does not belong here.
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://instagram.com https://*.instagram.com https://*.cdninstagram.com https://facebook.com https://*.facebook.com https://*.fbcdn.net https://*.meta.com",
-      "frame-src 'self' http://instagram.com https://instagram.com https://*.instagram.com https://*.cdninstagram.com http://facebook.com https://facebook.com https://*.facebook.com https://*.fbcdn.net blob: data:",
+      `connect-src 'self' ${SANDBOX_ORIGIN} https://*.supabase.co wss://*.supabase.co https://instagram.com https://*.instagram.com https://*.cdninstagram.com https://facebook.com https://*.facebook.com https://*.fbcdn.net https://*.meta.com`,
+      // The isolation origin serving the in-frame proxies must be
+      // frameable by the app; without it CSP blocks the isolated setup
+      // and the hubs render an empty frame.
+      `frame-src 'self' ${SANDBOX_ORIGIN} http://instagram.com https://instagram.com https://*.instagram.com https://*.cdninstagram.com http://facebook.com https://facebook.com https://*.facebook.com https://*.fbcdn.net blob: data:`,
       "frame-ancestors 'self'",
       "base-uri 'self' https://instagram.com https://*.instagram.com https://facebook.com https://*.facebook.com",
       "form-action 'self' https://instagram.com https://*.instagram.com https://facebook.com https://*.facebook.com",
@@ -147,10 +159,23 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // The in-frame proxies are framed BY the app, and when
+        // NEXT_PUBLIC_SANDBOX_ORIGIN is set that framing is cross-origin.
+        // The global X-Frame-Options: SAMEORIGIN below would block it, so
+        // these routes get every security header EXCEPT that one; each
+        // proxy response sets its own `frame-ancestors` naming the app
+        // origin, which is stricter than SAMEORIGIN would have been.
+        source: "/api/:provider(facebook|instagram)/proxy",
+        headers: SECURITY_HEADERS.filter((h) => h.key !== "X-Frame-Options"),
+      },
+      {
         // Security headers on every response, including /_next/static
         // assets (nosniff matters there) and /api/* (HSTS + referrer-
         // policy don't hurt).
-        source: "/:path*",
+        // Excludes the in-frame proxy routes, which are handled by the
+        // entry above — a later matching rule would otherwise re-add the
+        // X-Frame-Options that exception exists to drop.
+        source: "/:path((?!api/facebook/proxy|api/instagram/proxy).*)",
         headers: [...SECURITY_HEADERS],
       },
     ];

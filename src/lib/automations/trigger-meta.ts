@@ -39,6 +39,18 @@ export const TRIGGER_META: Record<AutomationTriggerType, TriggerMeta> = {
     label: 'Button / List Reply',
     pillClass: 'border-pink-500/30 bg-pink-500/10 text-pink-300',
   },
+  email_opened: {
+    label: 'Email Opened',
+    pillClass: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300',
+  },
+  email_clicked: {
+    label: 'Email Link Clicked',
+    pillClass: 'border-violet-500/30 bg-violet-500/10 text-violet-300',
+  },
+  email_replied: {
+    label: 'Email Replied',
+    pillClass: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+  },
 }
 
 export function triggerMeta(t: AutomationTriggerType | string): TriggerMeta {

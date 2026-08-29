@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rewriteNavigationUrls } from "@/lib/proxy/rewrite-html";
 
 const ALLOWED_DOMAINS = [
   "instagram.com",
@@ -147,9 +148,51 @@ const CLIENT_INJECTION_SCRIPT = `
       }
     } catch(err) {}
   }, true);
+
+  // 6b. Intercept programmatic navigation. Instagram/Facebook JS sets
+  //     location directly after login and on SPA route changes; without
+  //     this the frame leaves the proxy and Meta refuses to be framed.
+  try {
+    var LocProto = window.Location && window.Location.prototype;
+    if (LocProto) {
+      ['assign', 'replace'].forEach(function (fn) {
+        var orig = LocProto[fn];
+        if (typeof orig !== 'function') return;
+        LocProto[fn] = function (url) {
+          try { return orig.call(this, normalizeAndProxyUrl(String(url))); }
+          catch (e) { return orig.call(this, url); }
+        };
+      });
+    }
+  } catch (e) {}
+
+  try {
+    var origOpen = window.open;
+    window.open = function (url) {
+      var args = Array.prototype.slice.call(arguments);
+      if (typeof url === 'string') { args[0] = normalizeAndProxyUrl(url); }
+      return origOpen.apply(window, args);
+    };
+  } catch (e) {}
+
 })();
 </script>
 `;
+
+/**
+ * The origin allowed to frame proxied content — the CRM itself. Falls
+ * back to 'self' only, which is correct when the proxy is same-origin.
+ */
+function appOrigin(): string {
+  const site = process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, "");
+  if (!site) return "";
+  try {
+    const parsed = new URL(site);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return "";
+  }
+}
 
 export async function OPTIONS() {
   return new NextResponse(null, {
@@ -267,7 +310,15 @@ async function handleProxyRequest(request: NextRequest, method: string) {
     resHeaders.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
     resHeaders.set("Access-Control-Allow-Headers", "*");
     resHeaders.set("Access-Control-Allow-Credentials", "true");
-    resHeaders.set("X-Frame-Options", "SAMEORIGIN");
+    // NOT X-Frame-Options: SAMEORIGIN. When the proxy is served from an
+    // isolation origin (NEXT_PUBLIC_SANDBOX_ORIGIN) the app framing it is
+    // a *different* origin, which SAMEORIGIN would block outright.
+    // frame-ancestors expresses the same intent but names the app origin,
+    // and still refuses framing by anyone else.
+    resHeaders.set(
+      "Content-Security-Policy",
+      `frame-ancestors 'self' ${appOrigin()}`,
+    );
     resHeaders.set("Permissions-Policy", "unload=*");
 
     // Forward and sanitize Set-Cookie headers so localhost stores session & csrf cookies properly
@@ -304,6 +355,13 @@ async function handleProxyRequest(request: NextRequest, method: string) {
     // If HTML, inject client monkey-patch before DOCTYPE so DOM tree inside <html> is untouched
     if (contentType.includes("text/html")) {
       let html = await response.text();
+
+      // Rewrite <a href> / <form action> that point back at Meta BEFORE
+      // the browser sees them. Otherwise a click navigates the iframe to
+      // instagram.com/facebook.com directly, which answers with
+      // X-Frame-Options and renders "refused to connect".
+      html = rewriteNavigationUrls(html, "/api/instagram/proxy", request.nextUrl.origin);
+
       html = CLIENT_INJECTION_SCRIPT + html;
 
       resHeaders.set("Content-Type", "text/html; charset=utf-8");

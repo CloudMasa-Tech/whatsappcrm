@@ -36,8 +36,8 @@ import {
 
 const adminNavItems = [
   { href: "/admin", labelKey: "dashboard", icon: LayoutDashboard },
-  { href: "/admin/customers", labelKey: "customers", icon: Users },
   { href: "/admin/projects", labelKey: "projects", icon: FolderKanban },
+  { href: "/admin/customers", labelKey: "customers", icon: Users },
   { href: "/admin/templates", labelKey: "templates", icon: FileText },
   { href: "/admin/settings", labelKey: "settings", icon: Settings },
 ];

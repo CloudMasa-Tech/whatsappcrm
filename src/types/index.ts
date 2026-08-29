@@ -459,7 +459,16 @@ export type AutomationTriggerType =
   | 'time_based'
   /** Customer tapped a reply button / list row whose id matches; lets
    *  multi-step menus be chained across automations. */
-  | 'interactive_reply';
+  | 'interactive_reply'
+  /** Recipient opened a campaign email (tracking pixel loaded). Fires
+   *  once per recipient, on first open only — image proxies refetch. */
+  | 'email_opened'
+  /** Recipient clicked a tracked link in a campaign email. Fires once
+   *  per recipient, on first click. A stronger signal than an open. */
+  | 'email_clicked'
+  /** Recipient replied to a campaign email. The reply lands in the
+   *  shared inbox as an `email` channel conversation. */
+  | 'email_replied';
 
 export type AutomationStepType =
   | 'send_message'

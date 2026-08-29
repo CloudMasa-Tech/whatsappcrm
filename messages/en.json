@@ -23,7 +23,7 @@
     "facebook": "Facebook",
     "pipelines": "Pipelines",
     "broadcasts": "Broadcasts",
-    "campaigns": "Campaigns",
+    "campaigns": "Email Campaigns",
     "templates": "Templates",
     "profile": "Profile",
     "automations": "Automations",
@@ -174,17 +174,24 @@
   },
   "Inbox": {
     "status": {
-      "checking": "Checking the WhatsApp connection…",
+      "checking": "Checking WhatsApp…",
       "synced": "Synced with WhatsApp",
-      "pairing": "Scan the QR code to link WhatsApp. Messages start syncing as soon as it is linked.",
-      "connecting": "Connecting to WhatsApp…",
-      "disconnected": "WhatsApp® is not connected. New messages will not arrive until you connect a number.",
-      "loggedOut": "WhatsApp was unlinked from this project. Pair it again to resume syncing.",
-      "banned": "WhatsApp has blocked this number. Messages cannot be sent or received.",
-      "error": "WhatsApp sync stopped.",
-      "stale": "WhatsApp sync has stopped responding. The saved session is intact — restart the gateway service to resume syncing.",
-      "connect": "Connect WhatsApp",
-      "finishPairing": "Finish pairing"
+      "pairing": "WhatsApp pairing incomplete",
+      "connecting": "WhatsApp connecting…",
+      "disconnected": "WhatsApp not connected",
+      "loggedOut": "WhatsApp unlinked",
+      "banned": "WhatsApp number blocked",
+      "error": "WhatsApp sync stopped",
+      "stale": "WhatsApp not responding",
+      "connect": "Set up",
+      "finishPairing": "Finish pairing",
+      "hints": {
+        "pairing": "Scan the QR code to link WhatsApp. Messages start syncing as soon as it is linked.",
+        "disconnected": "New messages will not arrive until you connect a number.",
+        "loggedOut": "WhatsApp was unlinked from this project. Pair it again to resume syncing.",
+        "banned": "WhatsApp has blocked this number. Messages cannot be sent or received.",
+        "stale": "The saved session is intact — restart the gateway service to resume syncing."
+      }
     },
     "conversationList": {
       "searchPlaceholder": "Search conversations...",

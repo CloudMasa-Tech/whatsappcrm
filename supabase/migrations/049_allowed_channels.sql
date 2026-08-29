@@ -31,11 +31,24 @@ ALTER TABLE projects
   ALTER COLUMN allowed_channels SET DEFAULT ARRAY['qr']::TEXT[];
 
 -- 4. Validate: only 'qr' and 'cloud_api' may appear in the array.
-ALTER TABLE projects
-  ADD CONSTRAINT allowed_channels_check
-  CHECK (
-    allowed_channels <@ ARRAY['qr', 'cloud_api']::TEXT[]
-  );
+--
+-- Guarded: ADD CONSTRAINT has no IF NOT EXISTS, so re-running this
+-- migration (which the other files here are all safe to do) aborted
+-- with "constraint already exists".
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'allowed_channels_check'
+       AND conrelid = 'public.projects'::regclass
+  ) THEN
+    ALTER TABLE projects
+      ADD CONSTRAINT allowed_channels_check
+      CHECK (
+        allowed_channels <@ ARRAY['qr', 'cloud_api']::TEXT[]
+      );
+  END IF;
+END $$;
 
 -- 5. Update the handle_new_user() trigger so new signups also
 --    get allowed_channels. The trigger runs as SECURITY DEFINER

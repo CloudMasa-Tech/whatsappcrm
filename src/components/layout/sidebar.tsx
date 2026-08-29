@@ -15,8 +15,8 @@ import {
   GitBranch,
   LayoutDashboard,
   LogOut,
+  Mail,
   MessageSquare,
-  QrCode,
   Radio,
   Settings,
   Shield,
@@ -29,6 +29,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Instagram } from "@/components/icons/instagram";
+import { WhatsApp } from "@/components/icons/whatsapp";
 import { Facebook } from "@/components/icons/facebook";
 import type { AccountRole } from "@/lib/auth/roles";
 
@@ -100,9 +101,10 @@ const navItems: NavItem[] = [
   // Super admin exclusive: Admin Panel
   { href: "/admin", labelKey: "admin", icon: Shield, roles: ["super_admin"] },
   { href: "/inbox", labelKey: "inbox", icon: MessageSquare, roles: ["admin", "agent"] },
-  { href: "/whatsapp", labelKey: "whatsapp", icon: QrCode, roles: ["admin"] },
+  { href: "/whatsapp", labelKey: "whatsapp", icon: WhatsApp, roles: ["admin"] },
   { href: "/instagram", labelKey: "instagram", icon: Instagram, roles: ["admin", "agent"] },
   { href: "/facebook", labelKey: "facebook", icon: Facebook, roles: ["admin", "agent"] },
+  { href: "/email-campaigns", labelKey: "campaigns", icon: Mail, roles: ["admin", "agent"] },
   { href: "/contacts", labelKey: "contacts", icon: Users, roles: ["admin", "agent"] },
   { href: "/broadcasts", labelKey: "broadcasts", icon: Radio, roles: ["admin", "agent"] },
   { href: "/templates", labelKey: "templates", icon: FileText, roles: ["admin"] },
@@ -365,7 +367,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               ) : null}
             </div>
           ) : null}
-          <div className="flex items-center justify-between gap-1">
+          <div className="flex items-center gap-1">
             <DropdownMenu>
               <DropdownMenuTrigger className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-muted/60 focus:bg-muted/60 focus:outline-none data-popup-open:bg-muted/60">
                 <Avatar className="size-8 shrink-0">
@@ -430,17 +432,16 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-
-            <button
-              type="button"
-              onClick={signOut}
-              title={t("menuSignOut")}
-              aria-label={t("menuSignOut")}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus:outline-none"
-            >
-              <LogOut className="size-4" />
-            </button>
           </div>
+
+          <button
+            type="button"
+            onClick={signOut}
+            className="mt-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
+          >
+            <LogOut className="size-4 shrink-0" />
+            {t("menuSignOut")}
+          </button>
         </div>
       </aside>
     </>

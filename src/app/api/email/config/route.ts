@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCurrentAccount, toErrorResponse } from '@/lib/auth/account';
+import { getCurrentAccount, requireRole, toErrorResponse } from '@/lib/auth/account';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { resolveEmailConfig } from '@/lib/email/transport';
 
@@ -36,7 +36,10 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const ctx = await getCurrentAccount();
+    // SMTP credentials decide where every outbound email originates, so
+    // writing them is an admin action. Read (GET) stays open to members,
+    // which only reveals whether email is configured.
+    const ctx = await requireRole('admin');
     const body = (await request.json().catch(() => null)) as {
       host?: string;
       port?: number;

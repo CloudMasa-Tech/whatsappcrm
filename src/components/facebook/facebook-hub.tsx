@@ -10,11 +10,13 @@ import {
   Building2,
   Globe,
   Loader2,
+  ShieldAlert,
 } from "lucide-react";
 import { FacebookBrandIcon } from "@/components/icons/facebook";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { buildProxySrc, isOriginIsolated } from "@/lib/sandbox-origin";
 
 interface FacebookHubProps {
   canDisconnect?: boolean;
@@ -76,20 +78,24 @@ export function FacebookHub({ canDisconnect = true }: FacebookHubProps) {
     }
   };
 
-  const proxySrc = `/api/facebook/proxy?url=${encodeURIComponent(frameUrl)}`;
+  // Served from NEXT_PUBLIC_SANDBOX_ORIGIN when configured, so the framed
+  // Meta scripts land in a separate storage partition and cannot read the
+  // CRM's Supabase session cookies. See @/lib/sandbox-origin.
+  const proxySrc = buildProxySrc("/api/facebook/proxy", frameUrl);
+  const originIsolated = isOriginIsolated();
 
   return (
     <div
       ref={containerRef}
       className={cn(
-        "flex flex-col h-[calc(100vh-5.5rem)] rounded-xl border border-border bg-card shadow-sm overflow-hidden",
-        isFullscreen ? "fixed inset-0 z-50 h-screen w-screen rounded-none border-0 p-0" : ""
+        "flex flex-col h-[calc(100dvh-5.5rem)] sm:h-[calc(100dvh-6.5rem)] rounded-xl border border-border bg-card shadow-sm overflow-hidden",
+        isFullscreen ? "fixed inset-0 z-50 h-[100dvh] w-screen rounded-none border-0 p-0" : ""
       )}
     >
       {/* Sleek Minimal Toolbar (Responsive on mobile & desktop) */}
-      <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-2 gap-2">
+      <div className="flex items-center justify-between border-b border-border bg-muted/40 px-2 py-2 gap-2 sm:px-3">
         {/* Left: Branding & Quick View Switcher */}
-        <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto no-scrollbar">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto no-scrollbar">
           <div className="flex items-center gap-1.5 mr-1 shrink-0">
             <FacebookBrandIcon className="size-5 shrink-0" />
             <span className="text-xs font-semibold text-foreground hidden sm:inline">
@@ -111,8 +117,12 @@ export function FacebookHub({ canDisconnect = true }: FacebookHubProps) {
                     isActive ? "bg-blue-600 text-white shadow-xs hover:bg-blue-700 font-medium" : "text-muted-foreground"
                   )}
                   onClick={() => handleNavigate(preset.url)}
+                  title={preset.label}
+                  aria-label={preset.label}
                 >
-                  <Icon className="size-3.5" />
+                  <Icon className="size-3.5 shrink-0" />
+                  {/* Below 30rem the buttons are icon-only; title/aria-label
+                      keep them identifiable. */}
                   <span className="hidden xs:inline">{preset.label}</span>
                 </Button>
               );
@@ -153,6 +163,19 @@ export function FacebookHub({ canDisconnect = true }: FacebookHubProps) {
           </Button>
         </div>
       </div>
+
+      {/* Surfaced rather than hidden: without an isolation origin the framed
+          Meta scripts run on this origin and can read the CRM session. */}
+      {!originIsolated && (
+        <div className="flex items-start gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] leading-snug text-amber-700 dark:text-amber-400">
+          <ShieldAlert className="mt-px size-3.5 shrink-0" />
+          <span className="min-w-0">
+            Not origin-isolated. Set{" "}
+            <code className="font-mono">NEXT_PUBLIC_SANDBOX_ORIGIN</code> to a
+            separate host so framed content cannot read your session.
+          </span>
+        </div>
+      )}
 
       {/* Pure Full-Height Iframe Viewport */}
       <div className="relative flex-1 w-full bg-background overflow-hidden">

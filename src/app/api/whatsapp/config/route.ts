@@ -1,7 +1,8 @@
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { ACTIVE_PROJECT_COOKIE } from '@/lib/auth/project'
+import { ACTIVE_PROJECT_COOKIE, requireProjectRole } from '@/lib/auth/project'
+import { toErrorResponse } from '@/lib/auth/account'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import {
   registerPhoneNumber,
@@ -215,21 +216,15 @@ export async function POST(request: Request) {
   try {
     const supabase = await createClient()
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const scope = await resolveScope(supabase, user.id)
-    if (!scope) {
-      return NextResponse.json(
-        { error: 'Your profile is not linked to an account with a project.' },
-        { status: 403 },
-      )
+    // Channel credentials are project-admin territory: storing them
+    // grants send capability, and deleting them takes the whole project
+    // offline. Being a signed-in project member is not sufficient.
+    let scope: { accountId: string; projectId: string; userId: string }
+    try {
+      const ctx = await requireProjectRole('admin')
+      scope = { accountId: ctx.accountId, projectId: ctx.projectId, userId: ctx.userId }
+    } catch (err) {
+      return toErrorResponse(err)
     }
     // Both QR and Cloud API are always available as connection methods.
 
@@ -444,7 +439,7 @@ export async function POST(request: Request) {
         .insert({
           account_id: accountId,
           project_id: projectId,
-          user_id: user.id,
+          user_id: scope.userId,
           ...baseRow,
         })
 
@@ -498,21 +493,15 @@ export async function DELETE() {
   try {
     const supabase = await createClient()
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const scope = await resolveScope(supabase, user.id)
-    if (!scope) {
-      return NextResponse.json(
-        { error: 'Your profile is not linked to an account with a project.' },
-        { status: 403 },
-      )
+    // Channel credentials are project-admin territory: storing them
+    // grants send capability, and deleting them takes the whole project
+    // offline. Being a signed-in project member is not sufficient.
+    let scope: { accountId: string; projectId: string; userId: string }
+    try {
+      const ctx = await requireProjectRole('admin')
+      scope = { accountId: ctx.accountId, projectId: ctx.projectId, userId: ctx.userId }
+    } catch (err) {
+      return toErrorResponse(err)
     }
 
     const { error: deleteError } = await supabase

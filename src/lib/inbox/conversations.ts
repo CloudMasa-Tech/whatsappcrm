@@ -69,3 +69,30 @@ export function matchesContactFilters(
 
   return true;
 }
+
+/** Channels a conversation can belong to in the shared inbox. */
+export type InboxChannel = "whatsapp" | "instagram" | "email" | "facebook";
+
+/**
+ * The channel a conversation belongs to.
+ *
+ * Read from the conversation first, falling back to the contact — older
+ * rows predate `conversations.channel`, whose default is 'whatsapp'.
+ * Anything unrecognised is treated as WhatsApp so no thread can vanish
+ * from every filter.
+ */
+export function resolveChannel(
+  conversation: Pick<Conversation, "channel"> & {
+    contact?: { channel?: string | null } | null;
+  },
+): InboxChannel {
+  const channel = conversation.channel ?? conversation.contact?.channel ?? "whatsapp";
+
+  if (channel === "instagram" || conversation.contact?.channel === "instagram")
+    return "instagram";
+  if (channel === "email" || conversation.contact?.channel === "email") return "email";
+  if (channel === "facebook" || conversation.contact?.channel === "facebook")
+    return "facebook";
+  return "whatsapp";
+}
+

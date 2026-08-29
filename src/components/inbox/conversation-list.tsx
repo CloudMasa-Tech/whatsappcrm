@@ -6,11 +6,14 @@ import {
   CONVERSATION_SELECT,
   matchesContactFilters,
   normalizeConversations,
+  resolveChannel,
+  type InboxChannel,
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
-import { Search, ChevronDown, X, MessageCircle, Plus } from "lucide-react";
+import { Search, ChevronDown, X, MessageCircle, Plus, Mail } from "lucide-react";
 import { Instagram } from "@/components/icons/instagram";
+import { Facebook } from "@/components/icons/facebook";
 import { Button } from "@/components/ui/button";
 import { NewChatDialog } from "@/components/inbox/new-chat-dialog";
 import { formatDistanceToNow } from "date-fns";
@@ -47,7 +50,44 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
 };
 
 type InboxFilter = ConversationStatus | "all" | "unread";
-type ChannelFilter = "all" | "whatsapp" | "instagram";
+type ChannelFilter = "all" | InboxChannel;
+
+const CHANNEL_OPTIONS: {
+  value: Exclude<ChannelFilter, "all">;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  iconClass: string;
+  triggerClass: string;
+}[] = [
+  {
+    value: "whatsapp",
+    label: "WhatsApp",
+    icon: MessageCircle,
+    iconClass: "text-emerald-500",
+    triggerClass: "text-emerald-500",
+  },
+  {
+    value: "instagram",
+    label: "Instagram",
+    icon: Instagram,
+    iconClass: "text-pink-500",
+    triggerClass: "text-pink-500",
+  },
+  {
+    value: "email",
+    label: "Email",
+    icon: Mail,
+    iconClass: "text-indigo-500",
+    triggerClass: "text-indigo-500",
+  },
+  {
+    value: "facebook",
+    label: "Facebook",
+    icon: Facebook,
+    iconClass: "text-blue-600",
+    triggerClass: "text-blue-600",
+  },
+];
 
 export function ConversationList({
   activeConversationId,
@@ -172,14 +212,8 @@ export function ConversationList({
       result = result.filter((c) => c.status === filter);
     }
 
-    if (channelFilter === "instagram") {
-      result = result.filter(
-        (c) => c.channel === "instagram" || c.contact?.channel === "instagram",
-      );
-    } else if (channelFilter === "whatsapp") {
-      result = result.filter(
-        (c) => (c.channel ?? "whatsapp") === "whatsapp" && c.contact?.channel !== "instagram",
-      );
+    if (channelFilter !== "all") {
+      result = result.filter((c) => resolveChannel(c) === channelFilter);
     }
 
     // Contact-based filters (tags via OR logic, exact company match).
@@ -198,8 +232,15 @@ export function ConversationList({
         const name = c.contact?.name?.toLowerCase() ?? "";
         const phone = c.contact?.phone?.toLowerCase() ?? "";
         const igUser = c.contact?.instagram_username?.toLowerCase() ?? "";
+        const mail = c.contact?.email?.toLowerCase() ?? "";
         const lastMsg = c.last_message_text?.toLowerCase() ?? "";
-        return name.includes(q) || phone.includes(q) || igUser.includes(q) || lastMsg.includes(q);
+        return (
+          name.includes(q) ||
+          phone.includes(q) ||
+          igUser.includes(q) ||
+          mail.includes(q) ||
+          lastMsg.includes(q)
+        );
       });
     }
 
@@ -295,17 +336,19 @@ export function ConversationList({
           {/* Channel Filter */}
           <DropdownMenu>
             <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
-              {channelFilter === "all" ? (
-                "Channels"
-              ) : channelFilter === "instagram" ? (
-                <span className="flex items-center gap-1 text-pink-500 font-medium">
-                  <Instagram className="h-3 w-3" /> Instagram
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 text-emerald-500 font-medium">
-                  <MessageCircle className="h-3 w-3" /> WhatsApp
-                </span>
-              )}
+              {(() => {
+                if (channelFilter === "all") return "Channels";
+                const active = CHANNEL_OPTIONS.find((o) => o.value === channelFilter);
+                if (!active) return "Channels";
+                const Icon = active.icon;
+                return (
+                  <span
+                    className={cn("flex items-center gap-1 font-medium", active.triggerClass)}
+                  >
+                    <Icon className="h-3 w-3" /> {active.label}
+                  </span>
+                );
+              })()}
               <ChevronDown className="h-3 w-3" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="border-border bg-popover">
@@ -315,18 +358,21 @@ export function ConversationList({
               >
                 All Channels
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setChannelFilter("whatsapp")}
-                className={cn("text-sm flex items-center gap-2", channelFilter === "whatsapp" && "text-primary")}
-              >
-                <MessageCircle className="h-3.5 w-3.5 text-emerald-500" /> WhatsApp
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setChannelFilter("instagram")}
-                className={cn("text-sm flex items-center gap-2", channelFilter === "instagram" && "text-primary")}
-              >
-                <Instagram className="h-3.5 w-3.5 text-pink-500" /> Instagram
-              </DropdownMenuItem>
+              {CHANNEL_OPTIONS.map((option) => {
+                const Icon = option.icon;
+                return (
+                  <DropdownMenuItem
+                    key={option.value}
+                    onClick={() => setChannelFilter(option.value)}
+                    className={cn(
+                      "text-sm flex items-center gap-2",
+                      channelFilter === option.value && "text-primary",
+                    )}
+                  >
+                    <Icon className={cn("h-3.5 w-3.5", option.iconClass)} /> {option.label}
+                  </DropdownMenuItem>
+                );
+              })}
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -540,8 +586,8 @@ function ConversationItem({
       })
     : "";
 
-  const isInstagram =
-    conversation.channel === "instagram" || contact?.channel === "instagram";
+  const channel = resolveChannel(conversation);
+  const isInstagram = channel === "instagram";
 
   return (
     <button
@@ -562,12 +608,26 @@ function ConversationItem({
         ) : (
           initials
         )}
-        {isInstagram ? (
+        {channel === "instagram" ? (
           <div
             className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 text-white shadow-sm ring-1 ring-background"
             title="Instagram Direct"
           >
             <Instagram className="h-2.5 w-2.5" />
+          </div>
+        ) : channel === "email" ? (
+          <div
+            className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-500 text-white shadow-sm ring-1 ring-background"
+            title="Email"
+          >
+            <Mail className="h-2.5 w-2.5" />
+          </div>
+        ) : channel === "facebook" ? (
+          <div
+            className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm ring-1 ring-background"
+            title="Facebook"
+          >
+            <Facebook className="h-2.5 w-2.5" />
           </div>
         ) : (
           <div
