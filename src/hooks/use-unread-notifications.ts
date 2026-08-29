@@ -30,8 +30,9 @@ export function useUnreadNotifications(): number {
       setCount(unreadCount ?? 0);
     })();
 
+    const channelId = `notifications-unread-${Math.random().toString(36).slice(2, 9)}`;
     const channel = supabase
-      .channel("notifications-unread-count")
+      .channel(channelId)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "notifications" },

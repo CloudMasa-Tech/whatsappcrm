@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
 import {
   CONVERSATION_SELECT,
   matchesContactFilters,
@@ -49,7 +50,7 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
   closed: "bg-muted-foreground",
 };
 
-type InboxFilter = ConversationStatus | "all" | "unread";
+type InboxFilter = ConversationStatus | "all" | "unread" | "mine" | "unassigned";
 type ChannelFilter = "all" | InboxChannel;
 
 const CHANNEL_OPTIONS: {
@@ -97,14 +98,29 @@ export function ConversationList({
   resyncToken = 0,
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
+  const { user, canManageMembers, isSuperAdmin } = useAuth();
+  const isProjectAdmin = canManageMembers || isSuperAdmin;
   
-  const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
-    { label: t("filterAll"), value: "all" },
-    { label: t("filterUnread"), value: "unread" },
-    { label: t("filterOpen"), value: "open" },
-    { label: t("filterPending"), value: "pending" },
-    { label: t("filterClosed"), value: "closed" },
-  ], [t]);
+  const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => {
+    if (isProjectAdmin) {
+      return [
+        { label: t("filterAll"), value: "all" },
+        { label: "Assigned to me", value: "mine" },
+        { label: "Unassigned", value: "unassigned" },
+        { label: t("filterUnread"), value: "unread" },
+        { label: t("filterOpen"), value: "open" },
+        { label: t("filterPending"), value: "pending" },
+        { label: t("filterClosed"), value: "closed" },
+      ];
+    }
+    return [
+      { label: "All Assigned", value: "all" },
+      { label: t("filterUnread"), value: "unread" },
+      { label: t("filterOpen"), value: "open" },
+      { label: t("filterPending"), value: "pending" },
+      { label: t("filterClosed"), value: "closed" },
+    ];
+  }, [t, isProjectAdmin]);
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
@@ -140,10 +156,17 @@ export function ConversationList({
     let cancelled = false;
 
     (async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("conversations")
         .select(CONVERSATION_SELECT)
         .order("last_message_at", { ascending: false });
+
+      // If non-admin agent, query only assigned conversations
+      if (!isProjectAdmin && user) {
+        query = query.eq("assigned_agent_id", user.id);
+      }
+
+      const { data, error } = await query;
 
       if (cancelled) return;
 
@@ -169,7 +192,7 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [resyncToken]);
+  }, [resyncToken, user, isProjectAdmin]);
 
   // Tag definitions for the filter picker — loaded once so labels/colours
   // stay stable regardless of which conversations happen to be loaded.
@@ -206,9 +229,24 @@ export function ConversationList({
   const filtered = useMemo(() => {
     let result = conversations;
 
+    // Strict Agent Isolation: Agents only ever see conversations assigned to them.
+    if (!isProjectAdmin && user) {
+      result = result.filter((c) => c.assigned_agent_id === user.id);
+    } else if (isProjectAdmin) {
+      if (filter === "mine" && user) {
+        result = result.filter((c) => c.assigned_agent_id === user.id);
+      } else if (filter === "unassigned") {
+        result = result.filter((c) => !c.assigned_agent_id);
+      }
+    }
+
     if (filter === "unread") {
       result = result.filter((c) => c.unread_count > 0);
-    } else if (filter !== "all") {
+    } else if (
+      filter !== "all" &&
+      filter !== "mine" &&
+      filter !== "unassigned"
+    ) {
       result = result.filter((c) => c.status === filter);
     }
 
@@ -245,7 +283,16 @@ export function ConversationList({
     }
 
     return result;
-  }, [conversations, filter, channelFilter, search, selectedTagIds, selectedCompany]);
+  }, [
+    conversations,
+    filter,
+    channelFilter,
+    search,
+    selectedTagIds,
+    selectedCompany,
+    isProjectAdmin,
+    user,
+  ]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -516,7 +563,14 @@ export function ConversationList({
           </div>
         ) : filtered.length === 0 ? (
           <div className="px-4 py-12 text-center">
-            <p className="text-sm text-muted-foreground">{t("noConversations")}</p>
+            <p className="text-sm font-medium text-foreground">
+              {!isProjectAdmin ? "No assigned conversations" : t("noConversations")}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {!isProjectAdmin
+                ? "Conversations assigned to you by administrators will appear here."
+                : "No conversations match your current filters."}
+            </p>
           </div>
         ) : (
           <div className="flex flex-col">

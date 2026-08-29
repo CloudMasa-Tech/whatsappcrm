@@ -122,7 +122,7 @@ export async function sendEmail(
       replyTo: options.replyTo || config.replyTo,
       headers: {
         'X-Entity-Ref-ID': `${Date.now()}`,
-        'X-Mailer': 'RegiBIZ CloudMaSa CRM',
+        'X-Mailer': 'CloudMaSa WhatsApp CRM',
       },
     });
 

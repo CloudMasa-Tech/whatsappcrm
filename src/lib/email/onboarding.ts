@@ -46,6 +46,11 @@ export async function sendOnboardingWelcomeEmail(
               <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 580px; background-color: #1e293b; border-radius: 12px; border: 1px solid #334155; padding: 32px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);">
                 <tr>
                   <td>
+                    <!-- Brand Logo -->
+                    <div style="margin-bottom: 24px;">
+                      <img src="${baseUrl}/logo.png" alt="CloudMaSa WACRM" width="240" style="display: block; max-width: 240px; height: auto;" />
+                    </div>
+
                     <!-- Role Badge -->
                     <div style="display: inline-block; background-color: #2563eb; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 20px;">
                       ${roleTitle}

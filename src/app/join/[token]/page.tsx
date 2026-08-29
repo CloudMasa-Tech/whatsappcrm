@@ -23,6 +23,7 @@
 // ============================================================
 
 import { useCallback, useEffect, useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
@@ -287,8 +288,15 @@ export default function JoinPage() {
   // ----- Peek OK -----
   const inviteHeader = (
     <CardHeader className="items-center text-center">
-      <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-        <UsersRound className="h-6 w-6 text-primary" />
+      <div className="mb-4 flex items-center justify-center py-2">
+        <Image
+          src="/logo.png"
+          alt="MaSa CRM"
+          width={300}
+          height={84}
+          className="h-16 w-auto object-contain"
+          priority
+        />
       </div>
       <CardTitle className="text-xl text-foreground">
         You&apos;re invited to{' '}

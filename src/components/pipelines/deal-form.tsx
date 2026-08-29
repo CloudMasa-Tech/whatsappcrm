@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { CURRENCIES } from "@/lib/currency";
+import { fetchAccountMembers } from "@/lib/account/members";
 import type {
   Contact,
   Conversation,
@@ -112,18 +113,36 @@ export function DealForm({
     if (!open) return;
     let cancelled = false;
     (async () => {
-      const [c, p] = await Promise.all([
-        supabase.from("contacts").select("*").order("name"),
-        supabase.from("profiles").select("*").order("full_name"),
+      let contactsQuery = supabase.from("contacts").select("*").order("name");
+      if (activeProjectId) {
+        contactsQuery = contactsQuery.eq("project_id", activeProjectId);
+      }
+
+      const [c, teamMembers] = await Promise.all([
+        contactsQuery,
+        fetchAccountMembers(activeProjectId),
       ]);
       if (cancelled) return;
       setContacts((c.data ?? []) as Contact[]);
-      setProfiles((p.data ?? []) as Profile[]);
+
+      if (teamMembers.length > 0) {
+        const teamUserIds = teamMembers.map((m) => m.user_id);
+        const { data: profData } = await supabase
+          .from("profiles")
+          .select("*")
+          .in("user_id", teamUserIds)
+          .neq("platform_role", "super_admin")
+          .order("full_name");
+        if (cancelled) return;
+        setProfiles((profData ?? []) as Profile[]);
+      } else {
+        setProfiles([]);
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [open, supabase]);
+  }, [open, supabase, activeProjectId]);
 
   // Fetch linked conversation for the selected contact (newest open one).
   // Clearing on no-selection is sync with prop state; the populated

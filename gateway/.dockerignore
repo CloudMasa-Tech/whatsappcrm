@@ -1,5 +1,5 @@
 node_modules
-.next
+dist
 .git
 npm-debug.log
 .env
@@ -9,6 +9,3 @@ npm-debug.log
 *.tar
 *.tar.gz
 *.gz
-scratch
-gateway/dist
-gateway/node_modules

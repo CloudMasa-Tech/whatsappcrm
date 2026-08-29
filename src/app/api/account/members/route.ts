@@ -9,6 +9,8 @@
 //   - Agents & Project Admins: strictly scoped to ONLY members
 //     who belong to their assigned project(s). They never see
 //     unrelated users from other projects.
+//   - Super Admin (platform_role = 'super_admin') is excluded from
+//     workspace project member lists by default (unless include_super_admin=true).
 //   - Every member is enriched with project details (project_name,
 //     project_id, and projects list).
 // ============================================================
@@ -26,6 +28,7 @@ interface ProfileRow {
   email: string | null;
   avatar_url: string | null;
   account_role: string;
+  platform_role?: string | null;
   created_at: string;
 }
 
@@ -34,6 +37,7 @@ export async function GET(request: Request) {
     const ctx = await getCurrentAccount();
     const url = new URL(request.url);
     const queryProjectId = url.searchParams.get("project_id");
+    const includeSuperAdmin = url.searchParams.get("include_super_admin") === "true";
 
     const isSuper = ctx.platformRole === "super_admin";
 
@@ -47,7 +51,18 @@ export async function GET(request: Request) {
           .from("project_members")
           .select("user_id")
           .eq("project_id", queryProjectId);
-        targetUserIds = (pmData ?? []).map((p) => p.user_id).filter(Boolean);
+
+        const { data: onbData } = await supabaseAdmin()
+          .from("onboarded_customers")
+          .select("user_id")
+          .eq("project_id", queryProjectId);
+
+        targetUserIds = Array.from(
+          new Set([
+            ...(pmData ?? []).map((p) => p.user_id),
+            ...(onbData ?? []).map((o) => o.user_id),
+          ].filter(Boolean) as string[])
+        );
         allowedProjectIds = [queryProjectId];
       }
     } else {
@@ -110,7 +125,7 @@ export async function GET(request: Request) {
     // Query profiles
     let profilesQuery = supabaseAdmin()
       .from("profiles")
-      .select("user_id, full_name, email, avatar_url, account_role, created_at")
+      .select("user_id, full_name, email, avatar_url, account_role, platform_role, created_at")
       .eq("account_id", ctx.accountId)
       .order("created_at", { ascending: true });
 
@@ -119,6 +134,11 @@ export async function GET(request: Request) {
         return NextResponse.json({ members: [] });
       }
       profilesQuery = profilesQuery.in("user_id", targetUserIds);
+    }
+
+    // Exclude platform super admin from regular workspace project lists unless requested
+    if (!includeSuperAdmin) {
+      profilesQuery = profilesQuery.neq("platform_role", "super_admin");
     }
 
     const { data, error } = await profilesQuery;

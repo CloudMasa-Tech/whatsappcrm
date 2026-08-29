@@ -1,16 +1,27 @@
 import type { AccountMember } from '@/types';
 
 /**
- * Fetch the current account's members from the API (which applies the
- * email-visibility rules — agents/viewers don't see emails). Best-effort:
- * returns `[]` on any error or on an older deployment without the
- * endpoint, so callers can fall back to a queue-only / raw-id picker.
+ * Fetch the current account's members from the API (which applies
+ * project scoping and role visibility rules).
+ *
+ * If projectId is provided, only members of that specific project are returned.
+ * Super Admin (platform_role = 'super_admin') is automatically excluded.
  *
  * Client-side only (uses `fetch` against the relative API route).
  */
-export async function fetchAccountMembers(): Promise<AccountMember[]> {
+export async function fetchAccountMembers(
+  projectId?: string | null,
+  options?: { includeSuperAdmin?: boolean }
+): Promise<AccountMember[]> {
   try {
-    const res = await fetch('/api/account/members', { cache: 'no-store' });
+    const params = new URLSearchParams();
+    if (projectId) params.set('project_id', projectId);
+    if (options?.includeSuperAdmin) params.set('include_super_admin', 'true');
+
+    const qs = params.toString();
+    const url = `/api/account/members${qs ? `?${qs}` : ''}`;
+
+    const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) return [];
     const json = (await res.json()) as { members?: AccountMember[] };
     return json.members ?? [];

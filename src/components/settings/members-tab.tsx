@@ -119,7 +119,7 @@ function fmtExpiresIn(iso: string, t: (key: string, values?: Record<string, stri
 export function MembersTab() {
   const t = useTranslations('Settings.members');
   const tRoles = useTranslations('Settings.roles');
-  const { user, canManageMembers, isSuperAdmin } = useAuth();
+  const { user, canManageMembers, isSuperAdmin, activeProjectId } = useAuth();
   const { getPresence, getRow, now } = usePresence();
 
   const [members, setMembers] = useState<Member[]>([]);
@@ -134,8 +134,12 @@ export function MembersTab() {
 
   const loadEverything = useCallback(async () => {
     try {
+      const url = activeProjectId
+        ? `/api/account/members?project_id=${encodeURIComponent(activeProjectId)}`
+        : '/api/account/members';
+
       const [mres, ires] = await Promise.all([
-        fetch('/api/account/members', { cache: 'no-store' }),
+        fetch(url, { cache: 'no-store' }),
         isSuperAdmin
           ? fetch('/api/account/invitations', { cache: 'no-store' })
           : Promise.resolve(null),
@@ -154,7 +158,7 @@ export function MembersTab() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeProjectId, isSuperAdmin]);
 
   useEffect(() => {
     void loadEverything();

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -7,6 +8,7 @@ import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { PresenceHeartbeat } from "@/components/presence/presence-heartbeat";
+import { NotificationListener } from "@/components/notifications/notification-listener";
 import {
   Avatar,
   AvatarFallback,
@@ -79,6 +81,7 @@ function AdminShellInner({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
+      <NotificationListener />
       <PresenceHeartbeat />
 
       {/* Mobile backdrop */}
@@ -104,13 +107,18 @@ function AdminShellInner({ children }: { children: React.ReactNode }) {
         )}
       >
         {/* Logo */}
-        <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
-          <Link href="/admin" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <Shield className="h-4 w-4" />
-            </div>
-            <span className="text-sm font-semibold text-foreground">
-              {t("title")}
+        <div className="flex h-20 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
+          <Link href="/admin" className="flex items-center gap-2 py-1.5">
+            <Image
+              src="/logo.png"
+              alt="MaSa CRM Admin"
+              width={190}
+              height={52}
+              className="h-11 w-auto max-w-[165px] object-contain"
+              priority
+            />
+            <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-primary">
+              ADMIN
             </span>
           </Link>
           <button

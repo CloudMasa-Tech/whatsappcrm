@@ -49,7 +49,7 @@ const KEY_PLACEHOLDER: Record<AiProvider, string> = {
 };
 
 export function AiConfig() {
-  const { accountId, accountRole, profileLoading } = useAuth();
+  const { accountId, activeProjectId, accountRole, profileLoading } = useAuth();
   const canEdit = accountRole ? canEditSettings(accountRole) : false;
   const t = useTranslations('Settings.aiConfig');
 
@@ -121,8 +121,8 @@ export function AiConfig() {
     // Members populate the handoff-target picker. Best-effort — on an
     // older deployment without the endpoint the picker just shows the
     // queue option.
-    void fetchAccountMembers().then(setMembers);
-  }, [accountId, fetchConfig]);
+    void fetchAccountMembers(activeProjectId).then(setMembers);
+  }, [accountId, activeProjectId, fetchConfig]);
 
   // Swap the model default when the provider changes, unless the user
   // typed a custom model.

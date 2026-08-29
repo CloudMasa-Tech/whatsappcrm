@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
 import type { Conversation } from "@/types";
 
 /**
@@ -9,26 +10,31 @@ import type { Conversation } from "@/types";
  * the current user. Used by the sidebar to surface a green dot on the
  * Inbox nav entry when the user is elsewhere in the app.
  *
- * Lives on its own realtime channel (distinct from the inbox page's
- * "inbox-realtime") so both can coexist without sharing state.
+ * For Administrators (Admin / Owner / Super Admin): counts all unread conversations in the project.
+ * For Agents: counts ONLY unread conversations assigned to that specific agent.
  */
 export function useTotalUnread(): number {
+  const { user, canManageMembers, isSuperAdmin } = useAuth();
+  const isProjectAdmin = canManageMembers || isSuperAdmin;
   const [total, setTotal] = useState(0);
 
-  // Keep a live local mirror of {id: unread_count} so INSERT/UPDATE/DELETE
-  // events can adjust the total in O(1) without refetching.
   const countsRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
+    if (!user) return;
     const supabase = createClient();
     let cancelled = false;
 
-    // Initial load. RLS scopes this to the signed-in user automatically —
-    // no explicit user_id filter needed here.
     (async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("conversations")
-        .select("id, unread_count");
+        .select("id, unread_count, assigned_agent_id");
+
+      if (!isProjectAdmin) {
+        query = query.eq("assigned_agent_id", user.id);
+      }
+
+      const { data, error } = await query;
       if (cancelled || error || !data) return;
 
       const map = new Map<string, number>();
@@ -42,8 +48,9 @@ export function useTotalUnread(): number {
       setTotal(sum);
     })();
 
+    const channelId = `total-unread-${Math.random().toString(36).slice(2, 9)}`;
     const channel = supabase
-      .channel("total-unread-realtime")
+      .channel(channelId)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "conversations" },
@@ -54,9 +61,13 @@ export function useTotalUnread(): number {
             if (oldRow.id) map.delete(oldRow.id);
           } else {
             const row = payload.new as Conversation;
-            map.set(row.id, row.unread_count ?? 0);
+            // If the user is an agent, only track if assigned to them
+            if (!isProjectAdmin && row.assigned_agent_id !== user.id) {
+              map.delete(row.id);
+            } else {
+              map.set(row.id, row.unread_count ?? 0);
+            }
           }
-          // Recompute — cheap, conversations per user stay small.
           let sum = 0;
           for (const n of map.values()) if (n > 0) sum += 1;
           setTotal(sum);
@@ -68,7 +79,7 @@ export function useTotalUnread(): number {
       cancelled = true;
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [user, isProjectAdmin]);
 
   return total;
 }

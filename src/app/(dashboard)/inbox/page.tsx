@@ -3,6 +3,7 @@
 import { Suspense, useState, useCallback, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
 import {
   CONVERSATION_SELECT,
   normalizeConversation,
@@ -35,6 +36,8 @@ export default function InboxPage() {
 function InboxPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { user, canManageMembers, isSuperAdmin } = useAuth();
+  const isProjectAdmin = canManageMembers || isSuperAdmin;
   /**
    * `?c=<id>` deep-link support. Used when landing here from the
    * dashboard's recent-conversations list so the right thread opens
@@ -152,6 +155,12 @@ function InboxPageInner() {
       }
       if (!data) return;
       const fetched = normalizeConversation(data);
+
+      // If user is an agent, ignore conversations not assigned to them
+      if (!isProjectAdmin && user && fetched.assigned_agent_id !== user.id) {
+        return;
+      }
+
       setConversations((prev) => {
         const existing = prev.find((c) => c.id === fetched.id);
         if (existing) {
@@ -171,7 +180,7 @@ function InboxPageInner() {
     } finally {
       hydratingConvIdsRef.current.delete(convId);
     }
-  }, []);
+  }, [isProjectAdmin, user]);
 
   // Handle realtime message events
   const handleMessageEvent = useCallback(
@@ -246,6 +255,11 @@ function InboxPageInner() {
       const conv = event.new;
 
       if (event.eventType === "INSERT") {
+        // If user is an agent, only add if assigned to them
+        if (!isProjectAdmin && user && conv.assigned_agent_id !== user.id) {
+          return;
+        }
+
         // Prepend immediately for snappy UX so the new conv shows in the
         // list right away, then hydrate to fill in the `contact` join
         // (realtime payloads never include joins). Skip both if we
@@ -261,6 +275,18 @@ function InboxPageInner() {
       }
 
       if (event.eventType === "UPDATE") {
+        // If an agent is viewing, and this conv is not / no longer assigned to them:
+        if (!isProjectAdmin && user && conv.assigned_agent_id !== user.id) {
+          setConversations((prev) => prev.filter((c) => c.id !== conv.id));
+          if (activeConversation?.id === conv.id) {
+            setActiveConversation(null);
+            setActiveContact(null);
+            setMessages([]);
+            router.replace("/inbox", { scroll: false });
+          }
+          return;
+        }
+
         if (knownConvIdsRef.current.has(conv.id)) {
           // If this UPDATE is for the conv the user is currently viewing,
           // suppress the incoming unread_count — the user is reading it
@@ -295,7 +321,7 @@ function InboxPageInner() {
         }
       }
     },
-    [activeConversation, hydrateConversation]
+    [activeConversation, hydrateConversation, isProjectAdmin, user, router]
   );
 
   // Subscribe to realtime. The `isConnected` flag below feeds the
