@@ -31,6 +31,13 @@ export async function GET(request: Request) {
     const { data, error } = await query;
 
     if (error) {
+      if (
+        error.code === 'PGRST205' ||
+        error.message?.includes('Could not find the table') ||
+        error.message?.includes('does not exist')
+      ) {
+        return NextResponse.json({ campaigns: [], table_missing: true });
+      }
       console.error('[GET /api/email/campaigns] error:', error);
       return NextResponse.json({ error: 'Failed to load campaigns' }, { status: 500 });
     }
