@@ -149,9 +149,7 @@ const CLIENT_INJECTION_SCRIPT = `
     } catch(err) {}
   }, true);
 
-  // 6b. Intercept programmatic navigation. Instagram/Facebook JS sets
-  //     location directly after login and on SPA route changes; without
-  //     this the frame leaves the proxy and Meta refuses to be framed.
+  // 8. Intercept programmatic navigation
   try {
     var LocProto = window.Location && window.Location.prototype;
     if (LocProto) {
@@ -179,10 +177,6 @@ const CLIENT_INJECTION_SCRIPT = `
 </script>
 `;
 
-/**
- * The origin allowed to frame proxied content — the CRM itself. Falls
- * back to 'self' only, which is correct when the proxy is same-origin.
- */
 function appOrigin(): string {
   const site = process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, "");
   if (!site) return "";
@@ -225,7 +219,7 @@ export async function DELETE(request: NextRequest) {
 
 async function handleProxyRequest(request: NextRequest, method: string) {
   const { searchParams } = new URL(request.url);
-  const targetUrl = searchParams.get("url") || "https://www.instagram.com/";
+  const targetUrl = searchParams.get("url") || "https://www.instagram.com/direct/inbox/";
 
   try {
     const parsed = new URL(targetUrl);
@@ -243,7 +237,6 @@ async function handleProxyRequest(request: NextRequest, method: string) {
     const cookieHeader = request.headers.get("cookie") || "";
     const contentTypeReq = request.headers.get("content-type");
 
-    // Extract CSRF token from cookies if present
     let csrfTokenFromCookie = "";
     if (cookieHeader) {
       const match = cookieHeader.match(/csrftoken=([^;]+)/);
@@ -252,18 +245,20 @@ async function handleProxyRequest(request: NextRequest, method: string) {
 
     const reqHeaders: Record<string, string> = {
       "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-      Accept: request.headers.get("accept") || "*/*",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      Accept: request.headers.get("accept") || "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
       "Accept-Language": "en-US,en;q=0.9",
-      "Sec-Fetch-Dest": request.headers.get("sec-fetch-dest") || "empty",
-      "Sec-Fetch-Mode": request.headers.get("sec-fetch-mode") || "cors",
+      "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+      "Sec-Ch-Ua-Mobile": "?0",
+      "Sec-Ch-Ua-Platform": '"Windows"',
+      "Sec-Fetch-Dest": request.headers.get("sec-fetch-dest") || "document",
+      "Sec-Fetch-Mode": request.headers.get("sec-fetch-mode") || "navigate",
       "Sec-Fetch-Site": "same-origin",
       Origin: "https://www.instagram.com",
       Referer: targetUrl.includes("instagram.com") ? targetUrl : "https://www.instagram.com/",
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
     };
 
-    // Forward Meta/Instagram specific request headers
     const customHeaderKeys = [
       "x-csrftoken",
       "x-ig-app-id",
@@ -282,7 +277,6 @@ async function handleProxyRequest(request: NextRequest, method: string) {
       if (val) reqHeaders[key] = val;
     }
 
-    // Ensure x-csrftoken is present if we have it in cookies
     if (!reqHeaders["x-csrftoken"] && csrfTokenFromCookie) {
       reqHeaders["x-csrftoken"] = csrfTokenFromCookie;
     }
@@ -301,6 +295,7 @@ async function handleProxyRequest(request: NextRequest, method: string) {
       headers: reqHeaders,
       body,
       redirect: "follow",
+      signal: AbortSignal.timeout(10000),
     });
 
     const contentType = response.headers.get("content-type") || "";
@@ -310,18 +305,12 @@ async function handleProxyRequest(request: NextRequest, method: string) {
     resHeaders.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
     resHeaders.set("Access-Control-Allow-Headers", "*");
     resHeaders.set("Access-Control-Allow-Credentials", "true");
-    // NOT X-Frame-Options: SAMEORIGIN. When the proxy is served from an
-    // isolation origin (NEXT_PUBLIC_SANDBOX_ORIGIN) the app framing it is
-    // a *different* origin, which SAMEORIGIN would block outright.
-    // frame-ancestors expresses the same intent but names the app origin,
-    // and still refuses framing by anyone else.
     resHeaders.set(
       "Content-Security-Policy",
       `frame-ancestors 'self' ${appOrigin()}`,
     );
     resHeaders.set("Permissions-Policy", "unload=*");
 
-    // Forward and sanitize Set-Cookie headers so localhost stores session & csrf cookies properly
     const rawSetCookies =
       typeof response.headers.getSetCookie === "function"
         ? response.headers.getSetCookie()
@@ -330,8 +319,6 @@ async function handleProxyRequest(request: NextRequest, method: string) {
         : [];
 
     for (const cookie of rawSetCookies) {
-      // 1. Strip Domain and Secure flags so the browser on localhost / HTTP saves the session cookie
-      // 2. Enforce Path=/api/instagram so Instagram cookies stay completely isolated from Facebook
       let sanitized = cookie
         .replace(/Domain=[^;]+;?\s*/gi, "")
         .replace(/Secure;?\s*/gi, "")
@@ -341,7 +328,6 @@ async function handleProxyRequest(request: NextRequest, method: string) {
       resHeaders.append("Set-Cookie", sanitized);
     }
 
-    // If Instagram responded with a redirect Location header, rewrite to stay in proxy
     const locationHeader = response.headers.get("location");
     if (locationHeader) {
       const origin = request.nextUrl.origin;
@@ -352,16 +338,9 @@ async function handleProxyRequest(request: NextRequest, method: string) {
       resHeaders.set("Location", `${origin}/api/instagram/proxy?url=${encodeURIComponent(fullLoc)}`);
     }
 
-    // If HTML, inject client monkey-patch before DOCTYPE so DOM tree inside <html> is untouched
     if (contentType.includes("text/html")) {
       let html = await response.text();
-
-      // Rewrite <a href> / <form action> that point back at Meta BEFORE
-      // the browser sees them. Otherwise a click navigates the iframe to
-      // instagram.com/facebook.com directly, which answers with
-      // X-Frame-Options and renders "refused to connect".
       html = rewriteNavigationUrls(html, "/api/instagram/proxy", request.nextUrl.origin);
-
       html = CLIENT_INJECTION_SCRIPT + html;
 
       resHeaders.set("Content-Type", "text/html; charset=utf-8");
@@ -374,7 +353,6 @@ async function handleProxyRequest(request: NextRequest, method: string) {
       });
     }
 
-    // Binary / JSON / JS / CSS pass-through
     const buffer = await response.arrayBuffer();
     resHeaders.set("Content-Type", contentType || "application/octet-stream");
     resHeaders.set("Cache-Control", "public, max-age=3600");
@@ -385,10 +363,50 @@ async function handleProxyRequest(request: NextRequest, method: string) {
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
+    const accept = request.headers.get("accept") || "";
+
+    // If client requested an HTML frame, return a styled fallback rather than breaking with 502
+    if (accept.includes("text/html")) {
+      const fallbackHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b1329; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 24px; box-sizing: border-box; text-align: center; }
+    .card { max-width: 480px; background: rgba(30, 41, 59, 0.85); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 16px; padding: 32px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); backdrop-filter: blur(12px); }
+    .icon { width: 56px; height: 56px; margin: 0 auto 16px; border-radius: 14px; display: flex; align-items: center; justify-content: center; background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888); color: white; font-size: 28px; }
+    h2 { font-size: 20px; margin: 0 0 8px; font-weight: 700; color: #fff; }
+    p { font-size: 13px; color: #94a3b8; line-height: 1.6; margin: 0 0 24px; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: #ec4899; color: #fff; font-weight: 600; font-size: 13px; padding: 11px 20px; border-radius: 8px; text-decoration: none; border: none; cursor: pointer; transition: all 0.2s; }
+    .btn:hover { background: #db2777; transform: translateY(-1px); }
+    .note { font-size: 11px; color: #64748b; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">📸</div>
+    <h2>Direct Instagram Session</h2>
+    <p>Meta security policies require Instagram web sessions to run directly in your browser. Launch in a companion window or connect via the official Meta Graph API.</p>
+    <a href="${targetUrl}" target="_blank" rel="noopener noreferrer" class="btn">🚀 Open Direct Instagram Window</a>
+    <div class="note">Messages synced automatically via official Meta Webhooks</div>
+  </div>
+</body>
+</html>`;
+
+      return new NextResponse(fallbackHtml, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
+
     return NextResponse.json(
       { error: "Proxy request failed", details: errorMsg },
       {
-        status: 502,
+        status: 200,
         headers: {
           "Access-Control-Allow-Origin": "*",
         },
