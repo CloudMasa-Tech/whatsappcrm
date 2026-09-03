@@ -25,7 +25,8 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const { conversation_id, agent_id } = body;
+    const conversation_id = (body.conversation_id || body.conversationId || "") as string;
+    const agent_id = body.agent_id !== undefined ? body.agent_id : body.agentId;
 
     if (!conversation_id) {
       return NextResponse.json(
@@ -41,7 +42,7 @@ export async function POST(request: Request) {
       .from("conversations")
       .select("id, account_id, project_id, contact_id, assigned_agent_id")
       .eq("id", conversation_id)
-      .single();
+      .maybeSingle();
 
     if (convErr || !conv) {
       return NextResponse.json(

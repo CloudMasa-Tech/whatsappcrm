@@ -42,6 +42,55 @@ function cookieString(cookies: Record<string, string>): string {
 }
 
 /**
+ * Connect using an active Instagram Session ID cookie.
+ * Bypasses bot captchas and password challenge blocks.
+ */
+export async function connectWithSessionId(
+  sessionIdInput: string,
+  usernameInput?: string,
+): Promise<InstagramDirectLoginResult & { sessionData?: string }> {
+  const sessionId = sessionIdInput.trim().replace(/^sessionid=/i, "");
+  if (!sessionId) {
+    throw new Error("Instagram Session ID is required.");
+  }
+
+  const cleanUsername = (usernameInput || "")
+    .trim()
+    .replace(/^https?:\/\/(www\.)?instagram\.com\//i, "")
+    .replace(/\/.*$/, "")
+    .replace(/^@+/, "");
+
+  const cookies: Record<string, string> = {
+    sessionid: sessionId,
+    csrftoken: "csrftoken_active",
+  };
+
+  const profile = await fetchDirectProfile(
+    {
+      sessionid: sessionId,
+      cookies,
+      username: cleanUsername,
+    },
+    cleanUsername,
+  );
+
+  const resolvedUsername = profile.username || cleanUsername || "instagram_user";
+  const sessionObj: SessionPayload = {
+    username: resolvedUsername,
+    sessionid: sessionId,
+    cookies,
+  };
+
+  return {
+    status: "connected",
+    username: resolvedUsername,
+    name: profile.name || resolvedUsername,
+    profilePictureUrl: profile.profilePictureUrl || "",
+    sessionData: JSON.stringify(sessionObj),
+  };
+}
+
+/**
  * Direct login with Instagram Username and Password.
  * Directly authenticates and connects the account without 2-factor blocking.
  */
@@ -49,115 +98,230 @@ export async function loginWithCredentials(
   usernameInput: string,
   passwordInput: string,
 ): Promise<InstagramDirectLoginResult & { sessionData?: string }> {
-  const username = usernameInput.trim().replace(/^@/, "");
+  let username = usernameInput
+    .trim()
+    .replace(/^https?:\/\/(www\.)?instagram\.com\//i, "")
+    .replace(/\/.*$/, "")
+    .replace(/^@+/, "");
+
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(username)) {
+    throw new Error(
+      "Please enter your Instagram @handle (e.g. cloudmasa_innovation) instead of your email address."
+    );
+  }
+
   const password = passwordInput;
 
+  // 1. Initial request to obtain cookies & CSRF token
+  let sessionCookies: Record<string, string> = {};
+  let csrfToken = "csrftoken_default";
+
   try {
-    // 1. Initial attempt to fetch cookies / CSRF token
-    let sessionCookies: Record<string, string> = {};
-    let csrfToken = "csrftoken_default";
-
-    try {
-      const initRes = await fetch("https://www.instagram.com/accounts/login/", {
-        headers: {
-          "User-Agent": DEFAULT_USER_AGENT,
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        },
-      });
-      sessionCookies = parseCookies(initRes.headers.getSetCookie?.() || initRes.headers.get("set-cookie"));
-      if (sessionCookies.csrftoken) {
-        csrfToken = sessionCookies.csrftoken;
-      }
-    } catch {
-      // Fallback
+    const initRes = await fetch("https://www.instagram.com/accounts/login/", {
+      headers: {
+        "User-Agent": DEFAULT_USER_AGENT,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+    sessionCookies = parseCookies(initRes.headers.getSetCookie?.() || initRes.headers.get("set-cookie"));
+    if (sessionCookies.csrftoken) {
+      csrfToken = sessionCookies.csrftoken;
     }
-
-    // 2. Fetch profile info
-    const profile = await fetchDirectProfile(
-      { sessionid: "", ds_user_id: "", csrftoken: csrfToken, cookies: sessionCookies, username },
-      username,
-    );
-
-    const sessionObj: SessionPayload = {
-      username,
-      password,
-      csrftoken: csrfToken,
-      cookies: sessionCookies,
-      ds_user_id: username,
-    };
-
-    return {
-      status: "connected",
-      username: profile?.username || username,
-      name: profile?.name || username,
-      profilePictureUrl: profile?.profilePictureUrl || "",
-      sessionData: JSON.stringify(sessionObj),
-    };
-  } catch (err: unknown) {
-    console.error("[Instagram direct-client] login failed:", err);
-    return {
-      status: "connected",
-      username,
-      name: username,
-      profilePictureUrl: "",
-      sessionData: JSON.stringify({ username, password }),
-    };
+  } catch (err) {
+    console.warn("[Instagram direct-client] Init cookie fetch failed:", err);
   }
+
+  // 2. Execute Real Authentication with Instagram Login AJAX Endpoint
+  const encPassword = `#PWD_INSTAGRAM_BROWSER:0:${Math.floor(Date.now() / 1000)}:${password}`;
+  const loginBody = new URLSearchParams({
+    enc_password: encPassword,
+    username: username,
+    queryParams: "{}",
+    optIntoOneTap: "false",
+    trustedDeviceRecords: "{}",
+  });
+
+  const loginRes = await fetch("https://www.instagram.com/api/v1/web/accounts/login/ajax/", {
+    method: "POST",
+    headers: {
+      "User-Agent": DEFAULT_USER_AGENT,
+      "X-IG-App-ID": "936619743392459",
+      "X-CSRFToken": csrfToken,
+      "X-Requested-With": "XMLHttpRequest",
+      "Content-Type": "application/x-www-form-urlencoded",
+      Referer: "https://www.instagram.com/accounts/login/",
+      Cookie: cookieString(sessionCookies),
+    },
+    body: loginBody.toString(),
+  });
+
+  const loginCookies = parseCookies(loginRes.headers.getSetCookie?.() || loginRes.headers.get("set-cookie"));
+  sessionCookies = { ...sessionCookies, ...loginCookies };
+
+  const loginText = await loginRes.text();
+  let loginData: Record<string, any> | null = null;
+  try {
+    loginData = JSON.parse(loginText);
+  } catch {
+    console.warn("[Instagram direct-client] Non-JSON response:", loginText.slice(0, 300));
+  }
+
+  console.log("[Instagram direct-client] Login response status:", loginRes.status, "body:", loginData);
+
+  // Check login response
+  if (!loginRes.ok || !loginData || !loginData.authenticated) {
+    if (loginData?.two_factor_required) {
+      throw new Error(
+        "Two-factor authentication (2FA) is enabled on this account. Please connect via Meta Cloud API or log in with Web Companion Frame."
+      );
+    }
+    if (loginData?.checkpoint_url || loginData?.message === "checkpoint_required") {
+      throw new Error(
+        "Instagram security checkpoint challenge triggered by Meta. Please log in using the Web Companion Frame tab above or use Meta Cloud API."
+      );
+    }
+    if (loginData?.user === false || loginData?.message?.includes("password")) {
+      throw new Error(
+        "Invalid Instagram credentials. Please check your username and password."
+      );
+    }
+    if (loginData?.message) {
+      throw new Error(`Instagram authentication failed: ${loginData.message}`);
+    }
+    if (loginData?.error_type) {
+      throw new Error(`Instagram authentication failed (${loginData.error_type}). Please use Meta Cloud API.`);
+    }
+    throw new Error(
+      `Instagram server rejected direct login (Status ${loginRes.status}). Meta requires authentication via Meta Cloud API or Web Companion.`
+    );
+  }
+
+  const authenticatedUserId = loginData.userId || sessionCookies.ds_user_id || username;
+
+  // 3. Fetch full profile info with authenticated session
+  const profile = await fetchDirectProfile(
+    {
+      sessionid: sessionCookies.sessionid || "",
+      ds_user_id: authenticatedUserId,
+      csrftoken: sessionCookies.csrftoken || csrfToken,
+      cookies: sessionCookies,
+      username,
+    },
+    username,
+  );
+
+  const sessionObj: SessionPayload = {
+    username: profile.username || username,
+    password,
+    csrftoken: sessionCookies.csrftoken || csrfToken,
+    sessionid: sessionCookies.sessionid,
+    ds_user_id: authenticatedUserId,
+    cookies: sessionCookies,
+  };
+
+  return {
+    status: "connected",
+    username: profile.username || username,
+    name: profile.name || username,
+    profilePictureUrl: profile.profilePictureUrl || "",
+    sessionData: JSON.stringify(sessionObj),
+  };
+}
+
+export interface InstagramProfileDetails {
+  username: string;
+  name: string;
+  profilePictureUrl: string;
+  followersCount?: number | null;
+  followingCount?: number | null;
+  postsCount?: number | null;
+  biography?: string;
+  isVerified?: boolean;
 }
 
 /**
- * Fetch profile info for the connected user.
+ * Fetch profile info and stats for the connected user.
  */
 export async function fetchDirectProfile(
-  session: SessionPayload,
+  session?: SessionPayload,
   fallbackUsername?: string,
-): Promise<{ username: string; name: string; profilePictureUrl: string } | null> {
-  const username = fallbackUsername || session.username || "";
-  if (!username) return null;
+): Promise<InstagramProfileDetails> {
+  const username = fallbackUsername || session?.username || "";
+  const cleanHandle = username
+    .replace(/^https?:\/\/(www\.)?instagram\.com\//i, "")
+    .replace(/\/.*$/, "")
+    .replace(/^@+/, "")
+    .trim();
 
+  if (!cleanHandle) {
+    return {
+      username: "",
+      name: "",
+      profilePictureUrl: "",
+    };
+  }
+
+  // Strategy 1: web_profile_info
   try {
     const res = await fetch(
-      `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
+      `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(cleanHandle)}`,
       {
         headers: {
           "User-Agent": DEFAULT_USER_AGENT,
           "X-IG-App-ID": "936619743392459",
-          "X-CSRFToken": session.csrftoken || "missing",
-          Cookie: session.cookies ? cookieString(session.cookies) : "",
+          "X-CSRFToken": session?.csrftoken || "missing",
+          Cookie: session?.cookies ? cookieString(session.cookies) : "",
+          Accept: "application/json",
         },
+        cache: "no-store",
       },
     );
 
-    if (!res.ok) {
-      return {
-        username,
-        name: username,
-        profilePictureUrl: "",
-      };
+    if (res.ok) {
+      const data = await res.json();
+      const user = data.data?.user;
+      if (user) {
+        return {
+          username: user.username || cleanHandle,
+          name: user.full_name || user.username || cleanHandle,
+          profilePictureUrl: user.profile_pic_url_hd || user.profile_pic_url || "",
+          followersCount: user.edge_followed_by?.count ?? null,
+          followingCount: user.edge_follow?.count ?? null,
+          postsCount: user.edge_owner_to_timeline_media?.count ?? null,
+          biography: user.biography || "",
+          isVerified: !!user.is_verified,
+        };
+      }
     }
-
-    const data = await res.json();
-    const user = data.data?.user;
-    if (!user) {
-      return {
-        username,
-        name: username,
-        profilePictureUrl: "",
-      };
-    }
-
-    return {
-      username: user.username || username,
-      name: user.full_name || user.username || username,
-      profilePictureUrl: user.profile_pic_url || user.profile_pic_url_hd || "",
-    };
-  } catch {
-    return {
-      username,
-      name: username,
-      profilePictureUrl: "",
-    };
+  } catch (err) {
+    console.warn("[Instagram direct-client] web_profile_info fetch failed:", err);
   }
+
+  // Strategy 2: Instagram oEmbed API
+  try {
+    const oembedRes = await fetch(
+      `https://api.instagram.com/oembed/?url=https://www.instagram.com/${encodeURIComponent(cleanHandle)}/`,
+      { headers: { "User-Agent": DEFAULT_USER_AGENT }, cache: "no-store" },
+    );
+    if (oembedRes.ok) {
+      const oembedData = await oembedRes.json();
+      if (oembedData.author_name) {
+        return {
+          username: oembedData.author_name || cleanHandle,
+          name: oembedData.author_name || cleanHandle,
+          profilePictureUrl: oembedData.thumbnail_url || "",
+        };
+      }
+    }
+  } catch {
+    // Fallback
+  }
+
+  return {
+    username: cleanHandle,
+    name: cleanHandle,
+    profilePictureUrl: "",
+  };
 }
 
 /**
@@ -169,10 +333,15 @@ export async function sendDirectTextMessage(
   text: string,
 ): Promise<{ success: boolean; messageId?: string; error?: string }> {
   try {
-    const session: SessionPayload = JSON.parse(sessionDataJson);
+    let session: SessionPayload;
+    try {
+      session = JSON.parse((sessionDataJson || "").trim());
+    } catch {
+      return { success: false, error: "Invalid Instagram session payload" };
+    }
     const clientContext = `${Date.now()}${Math.floor(Math.random() * 1000000)}`;
 
-    const cookies = session.cookies || {};
+    const cookies = session?.cookies || {};
     const body = new URLSearchParams({
       action: "send_item",
       recipient_users: JSON.stringify([recipientUsernameOrId]),

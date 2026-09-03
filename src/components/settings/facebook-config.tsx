@@ -149,6 +149,92 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
     toast.success("Copied to clipboard!");
   };
 
+  // Discovered pages from 1-Click OAuth / User Token
+  const [discoveredPages, setDiscoveredPages] = useState<Array<{
+    id: string;
+    name: string;
+    category?: string;
+    accessToken: string;
+    profilePictureUrl: string | null;
+  }>>([]);
+  const [discovering, setDiscovering] = useState(false);
+  const [userToken, setUserToken] = useState("");
+
+  const handleDiscoverPages = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userToken.trim()) {
+      toast.error("Please enter a Meta User/Page Access Token.");
+      return;
+    }
+
+    try {
+      setDiscovering(true);
+      const res = await fetch("/api/facebook/oauth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "discover", token: userToken.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "Failed to discover Facebook Pages");
+      }
+
+      if (!data.pages || data.pages.length === 0) {
+        toast.info("No Facebook Pages found under this account. Make sure you are an admin of at least one Facebook Page.");
+        setDiscoveredPages([]);
+        return;
+      }
+
+      setDiscoveredPages(data.pages);
+      toast.success(`Found ${data.pages.length} Facebook Page${data.pages.length > 1 ? "s" : ""}!`);
+
+      // If exactly 1 page found, automatically connect it
+      if (data.pages.length === 1) {
+        await handleConnectDiscoveredPage(data.pages[0]);
+      }
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to find Facebook Pages.");
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const handleConnectDiscoveredPage = async (page: {
+    id: string;
+    name: string;
+    accessToken: string;
+    profilePictureUrl: string | null;
+  }) => {
+    try {
+      setActionLoading(true);
+      const res = await fetch("/api/facebook/oauth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "connect_page",
+          page_id: page.id,
+          page_name: page.name,
+          access_token: page.accessToken,
+          profile_picture_url: page.profilePictureUrl,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "Failed to connect page");
+      }
+
+      toast.success(`Connected to "${page.name}" successfully!`);
+      setUserToken("");
+      setDiscoveredPages([]);
+      await fetchConfig();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to connect Facebook Page.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const isConnected = config?.status === "connected";
 
   return (
@@ -194,16 +280,23 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
         <div className="rounded-xl border border-border bg-card p-5 shadow-sm space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="h-12 w-12 rounded-full bg-blue-600/10 flex items-center justify-center text-blue-600 font-bold border border-blue-600/20">
-                {config?.page_name ? config.page_name.slice(0, 2).toUpperCase() : "FB"}
+              <div className="h-12 w-12 rounded-full bg-blue-600/10 flex items-center justify-center text-blue-600 font-bold border border-blue-600/20 overflow-hidden">
+                {config?.profile_picture_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={config.profile_picture_url} alt={config.page_name || "Page"} className="h-full w-full object-cover" />
+                ) : config?.page_name ? (
+                  config.page_name.slice(0, 2).toUpperCase()
+                ) : (
+                  "FB"
+                )}
               </div>
               <div>
                 <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                  {config?.page_name || "Connected Page"}
+                  {config?.page_name || "Connected Facebook Page"}
                   <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                 </h4>
                 <p className="text-xs text-muted-foreground">
-                  Page ID: <code className="font-mono text-[11px]">{config?.page_id || "Auto-detected"}</code>
+                  Page ID: <code className="font-mono text-[11px]">{config?.page_id || "Auto-detected"}</code> • Connected on {config?.connected_at ? new Date(config.connected_at).toLocaleDateString() : "Active"}
                 </p>
               </div>
             </div>
@@ -224,16 +317,110 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
         </div>
       )}
 
-      {/* Connection Setup Form */}
+      {/* 1-Click Page Discovery & Connect (Option 2) */}
+      {!isConnected && (
+        <div className="rounded-xl border border-border bg-card p-5 shadow-sm space-y-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-blue-600" />
+                1-Click Facebook Page Connect (Instant)
+              </h4>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Generate a token in 1 click via Meta Graph API Explorer, then select your page.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs gap-1.5 border-blue-500/30 text-blue-600 hover:bg-blue-500/10 dark:text-blue-400 shrink-0"
+              onClick={() => window.open("https://developers.facebook.com/tools/explorer/", "_blank")}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Open Explorer
+            </Button>
+          </div>
+
+          <form onSubmit={handleDiscoverPages} className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Meta Access Token</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="password"
+                  placeholder="Paste token (starts with EAAB... or EAAG...)"
+                  value={userToken}
+                  onChange={(e) => setUserToken(e.target.value)}
+                  className="font-mono text-xs h-9"
+                  required
+                />
+                <Button
+                  type="submit"
+                  disabled={discovering || !userToken.trim()}
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-xs h-9 gap-1.5 px-4 shrink-0 font-medium"
+                >
+                  {discovering ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                  Find Pages
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                In Graph API Explorer, click <strong>Generate Access Token</strong> with <code>pages_messaging</code> permission, then paste it here.
+              </p>
+            </div>
+          </form>
+
+          {/* Discovered Pages List */}
+          {discoveredPages.length > 0 && (
+            <div className="p-4 rounded-xl bg-muted/40 border border-border space-y-3">
+              <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Select a Facebook Page to Connect:
+              </h5>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {discoveredPages.map((page) => (
+                  <div
+                    key={page.id}
+                    className="flex items-center justify-between p-3 rounded-lg border border-border bg-card shadow-xs gap-3"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="h-9 w-9 rounded-full bg-blue-600/10 text-blue-600 font-bold flex items-center justify-center text-xs shrink-0 overflow-hidden border border-blue-600/20">
+                        {page.profilePictureUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={page.profilePictureUrl} alt={page.name} className="h-full w-full object-cover" />
+                        ) : (
+                          page.name.slice(0, 2).toUpperCase()
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-foreground truncate">{page.name}</p>
+                        <p className="text-[10px] text-muted-foreground font-mono truncate">ID: {page.id}</p>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      disabled={actionLoading}
+                      onClick={() => handleConnectDiscoveredPage(page)}
+                      className="h-7 text-xs bg-blue-600 text-white hover:bg-blue-700 shrink-0 font-medium"
+                    >
+                      Connect
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Manual Direct Token Form */}
       {!isConnected && (
         <div className="rounded-xl border border-border bg-card p-5 shadow-sm space-y-5">
           <div>
             <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
               <KeyRound className="h-4 w-4 text-blue-600" />
-              Connect Facebook Page via Meta Graph API
+              Manual Page Token Setup
             </h4>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Generate a Page Access Token with <code>pages_messaging</code> permission from the Meta Developer Portal.
+              Or paste a specific Page Access Token directly.
             </p>
           </div>
 
@@ -242,15 +429,12 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
               <Label className="text-xs font-medium">Page Access Token *</Label>
               <Input
                 type="password"
-                placeholder="EAA..."
+                placeholder="EAAG..."
                 value={accessToken}
                 onChange={(e) => setAccessToken(e.target.value)}
                 className="font-mono text-xs"
                 required
               />
-              <p className="text-[11px] text-muted-foreground">
-                Never-expiring Page Access Token from Meta Developer Console → Graph API Explorer.
-              </p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -269,7 +453,7 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
                 <Label className="text-xs font-medium">Custom Webhook Verify Token (Optional)</Label>
                 <Input
                   type="text"
-                  placeholder={defaultVerifyToken || "wacrm_fb_..."}
+                  placeholder={defaultVerifyToken || "masacrm_fb_..."}
                   value={verifyToken}
                   onChange={(e) => setVerifyToken(e.target.value)}
                   className="font-mono text-xs"

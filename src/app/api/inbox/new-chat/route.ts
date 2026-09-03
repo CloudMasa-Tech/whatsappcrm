@@ -89,6 +89,7 @@ export async function POST(request: Request) {
         const { data: newConv, error: convErr } = await ctx.supabase
           .from("conversations")
           .insert({
+            user_id: ctx.userId,
             account_id: ctx.accountId,
             project_id: ctx.projectId,
             contact_id: contactId,
@@ -193,6 +194,7 @@ export async function POST(request: Request) {
       const { data: newConv, error: convErr } = await ctx.supabase
         .from("conversations")
         .insert({
+          user_id: ctx.userId,
           account_id: ctx.accountId,
           project_id: ctx.projectId,
           contact_id: contactId,

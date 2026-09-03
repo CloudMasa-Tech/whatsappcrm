@@ -101,6 +101,7 @@ export async function gatewayRequest<T = unknown>(
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${token}`,
+        "x-masacrm-signature": buildSignatureHeader(rawBody, secret, timestamp),
         "x-wacrm-signature": buildSignatureHeader(rawBody, secret, timestamp),
       },
       body: method === "GET" ? undefined : rawBody,

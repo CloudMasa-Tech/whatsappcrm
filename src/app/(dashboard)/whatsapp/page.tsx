@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { useAuth } from "@/hooks/use-auth";
 import { QrPairing } from "@/components/settings/qr-pairing";
 import { WhatsAppConfig } from "@/components/settings/whatsapp-config";
-import { Loader2, Wifi, QrCode } from "lucide-react";
+import { Loader2, Wifi, QrCode, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type ChannelMethod = "qr" | "cloud_api";
@@ -18,11 +18,14 @@ export default function WhatsAppPage() {
     allowedChannels,
     loading,
     profileLoading,
-    canEditSettings,
-    canSendMessages,
+    isAdmin,
+    isSuperAdmin,
+    isOwner,
     canConnectWhatsApp,
     canDisconnectWhatsApp,
   } = useAuth();
+
+  const isPrivileged = Boolean(isAdmin || isSuperAdmin || isOwner || canConnectWhatsApp);
 
   // Only offer what the project actually has switched on under
   // Settings → Projects. Showing a method that is disabled there would
@@ -51,6 +54,20 @@ export default function WhatsAppPage() {
     return (
       <div className="flex h-64 items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!isPrivileged) {
+    return (
+      <div className="mx-auto max-w-xl py-16 text-center space-y-3">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+          <Shield className="h-6 w-6 text-muted-foreground" />
+        </div>
+        <h2 className="text-lg font-semibold text-foreground">Administrator Access Required</h2>
+        <p className="text-sm text-muted-foreground">
+          Only Project and System Administrators can configure WhatsApp channel settings or connect QR numbers.
+        </p>
       </div>
     );
   }
@@ -109,8 +126,8 @@ export default function WhatsAppPage() {
         <QrPairing
           projectId={activeProjectId}
           projectName="WhatsApp"
-          canManage={canConnectWhatsApp || canSendMessages || canEditSettings}
-          canDisconnect={canDisconnectWhatsApp}
+          canManage={isPrivileged}
+          canDisconnect={isPrivileged && canDisconnectWhatsApp}
         />
       ) : (
         <WhatsAppConfig />

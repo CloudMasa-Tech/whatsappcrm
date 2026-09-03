@@ -9,6 +9,7 @@ import {
   QrCode,
   RefreshCw,
   Smartphone,
+  Trash2,
   Unplug,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -326,13 +327,51 @@ export function QrPairing({
         toast.error(data.error ?? "Could not disconnect");
         return;
       }
-      toast.success("Disconnected");
+      if (typeof data.deletedCount === "number" && data.deletedCount > 0) {
+        toast.success(
+          `Disconnected: cleaned up ${data.deletedCount} un-used contacts (${data.keptCount} active/imported contacts kept)`
+        );
+      } else {
+        toast.success("Disconnected");
+      }
       setPairingSince(null);
       void load();
     } catch {
       toast.error("Could not reach the server");
     } finally {
       setBusy(false);
+    }
+  }
+
+  const [cleaning, setCleaning] = useState(false);
+
+  async function handleCleanSyncedContacts() {
+    if (
+      !window.confirm(
+        `Clean up un-used synced WhatsApp contacts for "${projectName}"? Any contacts you imported or interacted with will be preserved, while un-used address book contacts will be deleted.`
+      )
+    ) {
+      return;
+    }
+    setCleaning(true);
+    try {
+      const response = await fetch("/api/contacts/cleanup-synced", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        toast.error(data.error ?? "Failed to clean up contacts");
+        return;
+      }
+      toast.success(
+        `Cleaned up ${data.deletedCount} un-used contacts (${data.keptCount} active/imported contacts preserved)`
+      );
+    } catch {
+      toast.error("Could not reach the server");
+    } finally {
+      setCleaning(false);
     }
   }
 
@@ -393,15 +432,31 @@ export function QrPairing({
           <div className="flex gap-2">
             {status === "connected" ? (
               canDisconnect ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={disconnect}
-                  disabled={busy}
-                >
-                  <Unplug className="mr-1.5 h-4 w-4" />
-                  Disconnect
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCleanSyncedContacts}
+                    disabled={busy || cleaning}
+                    title="Clean up un-used WhatsApp synced contacts without disconnecting"
+                  >
+                    {cleaning ? (
+                      <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="mr-1.5 h-4 w-4 text-muted-foreground" />
+                    )}
+                    Clean Synced Contacts
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={disconnect}
+                    disabled={busy || cleaning}
+                  >
+                    <Unplug className="mr-1.5 h-4 w-4" />
+                    Disconnect
+                  </Button>
+                </div>
               ) : null
             ) : (
               <Button size="sm" onClick={connect} disabled={busy}>

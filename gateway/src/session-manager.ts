@@ -432,6 +432,8 @@ const SOCKET_EVENTS = [
   "messaging-history.set",
   "messages.upsert",
   "messages.update",
+  "contacts.upsert",
+  "contacts.update",
 ] as const;
 
 function teardownSocket(socket: WASocket | null): void {
@@ -466,6 +468,7 @@ function scheduleReopen(
   dead: WASocket | null,
   delayMs: number,
 ): void {
+  if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
   session.reconnectTimer = setTimeout(() => {
     session.reconnectTimer = null;
     void (async () => {
@@ -473,9 +476,12 @@ function scheduleReopen(
       await session.credsWrites;
       if (session.closing) return;
       await openSocket(session);
-    })().catch((err) =>
-      logger.error({ err, projectId: session.projectId }, "reconnect failed"),
-    );
+    })().catch((err) => {
+      logger.error({ err, projectId: session.projectId }, "reconnect attempt failed; scheduling next retry");
+      if (!session.closing) {
+        scheduleReopen(session, null, 5_000);
+      }
+    });
   }, delayMs);
 }
 
@@ -485,16 +491,20 @@ async function openSocket(session: Session): Promise<void> {
     session.socket = null;
   }
   const { state, saveCreds } = await useSupabaseAuthState(session.projectId);
+  const isPaired = Boolean(state.creds?.me?.id || state.creds?.registered || session.phoneNumber);
+  if (state.creds?.me?.id && !session.phoneNumber) {
+    const jid = jidNormalizedUser(state.creds.me.id);
+    session.phoneNumber = `+${jid.split("@")[0]}`;
+  }
+
   const { version } = await fetchLatestBaileysVersion();
 
   const socket = makeWASocket({
     version,
     auth: state,
     logger: baileysLogger,
-    // We are a CRM, not a phone: never mark things read on the
-    // customer's behalf, and do not broadcast presence.
-    markOnlineOnConnect: false,
-    syncFullHistory: true,
+    markOnlineOnConnect: true,
+    syncFullHistory: false,
     browser: Browsers.ubuntu("Chrome"),
     keepAliveIntervalMs: 25_000,
     connectTimeoutMs: 60_000,
@@ -526,11 +536,17 @@ async function openSocket(session: Session): Promise<void> {
     if (session.socket !== socket) return;
 
     const { connection, lastDisconnect, qr } = update;
+    const isAlreadyPaired = Boolean(
+      state.creds?.me?.id ||
+      state.creds?.registered ||
+      session.phoneNumber
+    );
 
-    if (qr) {
+    if (qr && (session.status as string) !== "connected" && !isAlreadyPaired) {
       // Render to a data URL here so the browser needs no QR library
       // and no direct line to this service.
       const dataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 320 });
+      if ((session.status as string) === "connected" || session.phoneNumber || isAlreadyPaired) return;
       session.status = "qr_pending";
       await upsertSessionRow(session.projectId, session.accountId, {
         status: "qr_pending",
@@ -546,8 +562,14 @@ async function openSocket(session: Session): Promise<void> {
     if (connection === "open") {
       session.status = "connected";
       session.reconnectAttempts = 0;
-      const jid = socket.user?.id ? jidNormalizedUser(socket.user.id) : null;
-      session.phoneNumber = jid ? `+${jid.split("@")[0]}` : null;
+      const jid = socket.user?.id
+        ? jidNormalizedUser(socket.user.id)
+        : state.creds?.me?.id
+          ? jidNormalizedUser(state.creds.me.id)
+          : null;
+      if (jid) {
+        session.phoneNumber = `+${jid.split("@")[0]}`;
+      }
 
       await upsertSessionRow(session.projectId, session.accountId, {
         status: "connected",
@@ -555,13 +577,13 @@ async function openSocket(session: Session): Promise<void> {
         qr_expires_at: null,
         phone_number: session.phoneNumber,
         wa_jid: jid,
-        display_name: socket.user?.name ?? null,
+        display_name: socket.user?.name ?? state.creds?.me?.name ?? null,
         last_connected_at: new Date().toISOString(),
         last_error: null,
         heartbeat_at: new Date().toISOString(),
       });
       await promotePrimaryChannelToQr(session.projectId);
-      logger.info({ projectId: session.projectId }, "session connected");
+      logger.info({ projectId: session.projectId, phoneNumber: session.phoneNumber }, "session connected");
     }
 
     if (connection === "close") {
@@ -657,6 +679,20 @@ async function openSocket(session: Session): Promise<void> {
       "messaging history received from WhatsApp",
     );
 
+    const contactBatch: Array<{ phone: string; name?: string | null }> = [];
+
+    if (Array.isArray(contacts)) {
+      for (const c of contacts) {
+        const jid = c.id ?? "";
+        if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") continue;
+        const phone = `+${jidNormalizedUser(jid).split("@")[0]}`;
+        const name = (c as any).name || (c as any).notify || (c as any).verifiedName || null;
+        if (name && name.trim() && !name.startsWith("+")) {
+          contactBatch.push({ phone, name: name.trim() });
+        }
+      }
+    }
+
     if (Array.isArray(chats)) {
       for (const chat of chats) {
         const remoteJid = chat.id ?? "";
@@ -665,31 +701,22 @@ async function openSocket(session: Session): Promise<void> {
         }
         const phone = `+${jidNormalizedUser(remoteJid).split("@")[0]}`;
         const name = chat.name ?? null;
-        const timestamp = chat.conversationTimestamp
-          ? new Date(
-              typeof chat.conversationTimestamp === "number"
-                ? chat.conversationTimestamp * 1000
-                : Number(chat.conversationTimestamp) * 1000,
-            ).toISOString()
-          : new Date().toISOString();
-
-        await sendEventToCrm({
-          type: "message",
-          payload: {
-            projectId: session.projectId,
-            from: phone,
-            externalId: `history-chat-${chat.id}`,
-            kind: "text",
-            text: null,
-            senderName: name,
-            timestamp,
-            fromMe: false,
-            isHistory: true,
-          },
-        }).catch((err) => {
-          logger.warn({ err, projectId: session.projectId }, "chat sync failed");
-        });
+        if (name && name.trim() && !name.startsWith("+")) {
+          contactBatch.push({ phone, name: name.trim() });
+        }
       }
+    }
+
+    if (contactBatch.length > 0) {
+      await sendEventToCrm({
+        type: "contacts",
+        payload: {
+          projectId: session.projectId,
+          contacts: contactBatch,
+        },
+      }).catch((err) => {
+        logger.warn({ err, projectId: session.projectId }, "contacts sync failed");
+      });
     }
 
     if (Array.isArray(messages)) {
@@ -703,6 +730,54 @@ async function openSocket(session: Session): Promise<void> {
           );
         }
       }
+    }
+  });
+
+  socket.ev.on("contacts.upsert", async (contacts) => {
+    const contactBatch: Array<{ phone: string; name?: string | null }> = [];
+    for (const c of contacts) {
+      const jid = c.id ?? "";
+      if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") continue;
+      const phone = `+${jidNormalizedUser(jid).split("@")[0]}`;
+      const name = (c as any).name || (c as any).notify || (c as any).verifiedName || null;
+      if (name && name.trim() && !name.startsWith("+")) {
+        contactBatch.push({ phone, name: name.trim() });
+      }
+    }
+    if (contactBatch.length > 0) {
+      await sendEventToCrm({
+        type: "contacts",
+        payload: {
+          projectId: session.projectId,
+          contacts: contactBatch,
+        },
+      }).catch((err) => {
+        logger.warn({ err, projectId: session.projectId }, "contacts.upsert sync failed");
+      });
+    }
+  });
+
+  socket.ev.on("contacts.update", async (updates) => {
+    const contactBatch: Array<{ phone: string; name?: string | null }> = [];
+    for (const c of updates) {
+      const jid = c.id ?? "";
+      if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") continue;
+      const phone = `+${jidNormalizedUser(jid).split("@")[0]}`;
+      const name = (c as any).name || (c as any).notify || (c as any).verifiedName || null;
+      if (name && name.trim() && !name.startsWith("+")) {
+        contactBatch.push({ phone, name: name.trim() });
+      }
+    }
+    if (contactBatch.length > 0) {
+      await sendEventToCrm({
+        type: "contacts",
+        payload: {
+          projectId: session.projectId,
+          contacts: contactBatch,
+        },
+      }).catch((err) => {
+        logger.warn({ err, projectId: session.projectId }, "contacts.update sync failed");
+      });
     }
   });
 
@@ -1025,8 +1100,11 @@ export async function sendMessage(
 export async function restoreSessions(): Promise<void> {
   const { data, error } = await supabase
     .from("whatsapp_sessions")
-    .select("project_id, gateway_instance, status")
-    .in("status", ["connected", "connecting"]);
+    .select("project_id, gateway_instance, status, phone_number")
+    .not("phone_number", "is", null)
+    .neq("status", "disconnected")
+    .neq("status", "logged_out")
+    .neq("status", "banned");
 
   if (error) {
     logger.error({ err: error }, "could not list sessions to restore");
@@ -1035,7 +1113,7 @@ export async function restoreSessions(): Promise<void> {
 
   const restorable = data ?? [];
 
-  logger.info({ count: restorable.length }, "restoring sessions");
+  logger.info({ count: restorable.length }, "restoring paired WhatsApp sessions");
 
   for (const row of restorable) {
     try {
@@ -1057,7 +1135,14 @@ export function startHeartbeat(): NodeJS.Timeout {
       if (session.status !== "connected") continue;
       void supabase
         .from("whatsapp_sessions")
-        .update({ heartbeat_at: now })
+        .update({
+          heartbeat_at: now,
+          status: "connected",
+          gateway_instance: config.instanceId,
+          qr_code: null,
+          qr_expires_at: null,
+          phone_number: session.phoneNumber,
+        })
         .eq("project_id", session.projectId)
         .then(({ error }) => {
           if (error) {
@@ -1071,8 +1156,11 @@ export function startHeartbeat(): NodeJS.Timeout {
     try {
       const { data: activeRows } = await supabase
         .from("whatsapp_sessions")
-        .select("project_id, status")
-        .in("status", ["connected", "connecting"]);
+        .select("project_id, status, phone_number")
+        .not("phone_number", "is", null)
+        .neq("status", "disconnected")
+        .neq("status", "logged_out")
+        .neq("status", "banned");
       if (activeRows && activeRows.length > 0) {
         for (const row of activeRows) {
           const pid = row.project_id as string;

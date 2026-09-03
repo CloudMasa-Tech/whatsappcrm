@@ -169,16 +169,24 @@ export function getContactDisplay(contact?: {
   const formattedPhone = contact.phone ? formatDisplayPhone(contact.phone) : null;
   const igHandle = contact.instagram_username ? `@${contact.instagram_username}` : null;
 
+  const rawName = contact.name?.trim() ?? '';
+  const cleanNameDigits = rawName.replace(/\D/g, '');
+  const cleanPhoneDigits = contact.phone ? contact.phone.replace(/\D/g, '') : '';
+  const isNameJustPhone =
+    Boolean(cleanNameDigits) &&
+    (cleanNameDigits === cleanPhoneDigits ||
+      rawName.startsWith('+') ||
+      (cleanNameDigits.length >= 7 && /^\+?[\d\s\-()]+$/.test(rawName)));
+
   const hasExplicitName = Boolean(
-    contact.name &&
-    contact.name.trim() !== '' &&
-    contact.name.trim() !== contact.phone &&
-    !contact.name.includes('@s.whatsapp.net') &&
-    !contact.name.includes('@c.us')
+    rawName &&
+    !isNameJustPhone &&
+    !rawName.includes('@s.whatsapp.net') &&
+    !rawName.includes('@c.us')
   );
 
   if (hasExplicitName) {
-    const title = contact.name!.trim();
+    const title = rawName;
     const subtitle = isInstagram ? igHandle : formattedPhone;
     const initials = title.charAt(0).toUpperCase();
     return { title, subtitle, initials };

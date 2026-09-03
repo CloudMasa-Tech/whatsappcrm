@@ -480,9 +480,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       canEditSettings: role ? canEditSettingsFor(role) : (isAdmin || isSuperAdmin),
       canManageProjectSettings: canManageProjectSettingsFor(role ?? "admin", pRole, profile?.role),
       canSendMessages: true,
-      canConnectWhatsApp: canConnectWhatsAppFor(role ?? "admin"),
+      canConnectWhatsApp: canConnectWhatsAppFor(role ?? (isAdmin ? "admin" : "agent"), pRole, profile?.role),
       canDisconnectWhatsApp: canDisconnectWhatsAppFor(
-        role ?? "admin",
+        role ?? (isAdmin ? "admin" : "agent"),
         pRole,
         profile?.role,
       ),

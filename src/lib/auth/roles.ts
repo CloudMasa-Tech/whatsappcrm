@@ -125,10 +125,21 @@ export function canSendMessages(role: AccountRole): boolean {
 }
 
 /**
- * Connect WhatsApp / Instagram for a project: Super Admin, Owner, Admin.
+ * Connect WhatsApp / Instagram / Facebook for a project: Super Admin, Owner, Admin.
+ * Agents CANNOT connect channels.
  */
-export function canConnectWhatsApp(role: AccountRole): boolean {
-  return hasMinRole(role, "agent");
+export function canConnectWhatsApp(
+  accountRole: AccountRole,
+  platformRole?: PlatformRole | string | null,
+  userRole?: string | null,
+): boolean {
+  if (platformRole === "super_admin" || accountRole === "owner" || accountRole === "admin") {
+    return true;
+  }
+  if (userRole === "agent" || userRole === "customer" || accountRole === "agent" || accountRole === "viewer") {
+    return false;
+  }
+  return hasMinRole(accountRole, "admin");
 }
 
 /**

@@ -2,7 +2,7 @@
 // Channel abstraction — the CRM speaks two WhatsApp transports.
 //
 //   'cloud_api'  Meta Graph API. Official, template-gated, webhook
-//                delivery. Everything wacrm did before projects.
+//                delivery. Everything MaSa CRM did before projects.
 //   'qr'         WhatsApp Web pairing (Baileys) held open by the
 //                gateway service. No templates, no Meta-style
 //                interactive messages, but any number can connect by
@@ -50,7 +50,15 @@ const CHANNEL_CAPABILITIES: Record<ChannelType, readonly MessageKind[]> = {
     "document",
     "audio",
   ],
-  qr: ["text", "image", "video", "document", "audio"],
+  qr: [
+    "text",
+    "template",
+    "interactive",
+    "image",
+    "video",
+    "document",
+    "audio",
+  ],
 };
 
 export function supportsMessageKind(
@@ -66,12 +74,6 @@ export function unsupportedReason(
   channel: ChannelType,
   kind: MessageKind | string,
 ): string {
-  if (channel === "qr" && kind === "template") {
-    return "Approved message templates are a Cloud API feature. This project is connected by QR code — send the message as text instead.";
-  }
-  if (channel === "qr" && kind === "interactive") {
-    return "Interactive buttons and list messages are a Cloud API feature. This project is connected by QR code — send the message as text instead.";
-  }
   return `The ${channel === "qr" ? "QR" : "Cloud API"} channel does not support "${kind}" messages.`;
 }
 

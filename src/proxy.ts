@@ -53,6 +53,18 @@ export async function proxy(request: NextRequest) {
     return withRefreshedCookies(NextResponse.redirect(url))
   }
 
+  // Forward Meta in-frame relative paths (e.g. /common/referer_frame.php, /captcha/...) to Instagram proxy
+  if (
+    request.nextUrl.pathname.startsWith('/common/') ||
+    request.nextUrl.pathname.startsWith('/captcha/')
+  ) {
+    const metaUrl = `https://www.instagram.com${request.nextUrl.pathname}${request.nextUrl.search}`
+    const rewriteUrl = request.nextUrl.clone()
+    rewriteUrl.pathname = '/api/instagram/proxy'
+    rewriteUrl.search = `?url=${encodeURIComponent(metaUrl)}`
+    return NextResponse.rewrite(rewriteUrl)
+  }
+
   // Auth pages - redirect to dashboard if already logged in.
   // Exception: when an invite token is in the query string we
   // send the already-signed-in user to /join/<token> instead so

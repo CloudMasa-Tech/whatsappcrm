@@ -15,7 +15,7 @@ export const supabase = createClient(
   config.supabase.serviceRoleKey,
   {
     auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { "x-client-info": "wacrm-gateway" } },
+    global: { headers: { "x-client-info": "masacrm-gateway" } },
   },
 );
 

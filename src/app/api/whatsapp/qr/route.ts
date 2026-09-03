@@ -8,6 +8,7 @@ import {
   GatewayError,
   isGatewayConfigured,
 } from '@/lib/channels/gateway'
+import { cleanupSyncedWhatsAppContacts } from '@/lib/contacts/cleanup-synced'
 
 // ============================================================
 // QR pairing controls for the active project.
@@ -76,11 +77,11 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => null)
     const requested = typeof body?.project_id === 'string' ? body.project_id : null
 
-    // 'agent' or higher — connecting a WhatsApp number requires agent+ access
-    // to the target project so customer users and agents can pair their number.
+    // 'admin' or higher — connecting a WhatsApp number requires admin access
+    // to the target project. Agents are restricted from pairing/connecting numbers.
     const ctx = requested
-      ? await requireProject(requested, 'agent')
-      : await requireProjectRole('agent')
+      ? await requireProject(requested, 'admin')
+      : await requireProjectRole('admin')
 
     const status = await connectSession(ctx.projectId)
     return NextResponse.json({
@@ -98,29 +99,12 @@ export async function DELETE(request: Request) {
   try {
     const requested = new URL(request.url).searchParams.get('project_id')
     const ctx = requested
-      ? await requireProject(requested, 'agent')
-      : await requireProjectRole('agent')
-
-    // Fetch user profile role to differentiate Customer vs Agent
-    const { data: profile } = await ctx.supabase
-      .from('profiles')
-      .select('role, platform_role')
-      .eq('user_id', ctx.userId)
-      .maybeSingle()
-
-    const isCustomerUser =
-      profile?.role === 'customer' ||
-      (ctx.platformRole === 'customer' && profile?.role !== 'agent' && ctx.role !== 'owner' && ctx.role !== 'admin')
-
-    if (isCustomerUser) {
-      return NextResponse.json(
-        { error: 'Customer accounts cannot disconnect the WhatsApp channel. Contact your administrator.' },
-        { status: 403 },
-      )
-    }
+      ? await requireProject(requested, 'admin')
+      : await requireProjectRole('admin')
 
     await disconnectSession(ctx.projectId)
-    return NextResponse.json({ success: true })
+    const cleanup = await cleanupSyncedWhatsAppContacts(ctx.supabase, ctx.projectId)
+    return NextResponse.json({ success: true, ...cleanup })
   } catch (err) {
     return gatewayErrorResponse(err)
   }

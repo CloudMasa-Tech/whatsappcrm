@@ -56,13 +56,15 @@ ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 
-COPY package*.json ./
+COPY --chown=node:node package*.json ./
 RUN npm install --omit=dev && npm cache clean --force
 
-COPY --from=build /app/.next ./.next
-COPY --from=build /app/public ./public
-COPY --from=build /app/next.config.ts ./
-COPY --from=build /app/messages ./messages
+COPY --from=build --chown=node:node /app/.next ./.next
+COPY --from=build --chown=node:node /app/public ./public
+COPY --from=build --chown=node:node /app/next.config.ts ./
+COPY --from=build --chown=node:node /app/messages ./messages
+
+RUN mkdir -p /app/.next/cache && chown -R node:node /app
 
 EXPOSE 3000
 

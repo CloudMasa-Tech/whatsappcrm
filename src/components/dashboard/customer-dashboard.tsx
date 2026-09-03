@@ -48,11 +48,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { toast } from "sonner";
+import { fetchAccountMembers } from "@/lib/account/members";
 import { formatDistanceToNow, format } from "date-fns";
 import { cn } from "@/lib/utils";
 import type { Broadcast, Contact, Conversation, Message } from "@/types";
@@ -136,6 +139,9 @@ export function CustomerDashboard() {
   // Assigning state
   const [assigningId, setAssigningId] = useState<string | null>(null);
 
+  // Active command tab
+  const [dashboardTab, setDashboardTab] = useState<string>("unassigned");
+
   const adminName = profile?.full_name || user?.email?.split("@")[0] || "Admin";
 
   const loadAll = useCallback(async () => {
@@ -215,9 +221,9 @@ export function CustomerDashboard() {
     setContactsLoading(true);
     try {
       const [{ count: totalC }, { count: todayC }, { data: contactList }] = await Promise.all([
-        db.from("contacts").select("id", { count: "exact", head: true }),
-        db.from("contacts").select("id", { count: "exact", head: true }).gte("created_at", todayStart.toISOString()),
-        db.from("contacts").select("id, name, phone, email, company, channel, created_at").order("created_at", { ascending: false }).limit(8),
+        db.from("contacts").select("id", { count: "exact", head: true }).eq("project_id", activeProjectId),
+        db.from("contacts").select("id", { count: "exact", head: true }).eq("project_id", activeProjectId).gte("created_at", todayStart.toISOString()),
+        db.from("contacts").select("id, name, phone, email, company, channel, created_at").eq("project_id", activeProjectId).order("created_at", { ascending: false }).limit(8),
       ]);
 
       setTotalContacts(totalC ?? 0);
@@ -238,6 +244,7 @@ export function CustomerDashboard() {
         .select(
           "id, contact_id, status, channel, unread_count, last_message_text, last_message_at, updated_at, created_at, assigned_agent_id, contact:contacts(id, name, phone, email, channel, avatar_url)"
         )
+        .eq("project_id", activeProjectId)
         .order("updated_at", { ascending: false })
         .limit(100);
 
@@ -265,39 +272,38 @@ export function CustomerDashboard() {
     // 4. Team Members & Workload
     setMembersLoading(true);
     try {
-      const { data: members } = await db
-        .from("project_members")
-        .select("id, user_id, role, profile:profiles(id, full_name, email, avatar_url)")
-        .eq("project_id", activeProjectId);
+      const [members, { data: assignedConvs }] = await Promise.all([
+        fetchAccountMembers(activeProjectId),
+        db
+          .from("conversations")
+          .select("assigned_agent_id, status")
+          .eq("project_id", activeProjectId)
+          .not("assigned_agent_id", "is", null),
+      ]);
 
-      if (members) {
-        const teamList: ProjectMemberItem[] = members.map((m: any) => {
-          const prof = Array.isArray(m.profile) ? m.profile[0] : m.profile;
-          return {
-            id: m.id,
-            user_id: m.user_id,
-            role: m.role,
-            full_name: prof?.full_name || prof?.email?.split("@")[0] || "Team Member",
-            email: prof?.email || "",
-            active_chats: 0,
-            resolved_chats: 0,
-          };
-        });
-
-        // Compute live chat counts per member
-        if (loadedConvs.length > 0) {
-          teamList.forEach((member) => {
-            member.active_chats = loadedConvs.filter(
-              (c: any) => c.assigned_agent_id === member.user_id && (c.status === "open" || c.status === "pending")
-            ).length;
-            member.resolved_chats = loadedConvs.filter(
-              (c: any) => c.assigned_agent_id === member.user_id && c.status === "closed"
-            ).length;
-          });
+      const activeMap = new Map<string, number>();
+      const resolvedMap = new Map<string, number>();
+      (assignedConvs ?? []).forEach((c: any) => {
+        if (!c.assigned_agent_id) return;
+        if (c.status === "closed") {
+          resolvedMap.set(c.assigned_agent_id, (resolvedMap.get(c.assigned_agent_id) || 0) + 1);
+        } else {
+          activeMap.set(c.assigned_agent_id, (activeMap.get(c.assigned_agent_id) || 0) + 1);
         }
+      });
 
-        setProjectMembers(teamList);
-      }
+      const teamList: ProjectMemberItem[] = (members ?? []).map((m) => ({
+        id: m.user_id,
+        user_id: m.user_id,
+        role: m.role || "agent",
+        full_name: m.full_name || m.email?.split("@")[0] || "Team Member",
+        email: m.email || "",
+        avatar_url: m.avatar_url,
+        active_chats: activeMap.get(m.user_id) || 0,
+        resolved_chats: resolvedMap.get(m.user_id) || 0,
+      }));
+
+      setProjectMembers(teamList);
     } catch (err) {
       console.error("[customer-dashboard] members error:", err);
     } finally {
@@ -350,7 +356,7 @@ export function CustomerDashboard() {
     try {
       const [{ count: dealC, data: dealData }, { count: flowC }] = await Promise.all([
         db.from("deals").select("id, value", { count: "exact" }),
-        db.from("flows").select("id", { count: "exact", head: true }).eq("is_active", true),
+        db.from("flows").select("id", { count: "exact", head: true }).eq("status", "active"),
       ]);
 
       setDealsCount(dealC ?? 0);
@@ -375,16 +381,43 @@ export function CustomerDashboard() {
       const res = await fetch("/api/inbox/assign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId, agentId }),
+        body: JSON.stringify({
+          conversation_id: conversationId,
+          agent_id: agentId,
+          conversationId,
+          agentId,
+        }),
       });
 
       if (res.ok) {
+        toast.success(agentId ? "Conversation assigned to agent" : "Conversation unassigned");
         // Refresh local queues
         setUnassignedConversations((prev) => prev.filter((c) => c.id !== conversationId));
         setUnassignedCount((prev) => Math.max(0, prev - 1));
+
+        // Immediately update active_chats count for the assigned agent
+        if (agentId) {
+          setProjectMembers((prev) =>
+            prev.map((m) =>
+              m.user_id === agentId
+                ? { ...m, active_chats: (m.active_chats || 0) + 1 }
+                : m
+            )
+          );
+        }
+
+        setAllConversations((prev) =>
+          prev.map((c) =>
+            c.id === conversationId ? { ...c, assigned_agent_id: agentId ?? undefined } : c
+          )
+        );
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data?.error || `Assignment failed (${res.status})`);
       }
     } catch (err) {
       console.error("[customer-dashboard] assign error:", err);
+      toast.error("Failed to assign agent");
     } finally {
       setAssigningId(null);
     }
@@ -637,7 +670,7 @@ export function CustomerDashboard() {
       </div>
 
       {/* Interactive Command Tabs: Triage, Team, Broadcasts, Contacts, Activity */}
-      <Tabs defaultValue={unassignedCount > 0 ? "unassigned" : "team"} className="space-y-4">
+      <Tabs value={dashboardTab} onValueChange={setDashboardTab} className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-3">
           <TabsList className="h-9 bg-muted/60">
             <TabsTrigger value="unassigned" className="text-xs gap-1.5 h-7">
@@ -758,7 +791,9 @@ export function CustomerDashboard() {
                             <span>Assign to Agent</span>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-56">
-                            <DropdownMenuLabel className="text-xs">Select Project Agent</DropdownMenuLabel>
+                            <DropdownMenuGroup>
+                              <DropdownMenuLabel className="text-xs">Select Project Agent</DropdownMenuLabel>
+                            </DropdownMenuGroup>
                             <DropdownMenuSeparator />
                             {projectMembers.length === 0 ? (
                               <div className="p-2 text-xs text-muted-foreground text-center">

@@ -208,14 +208,32 @@ export function FacebookHub({ canDisconnect = true }: FacebookHubProps) {
             </div>
           </div>
 
-          {!originIsolated && (
-            <div className="flex items-start gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] leading-snug text-amber-700 dark:text-amber-400">
-              <ShieldAlert className="mt-px size-3.5 shrink-0" />
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+            <div className="flex items-center gap-2 min-w-0">
+              <ShieldAlert className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
               <span className="min-w-0">
-                Direct browser session mode. If Meta blocks datacenter frame requests, use the <strong>Meta Cloud API</strong> tab or click <strong>Open Direct Facebook Window</strong>.
+                Meta blocks embedded iframe browsing for security. Use <strong>Meta Cloud API</strong> for Unified Inbox messaging, or open the companion window.
               </span>
             </div>
-          )}
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs gap-1 border-amber-500/40 text-amber-900 dark:text-amber-200 hover:bg-amber-500/20"
+                onClick={handleOpenPopup}
+              >
+                <ExternalLink className="size-3" /> Open Window
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                className="h-7 text-xs bg-blue-600 text-white hover:bg-blue-700 font-medium"
+                onClick={() => setActiveTab("api")}
+              >
+                Meta Cloud API Tab
+              </Button>
+            </div>
+          </div>
 
           {/* Iframe Viewport */}
           <div className="relative flex-1 w-full bg-background overflow-hidden">

@@ -104,7 +104,7 @@ const LOADING: ChannelStatus = {
 };
 
 const NO_PROJECT: ChannelStatus = {
-  state: "disconnected",
+  state: "loading",
   channel: null,
   phoneNumber: null,
   lastError: null,

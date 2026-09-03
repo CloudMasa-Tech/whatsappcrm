@@ -51,27 +51,27 @@ const SECURITY_HEADERS = [
       // Next.js needs 'unsafe-inline' for its inline hydration script
       // and 'unsafe-eval' in dev + some production optimisations.
       // Nonce-based CSP is a later project.
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://instagram.com https://*.instagram.com https://*.cdninstagram.com https://facebook.com https://*.facebook.com https://*.fbcdn.net https://*.meta.com",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://instagram.com https://*.instagram.com https://*.cdninstagram.com https://facebook.com https://*.facebook.com https://*.fbcdn.net https://*.meta.com https://*.fbsbx.com",
       // Tailwind + inline style attributes on lots of components.
-      "style-src 'self' 'unsafe-inline' https://instagram.com https://*.instagram.com https://facebook.com https://*.facebook.com",
+      "style-src 'self' 'unsafe-inline' https://instagram.com https://*.instagram.com https://facebook.com https://*.facebook.com https://*.fbsbx.com",
       // Supabase public-bucket avatars, contact avatars (arbitrary
       // https URLs paste-able from the UI), OG images, data URLs for
       // tiny inline assets.
       "img-src 'self' data: blob: https:",
       // Outbound media previews (blob: from MediaRecorder + file picker)
       // and Supabase public-bucket audio/video the inbox renders.
-      "media-src 'self' blob: https://*.supabase.co https://instagram.com https://*.instagram.com https://*.cdninstagram.com https://facebook.com https://*.facebook.com https://*.fbcdn.net",
+      "media-src 'self' blob: https://*.supabase.co https://instagram.com https://*.instagram.com https://*.cdninstagram.com https://facebook.com https://*.facebook.com https://*.fbcdn.net https://*.fbsbx.com",
       "font-src 'self' data: https://instagram.com https://*.instagram.com https://*.cdninstagram.com https://facebook.com https://*.facebook.com https://*.fbcdn.net",
       // Supabase REST + realtime (WSS). All Meta API calls happen
       // server-side, so graph.facebook.com does not belong here.
-      `connect-src 'self' ${SANDBOX_ORIGIN} https://*.supabase.co wss://*.supabase.co https://instagram.com https://*.instagram.com https://*.cdninstagram.com https://facebook.com https://*.facebook.com https://*.fbcdn.net https://*.meta.com`,
+      `connect-src 'self' ${SANDBOX_ORIGIN} https://*.supabase.co wss://*.supabase.co https://instagram.com https://*.instagram.com https://*.cdninstagram.com https://facebook.com https://*.facebook.com https://*.fbcdn.net https://*.meta.com https://*.fbsbx.com`,
       // The isolation origin serving the in-frame proxies must be
       // frameable by the app; without it CSP blocks the isolated setup
       // and the hubs render an empty frame.
-      `frame-src 'self' ${SANDBOX_ORIGIN} http://instagram.com https://instagram.com https://*.instagram.com https://*.cdninstagram.com http://facebook.com https://facebook.com https://*.facebook.com https://*.fbcdn.net blob: data:`,
+      `frame-src 'self' ${SANDBOX_ORIGIN} http://instagram.com https://instagram.com https://*.instagram.com https://*.cdninstagram.com http://facebook.com https://facebook.com https://*.facebook.com https://*.fbcdn.net https://*.fbsbx.com blob: data:`,
       "frame-ancestors 'self'",
-      "base-uri 'self' https://instagram.com https://*.instagram.com https://facebook.com https://*.facebook.com",
-      "form-action 'self' https://instagram.com https://*.instagram.com https://facebook.com https://*.facebook.com",
+      "base-uri 'self' https://instagram.com https://*.instagram.com https://facebook.com https://*.facebook.com https://*.fbsbx.com",
+      "form-action 'self' https://instagram.com https://*.instagram.com https://facebook.com https://*.facebook.com https://*.fbsbx.com",
     ].join("; "),
   },
 ] as const;

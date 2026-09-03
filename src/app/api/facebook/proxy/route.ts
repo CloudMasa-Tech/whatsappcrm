@@ -17,40 +17,20 @@ const ALLOWED_DOMAINS = [
 const CLIENT_INJECTION_SCRIPT = `
 <script>
 (function() {
-  // 1. Anti-Framebusting
+  // 1. Anti-Framebusting — isolate window hierarchy
   try {
     Object.defineProperty(window, 'top', { get: function() { return window.self; }, configurable: true });
     Object.defineProperty(window, 'parent', { get: function() { return window.self; }, configurable: true });
     Object.defineProperty(window, 'frameElement', { get: function() { return null; }, configurable: true });
   } catch(e) {}
 
-  // 2. Disable WebAuthn in frame to prevent Passkey error logging
+  // 2. Disable WebAuthn/Credentials in frame to prevent Passkey error logging
   try {
     try { Object.defineProperty(window, 'PublicKeyCredential', { value: undefined, configurable: true, writable: true }); } catch(e) {}
     try { Object.defineProperty(navigator, 'credentials', { value: undefined, configurable: true, writable: true }); } catch(e) {}
   } catch(e) {}
 
-  // 3. Suppress 'unload' listener violation in Chrome iframes
-  try {
-    var origAddEventListener = window.addEventListener;
-    window.addEventListener = function(type, listener, options) {
-      if (type === 'unload') {
-        try { return origAddEventListener.call(this, 'pagehide', listener, options); } catch(err) { return; }
-      }
-      return origAddEventListener.apply(this, arguments);
-    };
-    Object.defineProperty(window, 'onunload', {
-      get: function() { return null; },
-      set: function(fn) {
-        if (typeof fn === 'function') {
-          try { window.addEventListener('pagehide', fn); } catch(err) {}
-        }
-      },
-      configurable: true
-    });
-  } catch(e) {}
-
-  // 3. Helper to normalize and route Meta/Facebook URLs through local proxy
+  // 3. Helper to normalize and route Meta/Facebook navigation URLs through local proxy
   function normalizeAndProxyUrl(rawUrl) {
     if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
     if (rawUrl.indexOf('/api/facebook/proxy') !== -1) return rawUrl;
@@ -64,6 +44,10 @@ const CLIENT_INJECTION_SCRIPT = `
       } else {
         target = 'https://www.facebook.com/' + target;
       }
+    }
+
+    if (target.indexOf('/ajax/bulk-route-definitions') !== -1 || target.indexOf('/logging/') !== -1) {
+      return target;
     }
 
     var isMetaTarget = (
@@ -84,47 +68,81 @@ const CLIENT_INJECTION_SCRIPT = `
     return target;
   }
 
-  // 4. Intercept window.fetch
+  // 4. Trap programmatic navigation on window.location & Location.prototype
+  try {
+    var LocProto = window.Location && window.Location.prototype;
+    if (LocProto) {
+      var hrefDesc = Object.getOwnPropertyDescriptor(LocProto, 'href');
+      if (hrefDesc && hrefDesc.set) {
+        var origSetHref = hrefDesc.set;
+        Object.defineProperty(LocProto, 'href', {
+          set: function(url) {
+            return origSetHref.call(this, normalizeAndProxyUrl(String(url)));
+          },
+          get: hrefDesc.get,
+          configurable: true
+        });
+      }
+
+      ['assign', 'replace'].forEach(function(fn) {
+        var orig = LocProto[fn];
+        if (typeof orig === 'function') {
+          LocProto[fn] = function(url) {
+            try { return orig.call(this, normalizeAndProxyUrl(String(url))); }
+            catch (e) { return orig.call(this, url); }
+          };
+        }
+      });
+    }
+  } catch(e) {}
+
+  // 5. Trap Navigation API (Chromium)
+  try {
+    if (window.navigation && typeof window.navigation.addEventListener === 'function') {
+      window.navigation.addEventListener('navigate', function(event) {
+        if (event.destination && event.destination.url) {
+          var proxied = normalizeAndProxyUrl(event.destination.url);
+          if (proxied !== event.destination.url && proxied.indexOf('/api/facebook/proxy') !== -1) {
+            event.preventDefault();
+            window.location.replace(proxied);
+          }
+        }
+      });
+    }
+  } catch(e) {}
+
+  // 6. Intercept window.fetch for navigation requests
   var originalFetch = window.fetch;
   window.fetch = function(input, init) {
     try {
       if (typeof input === 'string') {
-        input = normalizeAndProxyUrl(input);
+        if (input.indexOf('/ajax/bulk-route') === -1) {
+          input = normalizeAndProxyUrl(input);
+        }
       } else if (input && input.url) {
-        var proxiedUrl = normalizeAndProxyUrl(input.url);
-        if (proxiedUrl !== input.url && input instanceof Request) {
-          input = new Request(proxiedUrl, init);
+        if (input.url.indexOf('/ajax/bulk-route') === -1) {
+          var proxiedUrl = normalizeAndProxyUrl(input.url);
+          if (proxiedUrl !== input.url && input instanceof Request) {
+            input = new Request(proxiedUrl, init);
+          }
         }
       }
     } catch(err) {}
     return originalFetch.apply(this, [input, init]);
   };
 
-  // 5. Intercept XMLHttpRequest (XHR)
+  // 7. Intercept XMLHttpRequest (XHR)
   var originalOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
     try {
-      if (url) {
+      if (url && String(url).indexOf('/ajax/bulk-route') === -1) {
         url = normalizeAndProxyUrl(String(url));
       }
     } catch(err) {}
     return originalOpen.call(this, method, url, async !== false, user, password);
   };
 
-  // 6. Intercept navigator.sendBeacon
-  if (navigator.sendBeacon) {
-    var originalSendBeacon = navigator.sendBeacon.bind(navigator);
-    navigator.sendBeacon = function(url, data) {
-      try {
-        if (url) {
-          url = normalizeAndProxyUrl(String(url));
-        }
-      } catch(e) {}
-      return originalSendBeacon(url, data);
-    };
-  }
-
-  // 7. Intercept Link Clicks and Form Submissions so iframe stays within proxy
+  // 8. Intercept Link Clicks and Form Submissions so iframe stays within proxy
   window.addEventListener('click', function(e) {
     try {
       var el = e.target;
@@ -153,21 +171,6 @@ const CLIENT_INJECTION_SCRIPT = `
       }
     } catch(err) {}
   }, true);
-
-  // 8. Intercept programmatic navigation
-  try {
-    var LocProto = window.Location && window.Location.prototype;
-    if (LocProto) {
-      ['assign', 'replace'].forEach(function (fn) {
-        var orig = LocProto[fn];
-        if (typeof orig !== 'function') return;
-        LocProto[fn] = function (url) {
-          try { return orig.call(this, normalizeAndProxyUrl(String(url))); }
-          catch (e) { return orig.call(this, url); }
-        };
-      });
-    }
-  } catch (e) {}
 
   try {
     var origOpen = window.open;
@@ -225,6 +228,12 @@ export async function DELETE(request: NextRequest) {
 async function handleProxyRequest(request: NextRequest, method: string) {
   const { searchParams } = new URL(request.url);
   const targetUrl = searchParams.get("url") || "https://www.facebook.com/messages/t/";
+  const isAjaxOrApi =
+    targetUrl.includes("/ajax/") ||
+    targetUrl.includes("/api/") ||
+    targetUrl.includes("graphql") ||
+    targetUrl.includes(".json") ||
+    targetUrl.includes(".js");
 
   try {
     const parsed = new URL(targetUrl);
@@ -239,6 +248,16 @@ async function handleProxyRequest(request: NextRequest, method: string) {
       );
     }
 
+    if (targetUrl.includes("/ajax/bulk-route-definitions/")) {
+      return new NextResponse('for (;;);{"payload":{"status":"ok"},"status":"ok"}', {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
+
     const cookieHeader = request.headers.get("cookie") || "";
     const contentTypeReq = request.headers.get("content-type");
 
@@ -251,13 +270,13 @@ async function handleProxyRequest(request: NextRequest, method: string) {
     const reqHeaders: Record<string, string> = {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      Accept: request.headers.get("accept") || "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      Accept: request.headers.get("accept") || "*/*",
       "Accept-Language": "en-US,en;q=0.9",
       "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
       "Sec-Ch-Ua-Mobile": "?0",
       "Sec-Ch-Ua-Platform": '"Windows"',
-      "Sec-Fetch-Dest": request.headers.get("sec-fetch-dest") || "document",
-      "Sec-Fetch-Mode": request.headers.get("sec-fetch-mode") || "navigate",
+      "Sec-Fetch-Dest": isAjaxOrApi ? "empty" : "document",
+      "Sec-Fetch-Mode": isAjaxOrApi ? "cors" : "navigate",
       "Sec-Fetch-Site": "same-origin",
       Origin: "https://www.facebook.com",
       Referer: targetUrl.includes("facebook.com") ? targetUrl : "https://www.facebook.com/",
@@ -297,6 +316,16 @@ async function handleProxyRequest(request: NextRequest, method: string) {
       signal: AbortSignal.timeout(10000),
     });
 
+    if (response.status === 429 && isAjaxOrApi) {
+      return new NextResponse('for (;;);{"payload":{"status":"ok"},"status":"ok"}', {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
+
     const contentType = response.headers.get("content-type") || "";
 
     const resHeaders = new Headers();
@@ -304,10 +333,10 @@ async function handleProxyRequest(request: NextRequest, method: string) {
     resHeaders.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
     resHeaders.set("Access-Control-Allow-Headers", "*");
     resHeaders.set("Access-Control-Allow-Credentials", "true");
-    resHeaders.set(
-      "Content-Security-Policy",
-      `frame-ancestors 'self' ${appOrigin()}`,
-    );
+    
+    // Explicitly override frame protection headers
+    resHeaders.delete("x-frame-options");
+    resHeaders.set("Content-Security-Policy", "frame-ancestors *");
     resHeaders.set("Permissions-Policy", "unload=*");
 
     const rawSetCookies =
@@ -323,7 +352,7 @@ async function handleProxyRequest(request: NextRequest, method: string) {
         .replace(/Secure;?\s*/gi, "")
         .replace(/Path=[^;]+;?\s*/gi, "")
         .replace(/SameSite=None;?\s*/gi, "SameSite=Lax; ");
-      sanitized = sanitized.trim().replace(/;$/, "") + "; Path=/api/facebook";
+      sanitized = sanitized.trim().replace(/;$/, "") + "; Path=/";
       resHeaders.append("Set-Cookie", sanitized);
     }
 
@@ -337,10 +366,15 @@ async function handleProxyRequest(request: NextRequest, method: string) {
       resHeaders.set("Location", `${origin}/api/facebook/proxy?url=${encodeURIComponent(fullLoc)}`);
     }
 
-    if (contentType.includes("text/html")) {
+    if (contentType.includes("text/html") && !isAjaxOrApi) {
       let html = await response.text();
       html = rewriteNavigationUrls(html, "/api/facebook/proxy", request.nextUrl.origin);
-      html = CLIENT_INJECTION_SCRIPT + html;
+      
+      if (/<head\b[^>]*>/i.test(html)) {
+        html = html.replace(/<head\b[^>]*>/i, (m) => `${m}\n${CLIENT_INJECTION_SCRIPT}`);
+      } else {
+        html = CLIENT_INJECTION_SCRIPT + html;
+      }
 
       resHeaders.set("Content-Type", "text/html; charset=utf-8");
       resHeaders.set("Referrer-Policy", "no-referrer");
@@ -361,12 +395,17 @@ async function handleProxyRequest(request: NextRequest, method: string) {
       headers: resHeaders,
     });
   } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    const accept = request.headers.get("accept") || "";
+    if (isAjaxOrApi) {
+      return new NextResponse('for (;;);{"payload":{"status":"ok"},"status":"ok"}', {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
 
-    // Return styled HTML fallback rather than breaking with 502
-    if (accept.includes("text/html")) {
-      const fallbackHtml = `<!DOCTYPE html>
+    const fallbackHtml = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8"/>
@@ -393,23 +432,12 @@ async function handleProxyRequest(request: NextRequest, method: string) {
 </body>
 </html>`;
 
-      return new NextResponse(fallbackHtml, {
-        status: 200,
-        headers: {
-          "Content-Type": "text/html; charset=utf-8",
-          "Access-Control-Allow-Origin": "*",
-        },
-      });
-    }
-
-    return NextResponse.json(
-      { error: "Proxy request failed", details: errorMsg },
-      {
-        status: 200,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-        },
-      }
-    );
+    return new NextResponse(fallbackHtml, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
   }
 }

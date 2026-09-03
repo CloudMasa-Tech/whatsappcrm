@@ -15,14 +15,21 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import Link from "next/link";
 import {
   ArrowLeft,
   ChevronRight,
+  ExternalLink,
   LayoutTemplate,
   Loader2,
+  Sparkles,
+  Globe,
+  Search,
 } from "lucide-react";
+import { STARTER_MESSAGE_TEMPLATES } from "@/lib/whatsapp/starter-templates";
 import { extractVariableIndices } from "@/lib/whatsapp/template-validators";
 import { useTranslations } from "next-intl";
+import { useAuth } from "@/hooks/use-auth";
 
 export interface TemplateSendValues {
   body: string[];
@@ -80,6 +87,7 @@ export function TemplatePicker({
   onSelect,
 }: TemplatePickerProps) {
   const t = useTranslations("Inbox.templatePicker");
+  const { activeProjectId } = useAuth();
 
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -87,6 +95,8 @@ export function TemplatePicker({
   const [params, setParams] = useState<string[]>([]);
   const [headerText, setHeaderText] = useState<string>("");
   const [buttonParams, setButtonParams] = useState<Record<number, string>>({});
+  const [filterTab, setFilterTab] = useState<"all" | "approved" | "starters">("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -94,49 +104,81 @@ export function TemplatePicker({
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      try {
+        const res = await fetch(`/api/whatsapp/templates?project_id=${activeProjectId || ''}&include_starters=true`);
+        if (res.ok) {
+          const json = await res.json();
+          const dbTemplates: MessageTemplate[] = json.templates || [];
+          
+          // Map starter templates into MessageTemplate shape
+          const starterTemplates: MessageTemplate[] = (STARTER_MESSAGE_TEMPLATES || []).map((s) => ({
+            id: `starter_${s.slug}`,
+            user_id: 'system',
+            name: s.name,
+            category: s.category,
+            language: s.language,
+            header_type: s.header_format === 'none' ? undefined : (s.header_format as any),
+            header_content: s.header_content,
+            header_media_url: s.header_media_url,
+            body_text: s.body_text,
+            footer_text: s.footer_text,
+            buttons: s.buttons,
+            sample_values: s.sample_values,
+            status: 'APPROVED',
+            is_starter: true,
+            is_common: true,
+          } as MessageTemplate & { is_starter?: boolean; is_common?: boolean }));
 
-      if (!user) {
-        if (!cancelled) {
-          setTemplates([]);
-          setLoading(false);
+          // Combine with deduplication by name
+          const existingNames = new Set(dbTemplates.map((t) => t.name.toLowerCase()));
+          const combined = [
+            ...dbTemplates,
+            ...starterTemplates.filter((s) => !existingNames.has(s.name.toLowerCase())),
+          ];
+
+          if (!cancelled) {
+            setTemplates(combined);
+          }
+        } else {
+          // Fallback direct supabase query
+          const supabase = createClient();
+          let query = supabase
+            .from("message_templates")
+            .select("*")
+            .in("status", ["APPROVED", "approved", "ACTIVE", "active", "READY", "ready", "SUBMITTED", "APPROVED_LOCAL"]);
+
+          if (activeProjectId) {
+            query = query.or(`project_id.eq.${activeProjectId},project_id.is.null`);
+          }
+
+          const { data, error } = await query.order("created_at", { ascending: false });
+          if (!cancelled) {
+            if (error) {
+              console.error("Failed to fetch templates:", error);
+              setTemplates([]);
+            } else {
+              setTemplates((data as MessageTemplate[]) ?? []);
+            }
+          }
         }
-        return;
+      } catch (err) {
+        console.error("Template picker error:", err);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-
-      // Scope by RLS (message_templates_select → is_account_member), NOT by
-      // user_id. Templates are account-owned, so filtering on the caller's
-      // user_id hid templates that a teammate created — leaving them unable
-      // to send approved templates in a shared account.
-      const { data, error } = await supabase
-        .from("message_templates")
-        .select("*")
-        .eq("status", "APPROVED")
-        .order("created_at", { ascending: false });
-
-      if (cancelled) return;
-      if (error) {
-        console.error("Failed to fetch templates:", error);
-        setTemplates([]);
-      } else {
-        setTemplates((data as MessageTemplate[]) ?? []);
-      }
-      setLoading(false);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, activeProjectId]);
 
   function resetSelection() {
     setSelected(null);
     setParams([]);
     setHeaderText("");
     setButtonParams({});
+    setSearchQuery("");
   }
 
   function handleOpenChange(next: boolean) {
@@ -187,6 +229,23 @@ export function TemplatePicker({
       (s) => (buttonParams[s.index] ?? "").trim().length > 0,
     );
 
+  const filteredTemplates = useMemo(() => {
+    return templates.filter((t) => {
+      const isStarter = (t as any).is_starter;
+      if (filterTab === "approved" && isStarter) return false;
+      if (filterTab === "starters" && !isStarter) return false;
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchName = t.name.toLowerCase().includes(q);
+        const matchBody = t.body_text.toLowerCase().includes(q);
+        const matchCategory = t.category.toLowerCase().includes(q);
+        return matchName || matchBody || matchCategory;
+      }
+      return true;
+    });
+  }, [templates, filterTab, searchQuery]);
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="border-border bg-popover sm:max-w-lg">
@@ -198,55 +257,135 @@ export function TemplatePicker({
           <DialogDescription className="text-muted-foreground">
             {selected
               ? t("fillPlaceholders")
-              : t("pickTemplate")}
+              : "Pick an approved or ready-made message template to send to this contact."}
           </DialogDescription>
         </DialogHeader>
 
         {!selected ? (
-          <div className="max-h-[60vh] space-y-2 overflow-y-auto">
-            {loading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
-              </div>
-            ) : templates.length === 0 ? (
-              <div className="rounded-md border border-border bg-background/50 p-6 text-center">
-                <p className="text-sm text-popover-foreground">{t("noApprovedTemplates")}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t("noApprovedTemplatesHint")}
-                </p>
-              </div>
-            ) : (
-              templates.map((t) => (
+          <div className="space-y-3">
+            {/* Filter Tabs & Search */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-1 p-0.5 rounded-lg bg-muted/60 border border-border">
                 <button
-                  key={t.id}
                   type="button"
-                  onClick={() => pickTemplate(t)}
-                  className="w-full rounded-md border border-border bg-background/50 p-3 text-left transition-colors hover:border-primary/40 hover:bg-popover"
+                  onClick={() => setFilterTab("all")}
+                  className={`flex-1 py-1 text-xs font-medium rounded-md transition-colors ${
+                    filterTab === "all"
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
                 >
-                  <div className="flex items-start gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate text-sm font-medium text-popover-foreground">
-                          {t.name}
-                        </p>
-                        <Badge className="border border-primary/30 bg-primary/20 text-[10px] text-primary">
-                          {t.category}
-                        </Badge>
-                        {t.language && (
-                          <span className="text-[10px] uppercase text-muted-foreground">
-                            {t.language}
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                        {t.body_text}
-                      </p>
-                    </div>
-                    <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                  </div>
+                  All ({templates.length})
                 </button>
-              ))
-            )}
+                <button
+                  type="button"
+                  onClick={() => setFilterTab("approved")}
+                  className={`flex-1 py-1 text-xs font-medium rounded-md transition-colors ${
+                    filterTab === "approved"
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Project ({templates.filter((t) => !(t as any).is_starter).length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterTab("starters")}
+                  className={`flex-1 py-1 text-xs font-medium rounded-md transition-colors ${
+                    filterTab === "starters"
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  ✨ Ready-Made ({templates.filter((t) => (t as any).is_starter).length})
+                </button>
+              </div>
+
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Search templates..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-8 h-8 text-xs bg-muted/50 border-border text-foreground placeholder:text-muted-foreground"
+                />
+              </div>
+            </div>
+
+            <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+              {loading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                </div>
+              ) : filteredTemplates.length === 0 ? (
+                <div className="rounded-md border border-border bg-background/50 p-6 text-center space-y-3">
+                  <div>
+                    <p className="text-sm font-medium text-popover-foreground">{t("noApprovedTemplates")}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      No templates match your search filter.
+                    </p>
+                  </div>
+                  <Link
+                    href="/templates"
+                    onClick={() => onOpenChange(false)}
+                    className="inline-flex items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium shadow-xs hover:bg-accent hover:text-accent-foreground gap-1.5 h-8"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Manage & Create Templates
+                  </Link>
+                </div>
+              ) : (
+                filteredTemplates.map((t) => {
+                  const isStarter = (t as any).is_starter;
+                  const isCommon = !t.project_id || (t as any).is_common;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => pickTemplate(t)}
+                      className="w-full rounded-md border border-border bg-background/50 p-3 text-left transition-colors hover:border-purple-500/40 hover:bg-popover"
+                    >
+                      <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <p className="truncate text-sm font-medium text-popover-foreground">
+                              {t.name}
+                            </p>
+                            {isStarter ? (
+                              <Badge className="border border-purple-500/30 bg-purple-500/20 text-[10px] text-purple-300 gap-0.5">
+                                <Sparkles className="h-2.5 w-2.5 text-purple-400" />
+                                Ready-Made
+                              </Badge>
+                            ) : isCommon ? (
+                              <Badge className="border border-blue-500/30 bg-blue-500/20 text-[10px] text-blue-300 gap-0.5">
+                                <Globe className="h-2.5 w-2.5 text-blue-400" />
+                                Common
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="border-border text-[10px] text-muted-foreground">
+                                Project
+                              </Badge>
+                            )}
+                            <Badge className="border border-primary/30 bg-primary/20 text-[10px] text-primary">
+                              {t.category}
+                            </Badge>
+                            {t.language && (
+                              <span className="text-[10px] uppercase text-muted-foreground">
+                                {t.language}
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                            {t.body_text}
+                          </p>
+                        </div>
+                        <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </div>
         ) : (
           <div className="space-y-3">

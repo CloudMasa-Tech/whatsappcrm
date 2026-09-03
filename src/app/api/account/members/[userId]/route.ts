@@ -19,6 +19,7 @@ import type { PostgrestError } from "@supabase/supabase-js";
 
 import { requireRole, toErrorResponse } from "@/lib/auth/account";
 import { isAccountRole } from "@/lib/auth/roles";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -81,14 +82,47 @@ export async function PATCH(
       );
     }
 
-    const { error } = await ctx.supabase.rpc("set_member_role", {
-      p_user_id: userId,
-      p_new_role: role,
-    });
+    // Protect the SuperAdmin-created default admin
+    const { data: targetProfile } = await supabaseAdmin()
+      .from("profiles")
+      .select("user_id, role, account_role, beta_features")
+      .eq("user_id", userId)
+      .maybeSingle();
 
-    if (error) return rpcErrorToResponse(error);
+    if (
+      targetProfile &&
+      ((targetProfile.beta_features ?? []).includes("default_admin") ||
+        (targetProfile as any).is_default_admin)
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "The default administrator created by Super Admin cannot be demoted or modified.",
+        },
+        { status: 400 },
+      );
+    }
 
-    return NextResponse.json({ ok: true });
+    // Update profiles and project_members
+    const { error: profileErr } = await supabaseAdmin()
+      .from("profiles")
+      .update({ role, account_role: role })
+      .eq("user_id", userId);
+
+    if (profileErr) {
+      console.error("[PATCH /api/account/members] profile update error:", profileErr);
+      return NextResponse.json(
+        { error: "Failed to update member role" },
+        { status: 500 },
+      );
+    }
+
+    await supabaseAdmin()
+      .from("project_members")
+      .update({ role })
+      .eq("user_id", userId);
+
+    return NextResponse.json({ ok: true, role });
   } catch (err) {
     return toErrorResponse(err);
   }
@@ -108,6 +142,27 @@ export async function DELETE(
     if (!limit.success) return rateLimitResponse(limit);
 
     const { userId } = await params;
+
+    // Protect the SuperAdmin-created default admin
+    const { data: targetProfile } = await supabaseAdmin()
+      .from("profiles")
+      .select("user_id, beta_features")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (
+      targetProfile &&
+      ((targetProfile.beta_features ?? []).includes("default_admin") ||
+        (targetProfile as any).is_default_admin)
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "The default administrator created by Super Admin cannot be removed.",
+        },
+        { status: 400 },
+      );
+    }
 
     const { data, error } = await ctx.supabase.rpc("remove_account_member", {
       p_user_id: userId,

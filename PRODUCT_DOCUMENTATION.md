@@ -1,195 +1,240 @@
-# CloudMaSa WhatsApp CRM (WACRM) & Omnichannel Gateway
-## End-to-End Enterprise Architecture, Product & Production Operations Guide
+# CloudMaSa CRM (MaSa CRM) & Omnichannel Gateway
+## Comprehensive Enterprise Architecture, Product & Production Operations Manual
 
 ---
 
-## 1. Executive Summary & Product Overview
+## 1. Executive Summary & Product Vision
 
-**CloudMaSa WhatsApp CRM (WACRM)** is an enterprise-grade, multi-tenant Omnichannel Customer Relationship Management (CRM) platform built specifically for modern conversational commerce and customer support.
+**CloudMaSa CRM (MaSa CRM)** is an enterprise-grade, multi-tenant Omnichannel Customer Relationship Management (CRM) and Marketing Automation platform. Engineered specifically for high-velocity sales, customer support, and automated conversational commerce, it bridges the gap between traditional CRM databases and modern messaging channels:
 
-The platform bridges the gap between traditional CRM workflows (leads, pipelines, custom attributes, tags) and multi-channel instant messaging:
 - **WhatsApp Web QR Code Connection**: Independent, lightweight Baileys-powered multi-device gateway requiring zero Meta Business verification.
-- **Meta WhatsApp Cloud API**: Official WhatsApp Business Platform with template sync, interactive messages, and webhook verification.
-- **Instagram Direct & Facebook Messenger**: Unified social media inbox.
-- **Visual Automation Flow Builder**: Node-based automation canvas for triggers, conditions, branching, human handoff, and LLM-assisted conversational bots.
-- **AI Knowledge Base (RAG)**: AI Agents grounded on custom business documents, PDFs, and FAQs with automatic context injection.
-- **Super Admin Multi-Tenancy**: Granular project isolation, one-click customer provisioning with automatic SMTP welcome emails, and cascading lifecycle management.
+- **Meta WhatsApp Cloud API**: Official WhatsApp Business Platform with template synchronization, interactive messages, and webhook verification.
+- **Social Inboxes**: Instagram Direct & Facebook Messenger synchronized into a single unified conversation stream.
+- **Project-Specific Email Campaign Gateway**: Dedicated SMTP engine per project (Gmail, Outlook/Office 365, Zoho, Custom SMTP) with open/click tracking and dynamic merge tags.
+- **Visual Automation Flow Builder**: Interactive drag-and-drop node canvas for triggers, conditions, branching, human handoff, and LLM-driven AI agents.
+- **AI Knowledge Base (RAG Engine)**: Context-aware conversational AI grounded on company documents, PDFs, and FAQs with semantic search using `pgvector`.
+- **Smart Contact Lifecycle & Cleanup**: Automatic cleanup of passive WhatsApp address book syncs while guaranteeing preservation of CRM-engaged contacts.
+- **Enterprise Multi-Tenancy & RBAC**: Hierarchical account/project isolation with Super Admin provisioning, Designated Default Admin safeguards, and dynamic Agent role management.
 
 ---
 
-## 2. System Architecture & Component Topology
+## 2. System Architecture & Topology
 
 ```mermaid
 graph TD
-    subgraph Clients
-        Browser["Next.js Web Client\n(Desktop & Mobile)"]
-        Customer["Customer Inboxes\n(Agents / Admins)"]
-        SuperAdmin["Super Admin Console"]
+    subgraph Clients ["Client Layer"]
+        WebDesktop["Web App (Desktop / Tablet / Mobile)"]
+        Agents["Agent / Admin Workstations"]
+        SuperAdminUI["Super Admin Platform Console"]
     end
 
-    subgraph App Layer ["Application Layer (Port 3000)"]
-        NextServer["Next.js 16 App Router\n(Turbopack / Node.js)"]
-        API_Routes["API Routes & Webhook Handlers\n(/api/v1, /api/whatsapp, /api/admin)"]
-        FlowEngine["Visual Flow & Automation Engine"]
-        EmailService["Nodemailer SMTP Engine"]
+    subgraph ApplicationLayer ["Application Layer (Next.js 16 - Port 3000)"]
+        NextServer["Next.js App Router (SSR & Turbopack)"]
+        AuthModule["SSR Authentication & Context Guard"]
+        APIRoutes["Secure REST API & Webhook Endpoints"]
+        FlowEngine["Visual Flow Execution Engine"]
+        EmailEngine["Nodemailer Project SMTP Gateway"]
     end
 
-    subgraph Gateway Layer ["WhatsApp QR Gateway (Port 8088 / 3001)"]
-        QR_Server["Baileys Multi-Device Gateway\n(Express / WebSocket Sockets)"]
-        SessionStore["Encrypted Session Credentials Storage"]
+    subgraph GatewayLayer ["WhatsApp Gateway (Baileys - Port 8088)"]
+        BaileysCore["Baileys Multi-Device Socket Engine"]
+        SessionCrypto["AES-256-GCM Session Storage"]
+        QRStream["Server-Sent Events (SSE) QR Streamer"]
     end
 
-    subgraph Data & Auth Layer ["Supabase & Storage"]
-        Postgres["PostgreSQL Database\n(Row Level Security Enabled)"]
-        SupabaseAuth["Supabase Auth (JWT & Roles)"]
-        VectorDB["pgvector (Embeddings & Semantic Search)"]
-        MediaStorage["Supabase Storage Buckets"]
+    subgraph DatabaseLayer ["Supabase Infrastructure"]
+        PostgresDB["PostgreSQL 15+ Database (RLS Enforced)"]
+        SupabaseAuth["Supabase Auth (JWT & Magic Links)"]
+        PgVector["pgvector Embedding Storage"]
+        StorageBuckets["Encrypted File & Media Buckets"]
     end
 
-    subgraph External Platforms
-        MetaAPI["Meta Graph API\n(WhatsApp Cloud, Instagram, FB)"]
-        GmailSMTP["SMTP Server\n(smtp.gmail.com:587)"]
-        LLM_Providers["OpenAI / Gemini / Ollama"]
+    subgraph ExternalServices ["External Ecosystem"]
+        MetaGraph["Meta Graph API (Cloud API, Instagram, FB)"]
+        MailServers["SMTP Providers (Gmail, Outlook, Zoho, Custom)"]
+        LLMHub["OpenAI / Gemini / Ollama"]
     end
 
-    Browser --> NextServer
-    Customer --> NextServer
-    SuperAdmin --> NextServer
+    WebDesktop --> NextServer
+    Agents --> NextServer
+    SuperAdminUI --> NextServer
 
-    NextServer --> API_Routes
-    API_Routes --> Postgres
-    API_Routes --> SupabaseAuth
-    API_Routes --> VectorDB
-    API_Routes --> MediaStorage
-    API_Routes --> QR_Server
-    API_Routes --> MetaAPI
-    API_Routes --> GmailSMTP
-    FlowEngine --> LLM_Providers
-    QR_Server --> SessionStore
-    QR_Server --> Postgres
+    NextServer --> AuthModule
+    AuthModule --> SupabaseAuth
+    NextServer --> APIRoutes
+
+    APIRoutes --> PostgresDB
+    APIRoutes --> PgVector
+    APIRoutes --> StorageBuckets
+    APIRoutes --> BaileysCore
+    APIRoutes --> MetaGraph
+    APIRoutes --> MailServers
+    FlowEngine --> LLMHub
+
+    BaileysCore --> SessionCrypto
+    BaileysCore --> PostgresDB
 ```
 
 ---
 
-## 3. Multi-Tenant Architecture & Data Isolation
+## 3. Multi-Tenancy, Projects & Role-Based Access Control (RBAC)
 
 ### 3.1 Tenant Hierarchy
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      Super Admin Account                    │
-│   (Full control, Tenant Provisioning, System Telemetry)     │
+│   (Global Tenant Provisioning, Telemetry, Cross-Project)    │
 └──────────────────────────────┬──────────────────────────────┘
                                │
                 ┌──────────────┴──────────────┐
                 ▼                             ▼
-   ┌──────────────────────────┐  ┌──────────────────────────┐
-   │    Account / Client A    │  │    Account / Client B    │
-   │    (Organisation Unit)   │  │    (Organisation Unit)   │
-   └────────────┬─────────────┘  └────────────┬─────────────┘
-                │                             │
-        ┌───────┴───────┐             ┌───────┴───────┐
-        ▼               ▼             ▼               ▼
-  ┌───────────┐   ┌───────────┐ ┌───────────┐   ┌───────────┐
-  │ Project 1 │   │ Project 2 │ │ Project 3 │   │ Project 4 │
-  │ (Retail)  │   │ (Support) │ │ (Sales)   │   │ (VIP)     │
-  └───────────┘   └───────────┘ └───────────┘   └───────────┘
+    ┌──────────────────────────┐  ┌──────────────────────────┐
+    │    Account / Client A    │  │    Account / Client B    │
+    │    (Billing Boundary)    │  │    (Billing Boundary)    │
+    └────────────┬─────────────┘  └────────────┬─────────────┘
+                 │                             │
+         ┌───────┴───────┐             ┌───────┴───────┐
+         ▼               ▼             ▼               ▼
+   ┌───────────┐   ┌───────────┐ ┌───────────┐   ┌───────────┐
+   │ Project 1 │   │ Project 2 │ │ Project 3 │   │ Project 4 │
+   │ (Sales)   │   │ (Support) │ │ (Marketing│   │ (VIP)     │
+   └───────────┘   └───────────┘ └───────────┘   └───────────┘
 ```
 
-1. **Account (`accounts`)**: Top-level tenant billing boundary.
-2. **Project (`projects`)**: Complete data-isolation silo. Every contact, conversation, message, WhatsApp configuration, pipeline, automation, and API key belongs to a specific `project_id`.
-3. **Roles & Permissions**:
-   - **`super_admin`**: Global system administrator. Can access `/admin`, create/delete projects, provision customer credentials, inspect audit logs, and view cross-tenant channel health.
-   - **`admin` (Project Administrator)**: Manages channels, team members, automations, templates, and settings within their assigned project.
-   - **`agent` (Support / Sales Agent)**: Interacts with the unified inbox, manages contacts, updates deal stages, and executes quick replies without access to project-level settings.
-
-### 3.2 Automated Customer Onboarding & Cascading Deletion
-- **Creation (`POST /api/admin/users`)**:
-  1. Creates Supabase Auth user record.
-  2. Generates customer profile and links `account_id` and `platform_role = 'customer'`.
-  3. Assigns project membership in `project_members`.
-  4. Dispatches an automated branded welcome email via Nodemailer SMTP with temporary password and direct workspace URL (`https://wacrm.cloudmasa.com/login`).
-  5. Displays on-screen credentials handover modal with one-click clipboard copy.
-- **Deletion (`DELETE /api/projects/[id]`)**:
-  1. Automatically identifies all customer accounts and agents assigned to the project.
-  2. Deletes user records from `onboarded_customers`, `project_members`, `profiles`, and `auth.users` in Supabase Auth.
-  3. Purges all messages, conversations, media, contacts, deals, automations, flows, and channel configs.
-  4. Protects the acting Super Admin account from accidental deletion.
+1. **Account (`accounts`)**: Highest-level organization unit managing billing, global features, and platform identity.
+2. **Project (`projects`)**: Complete data-isolation boundary. Every contact, conversation, WhatsApp session, email config, pipeline deal, automation flow, and API key is strictly scoped to a single `project_id`.
+3. **Session Switching**: Users switch projects effortlessly via the top navigation bar. When active, all data fetching (`masacrm_project` cookie) automatically bounds queries to that project's boundary.
 
 ---
 
-## 4. Channels & Messaging Engines
+### 3.2 Role Permissions Matrix & Designated Default Admin
 
-### 4.1 WhatsApp QR Baileys Gateway
-- **Mechanism**: Connects via WhatsApp Web multi-device socket protocol using `@whiskeysockets/baileys`.
-- **Key Capabilities**:
-  - Real-time QR code generation streamed via Server-Sent Events (SSE).
-  - Encrypted auth credentials stored in PostgreSQL `qr_sessions` table with AES-256-GCM encryption.
-  - Inbound & outbound text, media (images, videos, audio, PDF documents, voice notes), reaction emojis, and read receipts.
-  - Automatic reconnection handling, keep-alive heartbeat, and disconnect diagnostics.
-- **Gateway Endpoints**:
-  - `POST /api/whatsapp/qr/session`: Initialize or retrieve QR pairing string.
-  - `DELETE /api/whatsapp/qr/session`: Log out and purge stored session.
-  - `POST /api/whatsapp/qr/send`: Dispatch outbound message through Baileys socket.
+| Capability / Action | Super Admin | Default Admin (`default_admin`) | Project Admin | Agent |
+| :--- | :---: | :---: | :---: | :---: |
+| Access Global Platform `/admin` | ✅ | ❌ | ❌ | ❌ |
+| Create / Delete Client Accounts & Projects | ✅ | ❌ | ❌ | ❌ |
+| Demote / Delete Default Primary Admin | ✅ | ❌ | ❌ | ❌ |
+| Switch Other Members (Agent $\leftrightarrow$ Admin) | ✅ | ✅ | ✅ | ❌ |
+| Connect / Disconnect Project WhatsApp & Email | ✅ | ✅ | ✅ | ❌ |
+| Configure Visual Automation Flows & Triggers | ✅ | ✅ | ✅ | ❌ |
+| Access Unified Inbox & Reply to Customers | ✅ | ✅ | ✅ | ✅ |
+| Update Deal Stages, Tags, and Custom Fields | ✅ | ✅ | ✅ | ✅ |
+| View Assigned Conversations & Claim Chats | ✅ | ✅ | ✅ | ✅ |
 
-### 4.2 Meta WhatsApp Cloud API
-- **Mechanism**: Official Meta Graph API integration (`v21.0`).
-- **Key Capabilities**:
-  - Official WhatsApp Business Account (WABA) registration and PIN verification.
-  - Two-way Webhook processing with HMAC-SHA256 signature verification (`X-Hub-Signature-256`).
-  - Template Message Sync, creation, variable mapping, media headers, and submit-for-approval flow.
-  - Interactive messages (List messages, Quick reply buttons, CTA URL buttons).
+#### The Designated Default Admin Safeguard
+- When the Super Admin provisions a customer account, the primary contact is marked with the `default_admin` tag (`is_default_admin = true`) in the database.
+- **Protection**: Other project administrators cannot accidentally demote, lock out, or delete the primary default admin. A distinctive purple badge appears in the **Settings $\to$ Team Members** UI.
+- Other team members can freely be elevated to Admin or transitioned back to Agent by the Default Admin or Super Admin.
 
-### 4.3 Social Media Channels
-- **Instagram Direct**: Real-time DM syncing, story mentions, and customer conversation threading.
-- **Facebook Messenger**: Page inbox synchronization with support for rich text and attachments.
+---
+
+## 4. Channels & Messaging Architecture
+
+### 4.1 WhatsApp Web QR Gateway (Baileys Multi-Device)
+- **Protocol**: Native WhatsApp Web multi-device WebSockets connection via `@whiskeysockets/baileys`.
+- **Zero-Meta Approval**: Works with standard WhatsApp and WhatsApp Business phone numbers without requiring Meta Business verification.
+- **Port & Process**: Runs on dedicated microservice port `8088` (or customizable via `WHATSAPP_GATEWAY_URL`).
+- **Features**:
+  - Real-time QR pairing string streamed to frontend via Server-Sent Events (SSE).
+  - AES-256-GCM encrypted session credentials stored in PostgreSQL `qr_sessions`.
+  - Full support for Inbound/Outbound text, images, videos, audio, PDF documents, voice notes, reaction emojis, and delivery receipts (`sent`, `delivered`, `read`).
+  - Automatic reconnection, keep-alive heartbeats, and graceful disconnect handling.
+
+---
+
+### 4.2 WhatsApp Address Book Sync & Smart Contact Cleanup Engine
+When a WhatsApp device connects, WhatsApp automatically syncs the phone's personal address book. In high-volume environments, this can inject hundreds of non-customer contacts into the database.
+
+CloudMaSa CRM solves this with a built-in **Smart Cleanup Engine** ([`src/lib/contacts/cleanup-synced.ts`](file:///c:/Users/Admin/Downloads/whatsappcrm-qr-gateway%20(1)-/whatsappcrm-qr-gateway/src/lib/contacts/cleanup-synced.ts)):
+
+```mermaid
+flowchart TD
+    Start["WhatsApp Disconnect or Clean Triggered"] --> Query["Inspect All Contacts in Project"]
+    Query --> CheckActivity{"Does contact have CRM interaction?"}
+    
+    CheckActivity -- "YES" --> Keep["STRICTLY PRESERVE CONTACT<br/>• Has email or company<br/>• Active messages (sender_type = 'agent')<br/>• Assigned to an agent<br/>• Has tags or deals<br/>• Part of a broadcast"]
+    
+    CheckActivity -- "NO" --> Delete["PURGE PASSIVE CONTACT<br/>Zero messages sent by team,<br/>no tags, no deals, unassigned"]
+```
+
+- **Automatic Trigger**: Automatically executes whenever a WhatsApp session is disconnected (`DELETE /api/whatsapp/qr`, gateway `session.disconnected`, or `session.logout`).
+- **On-Demand Trigger**: Available directly in **Settings $\to$ Channels $\to$ Clean Synced Contacts** or via `POST /api/contacts/cleanup-synced`.
+- **Safety Guarantee**: Only completely un-interacted address book entries are purged; all customer conversations and pipeline leads are 100% retained.
+
+---
+
+### 4.3 Project-Specific Email Connection & SMTP Campaign Engine
+Email campaigns and client notifications are **strictly isolated per project** ([`src/lib/email/transport.ts`](file:///c:/Users/Admin/Downloads/whatsappcrm-qr-gateway%20(1)-/whatsappcrm-qr-gateway/src/lib/email/transport.ts)):
+
+- **Database Structure**: Stored in `public.email_configs` with `UNIQUE (project_id)`.
+- **Supported Providers & Quick Presets**:
+  - **Gmail / Google Workspace**: Dedicated App Password setup (`smtp.gmail.com:587` / `465`).
+  - **Microsoft Outlook / Office 365**: Direct TLS SMTP (`smtp.office365.com:587`).
+  - **Zoho Mail**: Secure Zoho SMTP (`smtp.zoho.com:465`).
+  - **Custom SMTP**: Any corporate or self-hosted mail server.
+- **Zero Cross-Project Leakage**:
+  - Each project manages its own sending address and display name.
+  - Sibling projects never share or leak email credentials.
+  - Campaigns for an unconfigured project will reject sending rather than mistakenly sending from another client's address.
+- **Campaign Capabilities**:
+  - Dynamic Merge Tags: `{{name}}`, `{{email}}`, `{{company}}`.
+  - 1x1 Transparent Open Tracking Pixel automatically injected before `</body>`.
+  - Click-Tracking URL Rewriting (`/api/email/track/click/[token]`).
+  - Detailed recipient delivery logs (`email_campaign_recipients`).
+
+---
+
+### 4.4 Meta WhatsApp Cloud API & Social Inboxes
+- **Meta WhatsApp Cloud API**: Direct Graph API (`v21.0`) integration for enterprise WhatsApp Business Accounts (WABA) with official template sync, HSM approvals, and quick-reply buttons.
+- **Instagram Direct**: Live DM syncing, story mentions, and customer profile ingestion.
+- **Facebook Messenger**: Facebook Page messaging with two-way media and attachment handling.
+- **Channel Readiness Health Monitor** (`/api/channels/readiness`): Provides instant visual status across all channels for any active project.
 
 ---
 
 ## 5. Core Platform Modules
 
 ### 5.1 Unified Omnichannel Inbox
-- **Real-Time Synchronization**: Backed by Supabase PostgreSQL CDC (Change Data Capture) and Server-Sent Events.
-- **Conversation Management**:
-  - Filter by status (`Open`, `Pending`, `Resolved`, `Spam`), channel (`QR`, `Cloud API`, `Instagram`, `Facebook`), and assigned agent.
-  - Internal Team Notes (`contact_notes`) for collaborative triage.
-  - Typing indicators & presence tracking (`presence.ts`).
-  - Emoji reaction picker with instant remote synchronization.
-  - Rich media viewer for audio recordings, video players, and inline PDF previews.
+- **Real-Time Synchronization**: Built on Supabase Realtime CDC and Server-Sent Events for instant message delivery without page reloads.
+- **Chat Management**: Filter by channel (`WhatsApp QR`, `Cloud API`, `Instagram`, `Facebook`), assignment (`My Chats`, `Unassigned`, `All`), and status (`Open`, `Pending`, `Resolved`).
+- **Agent Collaboration**: Internal private notes (`contact_notes`), typing indicators, and seamless chat transfer between agents.
+- **Rich Media & Reactions**: Audio recorder/player for voice notes, image gallery viewer, PDF previews, and emoji reactions.
 
-### 5.2 Contact & Lead Management
-- **Custom Data Attributes**: Dynamic field builder (`custom_fields`) supporting strings, numbers, dates, dropdowns, and booleans.
-- **Color-Coded Tags**: Granular tag categorization with trigger dispatches for automations.
-- **CSV Ingestion Engine**: High-speed CSV parser with field mapping, phone number standardisation (E.164), and deduplication rules.
+### 5.2 Contacts & Lead Management
+- **Custom Attributes**: Flexible custom field definitions (Text, Number, Date, Dropdown, Boolean).
+- **Tagging System**: Multi-color tagging with automated trigger hooks into visual workflows.
+- **CSV Ingestion**: Bulk contact import with column mapping, international E.164 phone formatting, and duplicate resolution.
 
-### 5.3 Visual Automation Flow Builder
-- **Canvas**: Node-based visual drag-and-drop workflow canvas built on React Flow.
-- **Node Types**:
-  - **Triggers**: Inbound Message Received, Keyword Match, Tag Added, Contact Created.
-  - **Conditions**: Check custom field value, time-of-day / business hours check, channel check.
-  - **Actions**: Send WhatsApp Message, Send Template, Add/Remove Tags, Update Custom Field, Assign Agent, Trigger Webhook.
-  - **AI / Handoff**: Route to AI Agent with RAG prompt, Human Handoff flag.
+### 5.3 Deals & Sales Pipeline
+- **Kanban Board**: Drag-and-drop pipeline stages (`Lead`, `Contacted`, `Qualified`, `Proposal`, `Negotiation`, `Won`, `Lost`).
+- **Multi-Currency Support**: Formatted for USD, EUR, INR, GBP, AED, and customizable currency symbols.
+- **Conversion Tracking**: Visual analytics showing stage velocity and total pipeline monetary value.
 
-### 5.4 Deals & Sales Pipeline
-- **Kanban Board**: Drag-and-drop stages (`Lead`, `Contacted`, `Qualified`, `Proposal`, `Negotiation`, `Won`, `Lost`).
-- **Multi-Currency Support**: Configurable currency formatting (USD, EUR, INR, GBP, AED, etc.).
-- **Deal Metrics**: Real-time conversion tracking and pipeline value aggregation.
+### 5.4 Visual Automation Flow Builder
+- **Node-Based Canvas**: Drag-and-drop workflow designer powered by React Flow.
+- **Triggers**: Inbound Message, Keyword Match, Tag Added, Deal Stage Changed, Webhook Received.
+- **Condition Nodes**: Custom field checks, Business Hours/Time routing, Channel filters.
+- **Action Nodes**: Send Message, Send Template, Add/Remove Tags, Update Custom Field, Assign to Agent.
+- **AI Router & Handoff**: Connects to the RAG engine for automated conversational answers, with automatic fallback to human agents when confidence is low.
 
-### 5.5 AI Knowledge Base & RAG Engine
-- **Document Chunking & Embeddings**: Ingests company documentation, policies, and product catalogs. Generates vector embeddings via OpenAI `text-embedding-3-small` or local Ollama.
-- **Vector Storage**: Stored in PostgreSQL with `pgvector` indexing.
-- **Context Injection**: Automatically injects top-$K$ semantic document chunks into the conversation buffer when the AI auto-reply agent responds to customers.
+### 5.5 AI Knowledge Base (RAG Engine)
+- Ingests company documentation, product catalogs, PDFs, and standard operating procedures.
+- Generates vector embeddings using OpenAI `text-embedding-3-small` or local Ollama instances.
+- Stores vectors in PostgreSQL using `pgvector`.
+- Automatically retrieves top-K matching knowledge chunks and provides context-grounded answers to customer queries.
 
 ---
 
-## 6. Security, Cryptography & Governance
+## 6. Security, Cryptography & Data Governance
 
-| Security Layer | Implementation Details |
+| Security Domain | Architecture & Standard |
 | :--- | :--- |
-| **Token Encryption** | Access tokens, WhatsApp QR credentials, and API secrets are encrypted at rest using **AES-256-GCM** via `ENCRYPTION_KEY`. |
-| **Row Level Security (RLS)** | Enabled on all PostgreSQL tables. Ensures callers only access data where `account_id` or `project_id` matches their authenticated session. |
-| **Webhook Verification** | Inbound Meta webhooks validated via `X-Hub-Signature-256` HMAC-SHA256. QR Gateway webhooks verified via `GATEWAY_SIGNING_SECRET`. |
-| **SSRF Guard** | Webhook dispatcher inspects URLs and blocks local/private IP ranges (`127.0.0.1`, `10.0.0.0/8`, `192.168.0.0/16`, cloud metadata endpoints). |
-| **Audit Trails** | All administrative actions, user creation/deletion, and project mutations logged in `security_audit_logs`. |
+| **Credential Encryption** | WhatsApp QR sessions, API keys, and SMTP passwords encrypted at rest using **AES-256-GCM** via server-side `ENCRYPTION_KEY`. |
+| **Row Level Security (RLS)** | Enabled on all PostgreSQL tables. Ensures callers only access data where `account_id` and `project_id` match their authenticated session. |
+| **SSR Cookie Authentication** | Next.js Server Components and API routes read secure `HttpOnly` Supabase session cookies (`sb-<ref>-auth-token`). |
+| **Webhook Verification** | Inbound Meta Graph webhooks validated via `X-Hub-Signature-256` HMAC-SHA256. QR Gateway webhooks verified via `WHATSAPP_GATEWAY_SIGNING_SECRET`. |
+| **SSRF Protection** | Outbound webhook dispatchers validate target hosts, blocking loopback and private subnets (`127.0.0.1`, `10.0.0.0/8`, `192.168.0.0/16`, AWS/GCP metadata endpoints). |
+| **Audit Trails** | All user onboarding, role changes, project mutations, and deletions recorded in `security_audit_logs`. |
 
 ---
 
@@ -197,28 +242,28 @@ graph TD
 
 ```ini
 # ==============================================================================
-# CloudMaSa WhatsApp CRM (WACRM) Environment Configuration
+# CloudMaSa CRM (MaSa CRM) Environment Configuration
 # ==============================================================================
 
-# --- Supabase Database & Auth ---
+# --- Supabase Database & Authentication ---
 NEXT_PUBLIC_SUPABASE_URL=https://twpuqntljgavimlocplg.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
-# --- Application URLs ---
-NEXT_PUBLIC_SITE_URL=https://wacrm.cloudmasa.com
+# --- Application URLs & Localization ---
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
 NEXT_PUBLIC_APP_LOCALE=en
 
-# --- Cryptography (64 hex characters) ---
+# --- Cryptography (64-character hex string for AES-256-GCM) ---
 ENCRYPTION_KEY=0818e6bd2f12b6e14376567ff2da1f16311f4a1c6e947b4221af1d523cd6f4a5
 
-# --- WhatsApp QR Baileys Gateway ---
+# --- WhatsApp QR Baileys Gateway Service ---
 WHATSAPP_GATEWAY_URL=http://localhost:8088
 WHATSAPP_GATEWAY_TOKEN=bb51f78d8402e36fd2551b4983fa5d35319b5c22a1b0a551950c23f90d371b38
 WHATSAPP_GATEWAY_SIGNING_SECRET=ccbd77a6fb045ee05fc331def15725fa3e79a81f01d738f11f485f2c08af5bc2
 WHATSAPP_GATEWAY_WEBHOOK_SECRET=267377ac40f018c2776184eca45af13d9a725847350c95964681d76e17eaf27c
 
-# --- SMTP / Onboarding Email Service ---
+# --- System Onboarding SMTP Service (Fallback for New Admin Invitations) ---
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
@@ -227,137 +272,103 @@ SMTP_PASS=octv mgwu jnse gknm
 SMTP_FROM=info@cloudmasa.com
 SMTP_FROM_NAME="CloudMaSa WhatsApp CRM"
 
-# --- AI & LLM Providers (Optional) ---
+# --- AI & Knowledge Base Providers (Optional) ---
 OPENAI_API_KEY=sk-...
 GEMINI_API_KEY=AIzaSy...
 ```
 
 ---
 
-## 8. Production Deployment & Operations Guide
+## 8. Developer Quick Start & Operations Guide
 
-### 8.1 Docker Compose Deployment
-The repository includes a multi-container `docker-compose.yml` for zero-downtime production deployment:
+### 8.1 Local Development Setup
 
-```yaml
-version: '3.8'
+#### 1. Prerequisites
+- **Node.js**: v20+ or v24 LTS
+- **Package Manager**: `npm`
+- **Supabase**: Active Supabase project with PostgreSQL 15+
 
-services:
-  web:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: wacrm-web
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    env_file:
-      - .env
-    environment:
-      - NODE_ENV=production
-    depends_on:
-      - gateway
+#### 2. Start Application Server
+```bash
+# Install root dependencies
+npm install
 
-  gateway:
-    build:
-      context: ./gateway
-      dockerfile: Dockerfile
-    container_name: wacrm-qr-gateway
-    restart: unless-stopped
-    ports:
-      - "8088:8088"
-    env_file:
-      - .env
-    environment:
-      - NODE_ENV=production
-      - PORT=8088
+# Start Next.js App Router server (Port 3000)
+npm run dev
 ```
 
-### 8.2 Production Build & Startup Commands
+#### 3. Start WhatsApp Baileys Gateway Server
 ```bash
-# 1. Install dependencies
-npm install --frozen-lockfile
+# Navigate to gateway microservice directory
+cd gateway
 
-# 2. Run database migrations
-npx supabase db push
+# Install gateway dependencies
+npm install
 
-# 3. Validate TypeScript type safety
+# Start Baileys gateway service (Port 8088)
+npm run dev
+```
+
+The application will be live at `http://localhost:3000` and the gateway microservice at `http://localhost:8088`.
+
+---
+
+### 8.2 Production Build & Quality Checks
+```bash
+# 1. Typecheck the entire TypeScript codebase
 npm run typecheck
 
-# 4. Run automated test suites
+# 2. Run automated test suites (Vitest)
 npm run test:run
 
-# 5. Build production bundle
+# 3. Create production bundle
 npm run build
 
-# 6. Start production server
+# 4. Start production Next.js server
 npm run start
 ```
 
-### 8.3 Nginx Reverse Proxy Configuration
-```nginx
-server {
-    listen 80;
-    server_name wacrm.cloudmasa.com;
-    return 301 https://$host$request_uri;
-}
+---
 
-server {
-    listen 443 ssl http2;
-    server_name wacrm.cloudmasa.com;
+### 8.3 Docker & Docker Compose Deployment
+The repository includes production multi-stage Dockerfiles and `docker-compose.yml`:
 
-    ssl_certificate /etc/letsencrypt/live/wacrm.cloudmasa.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/wacrm.cloudmasa.com/privkey.pem;
+```bash
+# Build and run web application and gateway in background
+docker compose up -d --build
 
-    # Client upload size (for attachments and CSVs)
-    client_max_body_size 64M;
-
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 86400s;
-        proxy_send_timeout 86400s;
-    }
-}
+# View logs
+docker compose logs -f
 ```
 
 ---
 
-## 9. REST API Reference (`/api/v1`)
+## 9. Verification & Automated Test Matrix
 
-All REST API endpoints authenticate via Bearer API Keys created in **Settings $\to$ API Keys**.
+The platform undergoes rigorous automated testing to prevent regressions across releases:
 
-### 9.1 Contacts
-- `GET /api/v1/contacts`: List contacts with pagination (`?page=1&limit=50`).
-- `POST /api/v1/contacts`: Create or update a contact.
-- `GET /api/v1/contacts/{id}`: Retrieve contact profile, custom fields, and conversation history.
-
-### 9.2 Messages
-- `POST /api/v1/messages`: Dispatch an outbound message.
-  ```json
-  {
-    "to": "+919876543210",
-    "type": "text",
-    "text": "Hello! Your order has been dispatched."
-  }
-  ```
-
-### 9.3 Webhooks
-- `POST /api/v1/webhooks`: Register a webhook endpoint to receive real-time events (`message.received`, `message.delivered`, `contact.created`, `deal.updated`).
+- **TypeScript Compilation**: `0 errors` (`tsc --noEmit`).
+- **Vitest Unit & Integration Suites**: **71 test suites / 762 automated tests passing**.
+- **Email Flow & Isolation Suite**: [`src/lib/email/email-flow.test.ts`](file:///c:/Users/Admin/Downloads/whatsappcrm-qr-gateway%20(1)-/whatsappcrm-qr-gateway/src/lib/email/email-flow.test.ts) validates project email isolation, merge tag replacement, open/click tracking URLs, and preset configurations.
+- **End-to-End Live Workflow**: Validated across all 11 core CRM operations (Authentication, Protected Default Admin, Team Role Management, Project SMTP, Contact Cleanup, Unified Inbox, QR Gateway, Templates, Campaigns, and Readiness).
 
 ---
 
-## 10. Verification & Quality Standards
+## 10. REST API Quick Reference (`/api/v1`)
 
-- **TypeScript Typecheck**: `0 errors` (`tsc --noEmit`).
-- **Vitest Test Suite**: **71 test suites / 762 automated unit and integration tests passing cleanly**.
-- **Security Audits**: Comprehensive RLS enforcement across all tables and encrypted credential storage.
+All external API endpoints authenticate using Bearer API tokens generated in **Settings $\to$ API Keys**:
+
+| Endpoint | Method | Description |
+| :--- | :---: | :--- |
+| `/api/v1/contacts` | `GET` | Paginated contact listing (`?page=1&limit=50`). |
+| `/api/v1/contacts` | `POST` | Create or update a contact with custom attributes. |
+| `/api/v1/contacts/{id}` | `GET` | Retrieve full contact profile and conversation timeline. |
+| `/api/v1/messages` | `POST` | Dispatch outbound WhatsApp/SMS message. |
+| `/api/v1/webhooks` | `POST` | Register real-time webhook subscriptions. |
+| `/api/channels/readiness` | `GET` | Channel health check for active project. |
+| `/api/email/config` | `GET/POST/DELETE` | Project-scoped SMTP configuration. |
+| `/api/contacts/cleanup-synced`| `POST` | Purge un-used WhatsApp synced contacts while preserving CRM contacts. |
 
 ---
-*Documentation maintained by CloudMaSa Engineering Team • CloudMaSa WhatsApp CRM (WACRM).*
+
+*Documentation maintained by the CloudMaSa Engineering Team • CloudMaSa CRM (MaSa CRM).*

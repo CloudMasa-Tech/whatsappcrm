@@ -74,7 +74,8 @@ describe("email/config authorization", () => {
 
   it("POST requires the admin role", () => {
     // SMTP credentials decide where every outbound email originates.
-    expect(handlerBody(source, "POST")).toContain("requireRole('admin')");
+    const body = handlerBody(source, "POST");
+    expect(body.includes("requireProjectRole('admin')") || body.includes("requireRole('admin')")).toBe(true);
   });
 
   it("GET stays readable by any account member", () => {

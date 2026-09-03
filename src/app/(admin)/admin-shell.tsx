@@ -107,18 +107,23 @@ function AdminShellInner({ children }: { children: React.ReactNode }) {
         )}
       >
         {/* Logo */}
-        <div className="flex h-20 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
-          <Link href="/admin" className="flex items-center gap-2 py-1.5">
-            <Image
-              src="/logo.png"
-              alt="MaSa CRM Admin"
-              width={190}
-              height={52}
-              className="h-11 w-auto max-w-[165px] object-contain"
-              priority
-            />
-            <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-primary">
-              ADMIN
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3.5">
+          <Link href="/admin" className="flex flex-col items-start gap-1 py-0.5">
+            <div className="flex items-center gap-2">
+              <Image
+                src="/logo.png"
+                alt="MaSa CRM Admin"
+                width={240}
+                height={68}
+                className="h-12 w-auto max-w-[185px] object-contain"
+                priority
+              />
+              <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-primary">
+                ADMIN
+              </span>
+            </div>
+            <span className="text-[11px] font-semibold text-muted-foreground/85 tracking-tight pl-0.5">
+              All-in-One Social Media Platform
             </span>
           </Link>
           <button

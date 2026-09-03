@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 
 import { verifySignatureHeader } from '@/lib/webhooks/sign'
 import { ingestInboundMessage } from '@/lib/inbound/ingest'
+import { cleanupSyncedWhatsAppContacts } from '@/lib/contacts/cleanup-synced'
 import type { InboundMessage, MessageKind } from '@/lib/channels/types'
 
 // ============================================================
@@ -176,6 +177,43 @@ async function applyReaction(raw: unknown): Promise<void> {
   }
 }
 
+/** Sync contact names arriving from WhatsApp address book / chat sync. */
+async function applyContactsBatch(raw: unknown): Promise<void> {
+  if (!raw || typeof raw !== 'object') return
+  const p = raw as {
+    projectId?: string
+    contacts?: Array<{ phone: string; name?: string | null }>
+  }
+  if (!isUuid(p.projectId) || !Array.isArray(p.contacts)) return
+
+  for (const c of p.contacts) {
+    if (!c.phone || !c.name || !c.name.trim() || c.name.startsWith('+')) continue
+    const phone = c.phone.trim()
+    const name = c.name.trim()
+
+    const { data: existing } = await supabaseAdmin()
+      .from('contacts')
+      .select('id, name')
+      .eq('project_id', p.projectId)
+      .eq('phone', phone)
+      .maybeSingle()
+
+    if (existing) {
+      if (
+        !existing.name ||
+        existing.name === phone ||
+        existing.name.startsWith('+') ||
+        existing.name !== name
+      ) {
+        await supabaseAdmin()
+          .from('contacts')
+          .update({ name, updated_at: new Date().toISOString() })
+          .eq('id', existing.id)
+      }
+    }
+  }
+}
+
 export async function POST(request: Request) {
   const secret = process.env.WHATSAPP_GATEWAY_WEBHOOK_SECRET
   if (!secret) {
@@ -189,7 +227,7 @@ export async function POST(request: Request) {
   // Raw text, not request.json(): the signature covers these exact
   // bytes and re-serialising would change them.
   const rawBody = await request.text()
-  const signature = request.headers.get('x-wacrm-signature')
+  const signature = request.headers.get('x-masacrm-signature') || request.headers.get('x-wacrm-signature')
 
   if (
     !signature ||
@@ -217,6 +255,19 @@ export async function POST(request: Request) {
 
   if (event.type === 'reaction') {
     await applyReaction(event.payload)
+    return NextResponse.json({ ok: true })
+  }
+
+  if (event.type === 'contacts') {
+    await applyContactsBatch(event.payload)
+    return NextResponse.json({ ok: true })
+  }
+
+  if (event.type === 'session.disconnected' || event.type === 'session.logout') {
+    const p = event.payload as { projectId?: string } | undefined
+    if (p?.projectId && isUuid(p.projectId)) {
+      await cleanupSyncedWhatsAppContacts(supabaseAdmin(), p.projectId)
+    }
     return NextResponse.json({ ok: true })
   }
 

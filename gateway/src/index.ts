@@ -54,7 +54,7 @@ app.use("/v1/*", async (c, next) => {
   // Read the raw body once and stash it: the signature covers these
   // exact bytes, and re-serialising a parsed object would change them.
   const rawBody = c.req.method === "GET" ? "" : await c.req.text();
-  const signature = c.req.header("x-wacrm-signature");
+  const signature = c.req.header("x-masacrm-signature") || c.req.header("x-wacrm-signature");
 
   if (
     !signature ||

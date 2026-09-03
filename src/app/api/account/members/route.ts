@@ -29,6 +29,7 @@ interface ProfileRow {
   avatar_url: string | null;
   account_role: string;
   platform_role?: string | null;
+  beta_features?: string[] | null;
   created_at: string;
 }
 
@@ -125,7 +126,7 @@ export async function GET(request: Request) {
     // Query profiles
     let profilesQuery = supabaseAdmin()
       .from("profiles")
-      .select("user_id, full_name, email, avatar_url, account_role, platform_role, created_at")
+      .select("user_id, full_name, email, avatar_url, account_role, beta_features, platform_role, created_at")
       .eq("account_id", ctx.accountId)
       .order("created_at", { ascending: true });
 
@@ -219,6 +220,7 @@ export async function GET(request: Request) {
           project_id: primaryProject?.id ?? null,
           project_name: primaryProject?.name ?? null,
           projects: userProjects,
+          is_default_admin: (row.beta_features ?? []).includes('default_admin'),
         },
       ];
     });

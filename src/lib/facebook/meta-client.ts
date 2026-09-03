@@ -191,3 +191,48 @@ export async function sendFacebookMessage(params: {
     };
   }
 }
+
+export interface FacebookDiscoveredPage {
+  id: string;
+  name: string;
+  category?: string;
+  accessToken: string;
+  profilePictureUrl: string | null;
+}
+
+/**
+ * Fetch all Facebook Pages associated with a User Access Token.
+ */
+export async function fetchUserFacebookPages(
+  userAccessToken: string,
+): Promise<FacebookDiscoveredPage[]> {
+  const cleanToken = userAccessToken.trim();
+  const url = `${GRAPH_BASE}/me/accounts?fields=id,name,category,access_token,picture{url}&access_token=${encodeURIComponent(cleanToken)}`;
+
+  const response = await fetch(url, { cache: 'no-store' });
+  const payload = (await response.json().catch(() => ({}))) as {
+    data?: Array<{
+      id: string;
+      name: string;
+      category?: string;
+      access_token: string;
+      picture?: { data?: { url?: string } };
+    }>;
+    error?: { message?: string };
+  };
+
+  if (!response.ok || payload.error) {
+    throw new Error(
+      payload.error?.message ?? `Failed to fetch Facebook Pages (${response.status})`,
+    );
+  }
+
+  const pages = payload.data || [];
+  return pages.map((p) => ({
+    id: p.id,
+    name: p.name,
+    category: p.category,
+    accessToken: p.access_token,
+    profilePictureUrl: p.picture?.data?.url ?? null,
+  }));
+}

@@ -1,7 +1,7 @@
 # QR sessions + org/project multi-tenancy — design & migration plan
 
 Status: **proposal, awaiting approval**. No code written yet.
-Target repo state: `master` @ `885114b`, wacrm 0.8.0, Next 16.2.12, Supabase.
+Target repo state: `master` @ `885114b`, MaSa CRM 0.8.0, Next 16.2.12, Supabase.
 
 ---
 
@@ -329,7 +329,7 @@ POST   /v1/sessions/:projectId/messages    → { to, type, text|mediaUrl, captio
 GET    /health                             → { ok, sessions: n }
 ```
 
-Every request carries `Authorization: Bearer <GATEWAY_API_TOKEN>` plus `X-Wacrm-Timestamp` and `X-Wacrm-Signature` (HMAC-SHA256 over timestamp + raw body), with a ±5 minute replay window.
+Every request carries `Authorization: Bearer <GATEWAY_API_TOKEN>` plus `X-MasaCRM-Timestamp` and `X-MasaCRM-Signature` (HMAC-SHA256 over timestamp + raw body), with a ±5 minute replay window.
 
 Gateway → CRM: `POST /api/channels/qr/events`, signed the same way with a separate secret, carrying `{ projectId, type: 'message' | 'status' | 'receipt', payload }`. The CRM verifies the signature before touching the body. This mirrors the discipline already applied to Meta deliveries in `src/lib/whatsapp/webhook-signature.ts`.
 
@@ -370,7 +370,7 @@ export async function getCurrentProject(): Promise<ProjectContext>;
 export async function requireProjectRole(min: AccountRole): Promise<ProjectContext>;
 ```
 
-The active project comes from a `wacrm_project` cookie, **always re-validated server-side** against `is_project_member` — a cookie is a hint, never an authorisation. Falls back to the user's first accessible project. Then every one of the ~589 `account_id` call sites gets audited: most become `project_id`, a few (member management, invitations, billing) stay org-level.
+The active project comes from a `masacrm_project` cookie, **always re-validated server-side** against `is_project_member` — a cookie is a hint, never an authorisation. Falls back to the user's first accessible project. Then every one of the ~589 `account_id` call sites gets audited: most become `project_id`, a few (member management, invitations, billing) stay org-level.
 
 **UI:** project switcher in `src/app/(dashboard)/dashboard-shell.tsx`; `/settings/projects` for create / rename / archive / assign members; `/settings/channels` for the QR pairing flow (modal with live QR, countdown, connected state, disconnect, re-pair).
 

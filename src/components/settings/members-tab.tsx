@@ -27,7 +27,9 @@ import { toast } from 'sonner';
 import {
   AlertTriangle,
   FolderKanban,
+  Headphones,
   Loader2,
+  Shield,
   Trash2,
   UsersRound,
 } from 'lucide-react';
@@ -49,6 +51,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { cn } from '@/lib/utils';
 import { useTranslations } from 'next-intl';
 import { useAuth } from '@/hooks/use-auth';
 import { usePresence } from '@/hooks/use-presence';
@@ -75,6 +85,7 @@ interface Member {
     name: string;
     channel_type?: string;
   }>;
+  is_default_admin?: boolean;
 }
 
 interface Invitation {
@@ -416,12 +427,50 @@ export function MembersTab() {
                       </p>
                     </div>
 
-                    <span
-                      className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-medium ${roleMeta.className}`}
-                    >
-                      <RoleIcon className="size-3.5" />
-                      {tRoles(member.role)}
-                    </span>
+                    {member.is_default_admin ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-md border border-purple-500/30 bg-purple-500/10 px-2.5 py-1 text-xs font-semibold text-purple-400 shadow-sm shadow-purple-500/5">
+                        <Shield className="size-3.5 text-purple-400" />
+                        Default Admin
+                      </span>
+                    ) : canManageMembers && !isOwnerRow && !isSelf ? (
+                      <Select
+                        value={member.role === 'admin' ? 'admin' : 'agent'}
+                        onValueChange={(val) => void handleRoleChange(member, val as AccountRole)}
+                        disabled={isBusy}
+                      >
+                        <SelectTrigger
+                          className={cn(
+                            "h-7 w-28 gap-1.5 rounded-md border px-2 py-0 text-xs font-medium capitalize focus:ring-1 transition-colors",
+                            member.role === 'admin'
+                              ? "bg-purple-500/10 text-purple-400 border-purple-500/30 hover:bg-purple-500/20"
+                              : "bg-blue-500/10 text-blue-400 border-blue-500/30 hover:bg-blue-500/20"
+                          )}
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-popover border-border">
+                          <SelectItem value="agent" className="text-xs cursor-pointer">
+                            <span className="flex items-center gap-1.5">
+                              <Headphones className="size-3.5 text-blue-400" />
+                              Agent
+                            </span>
+                          </SelectItem>
+                          <SelectItem value="admin" className="text-xs cursor-pointer">
+                            <span className="flex items-center gap-1.5">
+                              <Shield className="size-3.5 text-purple-400" />
+                              Admin
+                            </span>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-medium ${roleMeta.className}`}
+                      >
+                        <RoleIcon className="size-3.5" />
+                        {tRoles(member.role)}
+                      </span>
+                    )}
 
                     {isSuperAdmin && !isOwnerRow && !isSelf && (
                       <Button

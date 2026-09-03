@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/hooks/use-auth";
 import { InstagramHub } from "@/components/instagram/instagram-hub";
-import { Loader2 } from "lucide-react";
+import { Loader2, Shield } from "lucide-react";
 import { Instagram } from "@/components/icons/instagram";
 
 export default function InstagramPage() {

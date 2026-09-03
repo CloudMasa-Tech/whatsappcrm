@@ -201,16 +201,19 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
       >
         {/* Logo row. On mobile we put a close button here; on desktop the
             close button is hidden since the sidebar is always-visible. */}
-        <div className="flex h-20 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
-          <Link href="/dashboard" className="flex items-center gap-2 py-1.5">
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3.5">
+          <Link href="/dashboard" className="flex flex-col items-start gap-1 py-0.5">
             <Image
               src="/logo.png"
               alt="MaSa CRM"
-              width={220}
-              height={60}
-              className="h-12 w-auto max-w-[195px] object-contain"
+              width={260}
+              height={75}
+              className="h-13 w-auto max-w-[205px] object-contain"
               priority
             />
+            <span className="text-[11px] font-semibold text-muted-foreground/85 tracking-tight pl-0.5">
+              All-in-One Social Media Platform
+            </span>
           </Link>
           <button
             type="button"

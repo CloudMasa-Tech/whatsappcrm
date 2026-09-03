@@ -210,6 +210,38 @@ export async function POST(request: Request) {
       );
     }
 
+    const makeCommon = Boolean((payload as any).makeCommon);
+
+    // If created as a common template by superadmin, sync across all active projects
+    if (makeCommon && isSuperAdmin && accountId) {
+      const { data: projects } = await supabase
+        .from('projects')
+        .select('id')
+        .eq('account_id', accountId)
+        .is('archived_at', null);
+
+      if (projects && projects.length > 0) {
+        for (const p of projects) {
+          if (p.id !== projectId) {
+            await upsertTemplateRow(
+              supabase,
+              buildUpsertRow(
+                accountId,
+                p.id,
+                user.id,
+                payload,
+                {
+                  status: 'APPROVED',
+                  metaTemplateId,
+                  submissionError: null,
+                },
+              ),
+            );
+          }
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       template: row,

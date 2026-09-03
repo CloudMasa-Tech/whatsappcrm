@@ -6,6 +6,8 @@ export async function POST(request: Request) {
   try {
     const ctx = await getCurrentAccount();
     const body = (await request.json().catch(() => null)) as {
+      projectId?: string;
+      project_id?: string;
       toEmail?: string;
       host?: string;
       port?: number;
@@ -15,6 +17,8 @@ export async function POST(request: Request) {
       fromName?: string;
       fromEmail?: string;
     } | null;
+
+    const projectId = body?.projectId || body?.project_id;
 
     let to = body?.toEmail?.trim();
     if (!to) {
@@ -94,6 +98,7 @@ export async function POST(request: Request) {
         </div>
       `,
       text: `Email Connection Successful!\n\nThis test message confirms that your email provider is connected.`,
+      projectId,
       accountId: ctx.accountId,
     });
 

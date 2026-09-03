@@ -19,7 +19,7 @@ const MIN_PASSWORD_LEN = 8;
 const MAX_NAME_LEN = 80;
 
 function signInUrl(request?: Request): string {
-  const site = (process.env.NEXT_PUBLIC_SITE_URL || 'https://wacrm.cloudmasa.com').trim().replace(/\/+$/, '');
+  const site = (process.env.NEXT_PUBLIC_SITE_URL || 'https://crm.cloudmasa.com').trim().replace(/\/+$/, '');
   return `${site}/login`;
 }
 
@@ -52,13 +52,13 @@ export async function GET(request: Request) {
 
     // Enrich with role from profiles and project assignments from project_members
     const userIds = (data ?? []).map((c) => c.user_id).filter(Boolean);
-    const userProfilesMap: Record<string, { role?: string | null; platform_role?: string | null; account_role?: string | null }> = {};
+    const userProfilesMap: Record<string, { role?: string | null; platform_role?: string | null; account_role?: string | null; beta_features?: string[] | null }> = {};
     const userProjectsMap: Record<string, { id: string; name: string; channel_type?: string }> = {};
 
     if (userIds.length > 0) {
       const { data: profilesData } = await supabaseAdmin()
         .from('profiles')
-        .select('user_id, role, platform_role, account_role')
+        .select('user_id, role, platform_role, account_role, beta_features')
         .in('user_id', userIds);
 
       if (profilesData) {
@@ -90,6 +90,7 @@ export async function GET(request: Request) {
     let customersWithRole = (data ?? []).map((c: any) => {
       const prof = userProfilesMap[c.user_id];
       const assignedRole = prof?.role === 'admin' ? 'admin' : 'agent';
+      const isDefaultAdmin = Boolean((prof?.beta_features ?? []).includes('default_admin'));
       const rawProj = Array.isArray(c.project) ? c.project[0] : c.project;
       const fallbackProj = userProjectsMap[c.user_id];
       const projectObj = rawProj ?? fallbackProj ?? null;
@@ -97,6 +98,7 @@ export async function GET(request: Request) {
       return {
         ...c,
         role: assignedRole,
+        is_default_admin: isDefaultAdmin,
         project_id: c.project_id || projectObj?.id || null,
         project: projectObj,
         project_name: projectObj?.name ?? null,
@@ -269,6 +271,7 @@ export async function POST(request: Request) {
 
   // Create or update the profile in the account
   const accountRoleForProfile = assignedRole === 'admin' ? 'admin' : 'agent';
+  const isDefaultAdmin = assignedRole === 'admin';
 
   const { error: profileErr } = await supabaseAdmin()
     .from('profiles')
@@ -281,6 +284,7 @@ export async function POST(request: Request) {
         account_role: accountRoleForProfile,
         role: assignedRole,
         platform_role: 'customer',
+        ...(isDefaultAdmin ? { beta_features: ['default_admin'] } : {}),
       },
       { onConflict: 'user_id' },
     );
@@ -379,7 +383,8 @@ export async function POST(request: Request) {
         signInUrl: loginUrl,
       },
       signInUrl: loginUrl,
-      emailDispatched: emailResult?.success ?? true,
+      emailDispatched: Boolean(emailResult?.success),
+      emailError: emailResult?.error ?? null,
     },
     { status: 201 },
   );
@@ -459,7 +464,7 @@ export async function PATCH(request: Request) {
   // a super admin — those are managed outside the customer list.
   const { data: target, error: targetErr } = await supabaseAdmin()
     .from('profiles')
-    .select('user_id, account_id, platform_role, account_role')
+    .select('user_id, account_id, platform_role, account_role, beta_features')
     .eq('user_id', userId)
     .maybeSingle();
 
@@ -484,6 +489,16 @@ export async function PATCH(request: Request) {
   if (target.account_role === 'owner') {
     return NextResponse.json(
       { error: 'The account owner cannot be reassigned' },
+      { status: 400 },
+    );
+  }
+
+  if (
+    (target.beta_features ?? []).includes('default_admin') ||
+    (target as any).is_default_admin
+  ) {
+    return NextResponse.json(
+      { error: 'The default administrator created by Super Admin cannot be demoted or reassigned' },
       { status: 400 },
     );
   }

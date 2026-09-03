@@ -82,6 +82,7 @@ export interface AccountMember {
     name: string;
     channel_type?: string;
   }>;
+  is_default_admin?: boolean;
 }
 
 /**
@@ -352,6 +353,10 @@ export interface MessageTemplate {
   quality_score?: 'GREEN' | 'YELLOW' | 'RED';
   submission_error?: string;
   last_submitted_at?: string;
+  account_id?: string;
+  project_id?: string | null;
+  is_common?: boolean;
+  is_starter?: boolean;
   created_at: string;
 }
 

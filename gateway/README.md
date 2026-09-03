@@ -1,4 +1,4 @@
-# wacrm QR gateway
+# masacrm QR gateway
 
 Holds one WhatsApp Web socket per **project** so a customer can connect a
 number by scanning a QR code, instead of going through Meta's Cloud API.

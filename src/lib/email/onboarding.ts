@@ -23,8 +23,8 @@ export async function sendOnboardingWelcomeEmail(
 ): Promise<{ success: boolean; message?: string; error?: string }> {
   const { toEmail, fullName, temporaryPassword, role, projectName, projectId, accountId } = payload;
 
-  // Ensure signInUrl is always a clean valid https URL pointing to wacrm.cloudmasa.com
-  const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || 'https://wacrm.cloudmasa.com').trim().replace(/\/+$/, '');
+  // Ensure signInUrl is always a clean valid https URL pointing to crm.cloudmasa.com
+  const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || 'https://crm.cloudmasa.com').trim().replace(/\/+$/, '');
   const signInUrl = `${baseUrl}/login`;
 
   const roleTitle = role === 'admin' ? 'Project Administrator' : 'Support / Sales Agent';
@@ -48,7 +48,7 @@ export async function sendOnboardingWelcomeEmail(
                   <td>
                     <!-- Brand Logo -->
                     <div style="margin-bottom: 24px;">
-                      <img src="${baseUrl}/logo.png" alt="CloudMaSa WACRM" width="240" style="display: block; max-width: 240px; height: auto;" />
+                      <img src="${baseUrl}/logo.png" alt="CloudMaSa CRM" width="240" style="display: block; max-width: 240px; height: auto;" />
                     </div>
 
                     <!-- Role Badge -->

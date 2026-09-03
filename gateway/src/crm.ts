@@ -49,10 +49,19 @@ export interface ReactionEventPayload {
   emoji: string;
 }
 
+export interface ContactsEventPayload {
+  projectId: string;
+  contacts: Array<{
+    phone: string;
+    name?: string | null;
+  }>;
+}
+
 type GatewayEvent =
   | { type: "message"; payload: InboundEventPayload }
   | { type: "receipt"; payload: ReceiptEventPayload }
-  | { type: "reaction"; payload: ReactionEventPayload };
+  | { type: "reaction"; payload: ReactionEventPayload }
+  | { type: "contacts"; payload: ContactsEventPayload };
 
 /**
  * Deliver one event. Retries a few times with backoff — a CRM redeploy
@@ -71,6 +80,11 @@ export async function sendEventToCrm(event: GatewayEvent): Promise<boolean> {
         method: "POST",
         headers: {
           "content-type": "application/json",
+          "x-masacrm-signature": buildSignatureHeader(
+            rawBody,
+            config.crm.webhookSecret,
+            timestamp,
+          ),
           "x-wacrm-signature": buildSignatureHeader(
             rawBody,
             config.crm.webhookSecret,

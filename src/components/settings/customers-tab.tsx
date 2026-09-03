@@ -27,6 +27,7 @@ import {
   X,
   Trash2,
   Mail,
+  Shield,
   CheckCircle2,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
@@ -69,6 +70,7 @@ interface Customer {
     channel_type?: string;
   } | null;
   role?: 'agent' | 'admin';
+  is_default_admin?: boolean;
   created_at: string;
 }
 
@@ -120,6 +122,7 @@ export function CustomersTab() {
   // Delete customer state
   const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [resendingFor, setResendingFor] = useState<string | null>(null);
 
   // Projects list
   const [projects, setProjects] = useState<Project[]>([]);
@@ -220,6 +223,13 @@ export function CustomersTab() {
         toast.error(payload.error || t('createError'));
         return;
       }
+
+      if (payload.emailError) {
+        toast.warning(`${t('created')}, but email delivery failed: ${payload.emailError}`);
+      } else {
+        toast.success(t('created') + ' & welcome email sent to user!');
+      }
+
       setCreated({
         email: payload.credentials?.email ?? email,
         password: payload.credentials?.password ?? password,
@@ -235,6 +245,39 @@ export function CustomersTab() {
       toast.error(t('networkError'));
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleResendEmail(customer: Customer) {
+    try {
+      setResendingFor(customer.user_id);
+      const res = await fetch('/api/admin/users/resend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: customer.user_id,
+          customerId: customer.id,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to send welcome email');
+        return;
+      }
+      toast.success(`Welcome email delivered to ${customer.email}!`);
+      if (data.temporaryPassword) {
+        setCreated({
+          email: customer.email,
+          password: data.temporaryPassword,
+          role: customer.role,
+          projectName: data.projectName || 'Assigned Workspace',
+          signInUrl: data.signInUrl || `${window.location.origin}/login`,
+        });
+      }
+    } catch {
+      toast.error('Network error while sending welcome email');
+    } finally {
+      setResendingFor(null);
     }
   }
 
@@ -400,16 +443,23 @@ export function CustomersTab() {
                           <p className="truncate text-sm font-medium text-foreground">
                             {customer.full_name || customer.email}
                           </p>
-                          <Badge
-                            className={cn(
-                              "text-[10px] px-2 py-0 capitalize",
-                              customer.role === "admin"
-                                ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
-                                : "bg-primary/10 text-primary border border-primary/20"
-                            )}
-                          >
-                            {customer.role === "admin" ? "Admin" : "Agent"}
-                          </Badge>
+                          {customer.is_default_admin ? (
+                            <Badge className="text-[10px] px-2 py-0 capitalize bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/30 flex items-center gap-1">
+                              <Shield className="size-3 text-purple-500" />
+                              Default Admin
+                            </Badge>
+                          ) : (
+                            <Badge
+                              className={cn(
+                                "text-[10px] px-2 py-0 capitalize",
+                                customer.role === "admin"
+                                  ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
+                                  : "bg-primary/10 text-primary border border-primary/20"
+                              )}
+                            >
+                              {customer.role === "admin" ? "Admin" : "Agent"}
+                            </Badge>
+                          )}
                           {projectName ? (
                             <span className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/70 px-2 py-0.5 text-[10px] font-medium text-foreground">
                               <FolderKanban className="size-3 text-primary shrink-0" />
@@ -429,15 +479,33 @@ export function CustomersTab() {
                       </div>
                     </div>
 
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setCustomerToDelete(customer)}
-                      className="size-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                      title="Delete Customer Account"
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      {/* Resend Welcome Email Button */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void handleResendEmail(customer)}
+                        disabled={resendingFor === customer.user_id}
+                        className="size-8 p-0 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                        title="Resend Welcome & Credentials Email"
+                      >
+                        {resendingFor === customer.user_id ? (
+                          <Loader2 className="size-4 animate-spin text-primary" />
+                        ) : (
+                          <Mail className="size-4" />
+                        )}
+                      </Button>
+
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCustomerToDelete(customer)}
+                        className="size-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                        title="Delete Customer Account"
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
                   </li>
                 );
               })}

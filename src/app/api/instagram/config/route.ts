@@ -4,12 +4,14 @@ import { encrypt } from "@/lib/whatsapp/encryption";
 import { verifyMetaCredentials } from "@/lib/instagram/meta-client";
 import { toErrorResponse } from "@/lib/auth/account";
 
+import { fetchDirectProfile } from "@/lib/instagram/direct-client";
+
 export async function GET(request: Request) {
   try {
     const ctx = await getCurrentProject();
     const origin = new URL(request.url).origin;
     const webhookUrl = `${origin}/api/instagram/webhook`;
-    const defaultVerifyToken = `wacrm_ig_${ctx.projectId.slice(0, 8)}`;
+    const defaultVerifyToken = `masacrm_ig_${ctx.projectId.slice(0, 8)}`;
 
     const { data: config, error } = await ctx.supabase
       .from("instagram_config")
@@ -39,6 +41,42 @@ export async function GET(request: Request) {
         webhook_url: webhookUrl,
         default_verify_token: defaultVerifyToken,
       });
+    }
+
+    if (config?.status === "connected" && config.username) {
+      try {
+        const liveProfile = await fetchDirectProfile(undefined, config.username);
+        const enrichedConfig = {
+          ...config,
+          name: config.name && config.name !== config.username ? config.name : (liveProfile.name || config.name),
+          profile_picture_url: config.profile_picture_url || liveProfile.profilePictureUrl || null,
+          followers_count: liveProfile.followersCount ?? null,
+          following_count: liveProfile.followingCount ?? null,
+          posts_count: liveProfile.postsCount ?? null,
+          biography: liveProfile.biography || null,
+          is_verified: !!liveProfile.isVerified,
+        };
+
+        // If we filled in missing avatar or name, update in background
+        if ((!config.profile_picture_url && liveProfile.profilePictureUrl) || (config.name === config.username && liveProfile.name !== config.username)) {
+          ctx.supabase
+            .from("instagram_config")
+            .update({
+              profile_picture_url: liveProfile.profilePictureUrl || null,
+              name: liveProfile.name || config.name,
+            })
+            .eq("id", config.id)
+            .then(() => {});
+        }
+
+        return NextResponse.json({
+          config: enrichedConfig,
+          webhook_url: webhookUrl,
+          default_verify_token: defaultVerifyToken,
+        });
+      } catch {
+        // Fallback to database record
+      }
     }
 
     return NextResponse.json({
@@ -86,7 +124,7 @@ export async function POST(request: Request) {
     }
 
     const encryptedAccessToken = encrypt(access_token.trim());
-    const verifyTokenToSave = verify_token?.trim() || `wacrm_ig_${ctx.projectId.slice(0, 8)}`;
+    const verifyTokenToSave = verify_token?.trim() || `masacrm_ig_${ctx.projectId.slice(0, 8)}`;
     const encryptedVerifyToken = encrypt(verifyTokenToSave);
 
     const { error: upsertErr } = await ctx.supabase.from("instagram_config").upsert(
@@ -142,30 +180,6 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   try {
     const ctx = await requireProjectRole("agent");
-
-    // Enforce role check: customer role CANNOT disconnect Instagram
-    const { data: profile } = await ctx.supabase
-      .from("profiles")
-      .select("role, platform_role")
-      .eq("user_id", ctx.userId)
-      .maybeSingle();
-
-    const isCustomerUser =
-      profile?.role === "customer" ||
-      (ctx.platformRole === "customer" &&
-        profile?.role !== "agent" &&
-        ctx.role !== "owner" &&
-        ctx.role !== "admin");
-
-    if (isCustomerUser) {
-      return NextResponse.json(
-        {
-          error:
-            "Customer accounts cannot disconnect the Instagram channel. Contact your administrator.",
-        },
-        { status: 403 },
-      );
-    }
 
     // Reset status to disconnected and clear credentials
     const { error } = await ctx.supabase

@@ -117,6 +117,9 @@ async function deliverOne(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-MasaCRM-Event': event,
+        'X-MasaCRM-Webhook-Id': row.id,
+        'X-MasaCRM-Signature': buildSignatureHeader(payload, secret, tsSeconds),
         'X-Wacrm-Event': event,
         'X-Wacrm-Webhook-Id': row.id,
         'X-Wacrm-Signature': buildSignatureHeader(payload, secret, tsSeconds),

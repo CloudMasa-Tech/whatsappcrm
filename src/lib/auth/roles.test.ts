@@ -112,10 +112,10 @@ describe("capability predicates", () => {
     expect(canSendMessages("viewer")).toBe(false);
   });
 
-  it("canConnectWhatsApp: agent+ only", () => {
+  it("canConnectWhatsApp: admin+ only (agents cannot connect)", () => {
     expect(canConnectWhatsApp("owner")).toBe(true);
     expect(canConnectWhatsApp("admin")).toBe(true);
-    expect(canConnectWhatsApp("agent")).toBe(true);
+    expect(canConnectWhatsApp("agent")).toBe(false);
     expect(canConnectWhatsApp("viewer")).toBe(false);
   });
 

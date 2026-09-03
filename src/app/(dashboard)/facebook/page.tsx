@@ -3,7 +3,7 @@
 import { useAuth } from "@/hooks/use-auth";
 import { FacebookHub } from "@/components/facebook/facebook-hub";
 import { FacebookConnect } from "@/components/facebook/facebook-connect";
-import { Loader2 } from "lucide-react";
+import { Loader2, Shield } from "lucide-react";
 import { Facebook } from "@/components/icons/facebook";
 
 export default function FacebookPage() {
@@ -35,7 +35,6 @@ export default function FacebookPage() {
 
   return (
     <div className="w-full space-y-4">
-      <FacebookConnect />
       <FacebookHub canDisconnect={canDisconnectWhatsApp} />
     </div>
   );

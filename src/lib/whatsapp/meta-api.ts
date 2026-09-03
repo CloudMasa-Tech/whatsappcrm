@@ -450,8 +450,14 @@ export async function sendTemplateMessage(
     }
     throw new Error(message)
   }
-  const data = JSON.parse(rawBody) as { messages: Array<{ id: string }> }
-  return { messageId: data.messages[0].id }
+
+  let data: { messages?: Array<{ id: string }> } = {};
+  try {
+    data = JSON.parse(rawBody);
+  } catch {
+    throw new Error(`Unexpected response from Meta API: ${rawBody.slice(0, 200)}`);
+  }
+  return { messageId: data.messages?.[0]?.id || "" };
 }
 
 // ============================================================

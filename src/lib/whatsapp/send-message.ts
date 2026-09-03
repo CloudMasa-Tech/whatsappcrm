@@ -46,6 +46,7 @@ import type { MessageTemplate } from '@/types';
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
 import { GatewayError, sendViaGateway } from '@/lib/channels/gateway';
 import { resolveProjectChannel } from '@/lib/channels/resolve';
+import { STARTER_MESSAGE_TEMPLATES } from '@/lib/whatsapp/starter-templates';
 import {
   supportsMessageKind,
   unsupportedReason,
@@ -289,13 +290,143 @@ export async function sendMessageToConversation(
   // persistence below so a QR message lands in the inbox looking
   // exactly like a Cloud API one.
   if (channelType === 'qr') {
+    let qrKind: 'text' | 'image' | 'video' | 'document' | 'audio' = 'text';
+    let qrText: string | null = contentText ?? null;
+    let qrMediaUrl: string | null = mediaUrl ?? null;
+    let qrFilename: string | null = filename ?? null;
+
+    if (messageType === 'template') {
+      if (!qrText && templateName) {
+        let tplBody = '';
+        let tplHeader: string | undefined;
+        let tplFooter: string | undefined;
+        let tplButtons: any[] | undefined;
+        let tplHeaderMedia: string | undefined;
+        let tplHeaderFormat: string | undefined;
+
+        const { data: dbTpl } = await db
+          .from('message_templates')
+          .select('*')
+          .eq('name', templateName)
+          .maybeSingle();
+
+        if (dbTpl) {
+          tplBody = dbTpl.body_text || '';
+          tplHeader = dbTpl.header_content;
+          tplFooter = dbTpl.footer_text;
+          tplButtons = dbTpl.buttons;
+          tplHeaderMedia = dbTpl.header_media_url;
+          tplHeaderFormat = dbTpl.header_type;
+        } else {
+          const starter = STARTER_MESSAGE_TEMPLATES.find(
+            (s) => s.name === templateName || s.slug === templateName
+          );
+          if (starter) {
+            tplBody = starter.body_text;
+            tplHeader = starter.header_content;
+            tplFooter = starter.footer_text;
+            tplButtons = starter.buttons;
+            tplHeaderMedia = starter.header_media_url;
+            tplHeaderFormat = starter.header_format;
+          }
+        }
+
+        const bodyParams = Array.isArray(templateParams)
+          ? templateParams
+          : (templateMessageParams as any)?.body ?? [];
+
+        let rendered = tplBody;
+        if (Array.isArray(bodyParams)) {
+          bodyParams.forEach((val, idx) => {
+            rendered = rendered.replace(
+              new RegExp(`\\{\\{${idx + 1}\\}\\}`, 'g'),
+              String(val)
+            );
+          });
+        }
+
+        if (tplHeader && tplHeaderFormat === 'text') {
+          const headerText =
+            (templateMessageParams as any)?.headerText || tplHeader;
+          rendered = `*${headerText}*\n\n${rendered}`;
+        }
+
+        if (tplFooter) {
+          rendered = `${rendered}\n\n_${tplFooter}_`;
+        }
+
+        if (Array.isArray(tplButtons) && tplButtons.length > 0) {
+          const buttonLines = tplButtons.map((btn: any, idx: number) => {
+            if (btn.type === 'URL' && btn.url) {
+              const urlVal =
+                (templateMessageParams as any)?.buttonParams?.[idx] || '';
+              const finalUrl = btn.url.replace('{{1}}', urlVal);
+              return `🔗 ${btn.text}: ${finalUrl}`;
+            }
+            if (btn.type === 'PHONE_NUMBER' && btn.phone_number) {
+              return `📞 ${btn.text}: ${btn.phone_number}`;
+            }
+            return `👉 ${btn.text || btn.title || 'Option ' + (idx + 1)}`;
+          });
+          rendered = `${rendered}\n\n${buttonLines.join('\n')}`;
+        }
+
+        qrText = rendered || templateName;
+        if (tplHeaderMedia && !qrMediaUrl) {
+          qrMediaUrl = tplHeaderMedia;
+        }
+      }
+
+      if (qrMediaUrl) {
+        if (/\.(mp4|mov|avi|webm)$/i.test(qrMediaUrl)) {
+          qrKind = 'video';
+        } else if (/\.(pdf|doc|docx|csv|xlsx|txt)$/i.test(qrMediaUrl)) {
+          qrKind = 'document';
+        } else if (/\.(mp3|ogg|wav|m4a|aac)$/i.test(qrMediaUrl)) {
+          qrKind = 'audio';
+        } else {
+          qrKind = 'image';
+        }
+      } else {
+        qrKind = 'text';
+      }
+    } else if (messageType === 'interactive') {
+      const p = interactivePayload;
+      if (p) {
+        let formatted = p.body;
+        if (p.header) formatted = `*${p.header}*\n\n${formatted}`;
+        if (p.kind === 'buttons' && p.buttons?.length) {
+          formatted +=
+            '\n\n' +
+            p.buttons.map((b, i) => `${i + 1}. ${b.title}`).join('\n');
+        } else if (p.kind === 'list' && p.sections?.length) {
+          for (const s of p.sections) {
+            if (s.title) formatted += `\n\n*${s.title}*`;
+            formatted +=
+              '\n' +
+              s.rows
+                .map(
+                  (r, i) =>
+                    `${i + 1}. ${r.title}${r.description ? ` - ${r.description}` : ''}`
+                )
+                .join('\n');
+          }
+        }
+        if (p.footer) formatted += `\n\n_${p.footer}_`;
+        qrText = formatted;
+      }
+      qrKind = 'text';
+    } else if (isMediaKind) {
+      qrKind = messageType as any;
+    }
+
     const { externalId } = await sendViaQrChannel({
       projectId,
       to: sanitizedPhone,
-      messageType,
-      contentText,
-      mediaUrl,
-      filename,
+      messageType: qrKind,
+      contentText: qrText,
+      mediaUrl: qrMediaUrl,
+      filename: qrFilename,
       replyToMessageId,
       conversationId,
       db,
@@ -307,8 +438,8 @@ export async function sendMessageToConversation(
       conversationId,
       contactId: contact.id,
       messageType,
-      contentText,
-      mediaUrl,
+      contentText: qrText,
+      mediaUrl: qrMediaUrl,
       templateName,
       interactivePayload,
       replyToMessageId,

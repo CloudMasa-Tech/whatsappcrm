@@ -20,36 +20,43 @@ export async function resolveEmailConfig(
   projectId?: string,
   accountId?: string
 ): Promise<EmailServerConfig | null> {
-  // 1. Check database for project-specific or account-specific email_configs
-  if (projectId || accountId) {
+  // 1. Check database for project-specific email_configs
+  if (projectId) {
     try {
-      let query = supabaseAdmin().from('email_configs').select('*').limit(1);
-      if (projectId) {
-        query = query.eq('project_id', projectId);
-      } else if (accountId) {
-        query = query.eq('account_id', accountId);
-      }
+      const { data } = await supabaseAdmin()
+        .from('email_configs')
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('is_connected', true)
+        .maybeSingle();
 
-      const { data } = await query.maybeSingle();
+      const user = data?.email_address || data?.smtp_user;
+      const pass = data?.email_password || data?.smtp_pass;
+      const host = data?.smtp_host;
 
-      if (data && data.smtp_host && data.smtp_user && data.smtp_pass) {
+      if (data && host && user && pass) {
         return {
-          host: data.smtp_host,
+          host,
           port: Number(data.smtp_port) || 587,
           secure: Boolean(data.smtp_secure ?? Number(data.smtp_port) === 465),
-          user: data.smtp_user,
-          pass: data.smtp_pass,
-          fromEmail: data.from_email || data.smtp_user,
+          user,
+          pass,
+          fromEmail: data.email_address || user,
           fromName: data.from_name || 'MaSa CRM',
           replyTo: data.reply_to || undefined,
         };
       }
-    } catch {
-      // Table may not exist yet or query failed — proceed to env fallback
+    } catch (err) {
+      console.error('[resolveEmailConfig] db error:', err);
     }
+
+    // If a project was explicitly specified, do NOT fall back to global .env credentials.
+    // Each project must have its own connected email.
+    return null;
   }
 
-  // 2. Fallback to server environment variables
+  // 2. Fallback to server environment variables ONLY for global system emails
+  // (e.g. initial superadmin user welcome invitations where no project exists yet)
   const envHost = process.env.SMTP_HOST || process.env.EMAIL_SERVER_HOST;
   const envUser = process.env.SMTP_USER || process.env.EMAIL_SERVER_USER;
   const envPass = process.env.SMTP_PASS || process.env.EMAIL_SERVER_PASSWORD || process.env.SMTP_PASSWORD;
@@ -98,12 +105,11 @@ export async function sendEmail(
   const config = await resolveEmailConfig(options.projectId, options.accountId);
 
   if (!config) {
-    console.warn(
-      `[Email Service] No SMTP configuration found (DB or env vars). Simulating send to ${options.to}. Subject: "${options.subject}"`
-    );
+    const errorMsg = `No SMTP configuration found in environment variables or database. (Checked SMTP_HOST, SMTP_USER, SMTP_PASS)`;
+    console.error(`[Email Service] ${errorMsg}`);
     return {
-      success: true,
-      messageId: `simulated-${Date.now()}`,
+      success: false,
+      error: errorMsg,
     };
   }
 

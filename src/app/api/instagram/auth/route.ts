@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireProjectRole } from "@/lib/auth/project";
+import { UnauthorizedError, ForbiddenError, toErrorResponse } from "@/lib/auth/account";
 import { encrypt } from "@/lib/whatsapp/encryption";
-import { loginWithCredentials } from "@/lib/instagram/direct-client";
+import { loginWithCredentials, connectWithSessionId } from "@/lib/instagram/direct-client";
 
 export async function POST(request: Request) {
   try {
@@ -12,18 +13,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    const { action, username, password } = body;
+    const { action, username, password, session_id } = body;
 
     if (action === "login" || !action) {
-      if (!username || !password) {
-        return NextResponse.json(
-          { error: "Username and password are required" },
-          { status: 400 },
-        );
-      }
+      let result;
+      let cleanUsername = (username || "").trim().replace(/^@/, "");
 
-      const cleanUsername = username.trim().replace(/^@/, "");
-      const result = await loginWithCredentials(cleanUsername, password);
+      if (session_id && typeof session_id === "string") {
+        result = await connectWithSessionId(session_id.trim(), cleanUsername);
+        cleanUsername = result.username;
+      } else {
+        if (!username || !password) {
+          return NextResponse.json(
+            { error: "Username and password (or Instagram Session ID) are required" },
+            { status: 400 },
+          );
+        }
+        result = await loginWithCredentials(cleanUsername, password);
+      }
 
       const sessionToSave = result.sessionData || JSON.stringify({ username: cleanUsername, password });
       const encryptedSession = encrypt(sessionToSave);
@@ -76,10 +83,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (err: unknown) {
+    if (err instanceof UnauthorizedError || err instanceof ForbiddenError) {
+      return toErrorResponse(err);
+    }
     console.error("[POST /api/instagram/auth] error:", err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Internal server error" },
-      { status: 500 },
+      { error: err instanceof Error ? err.message : "Authentication failed" },
+      { status: 400 },
     );
   }
 }

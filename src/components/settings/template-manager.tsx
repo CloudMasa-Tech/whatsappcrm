@@ -17,7 +17,14 @@ import {
   Check,
   ShieldCheck,
   ExternalLink,
+  Sparkles,
+  Globe,
+  LayoutTemplate,
+  Search,
+  Copy,
+  CheckCircle2,
 } from 'lucide-react';
+import { STARTER_MESSAGE_TEMPLATES, type StarterMessageTemplate } from '@/lib/whatsapp/starter-templates';
 import { createClient } from '@/lib/supabase/client';
 import {
   uploadAccountMedia,
@@ -263,25 +270,80 @@ export function TemplateManager() {
     });
   }, [bodyVarCount]);
 
+  // Starter Templates gallery and Tab view state
+  const [activeViewTab, setActiveViewTab] = useState<'ready_made' | 'project'>('ready_made');
+  const [starterGalleryOpen, setStarterGalleryOpen] = useState(false);
+  const [starterCategoryFilter, setStarterCategoryFilter] = useState<'All' | 'Marketing' | 'Utility'>('All');
+  const [starterSearchQuery, setStarterSearchQuery] = useState('');
+  const [installingSlug, setInstallingSlug] = useState<string | null>(null);
+
+  function useStarterTemplate(starter: StarterMessageTemplate) {
+    setEditingId(null);
+    setForm({
+      name: starter.name,
+      category: starter.category,
+      language: starter.language || 'en_US',
+      header_format: starter.header_format,
+      header_content: starter.header_content || '',
+      header_media_url: starter.header_media_url || '',
+      header_sample: starter.header_sample || '',
+      body_text: starter.body_text,
+      body_samples: starter.sample_values?.body || [],
+      footer_text: starter.footer_text || '',
+      buttons: starter.buttons ? JSON.parse(JSON.stringify(starter.buttons)) : [],
+    });
+    setStarterGalleryOpen(false);
+    setDialogOpen(true);
+  }
+
+  async function handleInstallStarter(starter: StarterMessageTemplate, makeCommon: boolean = false) {
+    try {
+      setInstallingSlug(starter.slug);
+      const res = await fetch('/api/whatsapp/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          starter_slug: starter.slug,
+          make_common: makeCommon,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to install starter template');
+      toast.success(data.message || `Template "${starter.title}" added successfully!`);
+      await fetchTemplates();
+      setStarterGalleryOpen(false);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to install template');
+    } finally {
+      setInstallingSlug(null);
+    }
+  }
+
   const fetchTemplates = useCallback(async () => {
     try {
       setLoading(true);
-      let query = supabase.from('message_templates').select('*');
-      if (activeProjectId) {
-        query = query.eq('project_id', activeProjectId);
-      } else if (!isSuperAdminUser && user?.id) {
-        query = query.eq('user_id', user.id);
+      const res = await fetch(`/api/whatsapp/templates?project_id=${activeProjectId || ''}`);
+      if (res.ok) {
+        const json = await res.json();
+        setTemplates(json.templates || []);
+      } else {
+        let query = supabase.from('message_templates').select('*');
+        if (activeProjectId) {
+          query = query.or(`project_id.eq.${activeProjectId},project_id.is.null`);
+        } else if (user?.id) {
+          query = query.or(`user_id.eq.${user.id},project_id.is.null`);
+        }
+        const { data, error } = await query.order('created_at', { ascending: false });
+        if (error) throw error;
+        setTemplates(data || []);
       }
-      const { data, error } = await query.order('created_at', { ascending: false });
-      if (error) throw error;
-      setTemplates(data || []);
     } catch (err) {
       console.error('Failed to fetch templates:', err);
       toast.error(t('toastLoadFailed'));
     } finally {
       setLoading(false);
     }
-  }, [supabase, activeProjectId, user?.id, isSuperAdminUser, t]);
+  }, [activeProjectId, supabase, user?.id, t]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -413,7 +475,11 @@ export function TemplateManager() {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data?.error || `Sync failed (HTTP ${res.status})`);
+        toast.error(
+          data?.error || 'WhatsApp Cloud API is not connected. Connect your WhatsApp Business account in Settings, or use Ready-Made Templates with QR Gateway.',
+          { duration: 6000 }
+        );
+        return;
       }
       toast.success(
         t('toastSyncCount', { total: data.total }) +
@@ -438,14 +504,10 @@ export function TemplateManager() {
         );
       }
       if (data.truncated) {
-        // Use error (not warning) so the message survives long
-        // enough to read — sonner's `warning` auto-dismisses on
-        // the same short timer as `success`.
         toast.error(t('toastSyncTruncated'), { duration: 10000 });
       }
       await fetchTemplates();
     } catch (err) {
-      console.error('Template sync error:', err);
       toast.error(err instanceof Error ? err.message : t('toastSyncError'));
     } finally {
       setSyncing(false);
@@ -680,7 +742,7 @@ export function TemplateManager() {
         title={t('title')}
         description={t('description')}
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
               onClick={handleSyncFromMeta}
@@ -692,13 +754,90 @@ export function TemplateManager() {
               />
               {syncing ? t('syncing') : t('syncFromMeta')}
             </Button>
-            <Button onClick={openCreate}>
+            <Button onClick={openCreate} className="gap-1.5">
               <Plus className="size-4" />
               {t('newTemplate')}
             </Button>
           </div>
         }
       />
+
+      {/* Top View Selector Tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/80 pb-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveViewTab('ready_made')}
+            className={`inline-flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+              activeViewTab === 'ready_made'
+                ? 'bg-purple-600 text-white shadow-sm ring-1 ring-purple-400/30'
+                : 'bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted'
+            }`}
+          >
+            <Sparkles className="size-3.5 text-purple-300" />
+            Ready-Made Templates Library
+            <Badge className="bg-purple-900/60 text-purple-200 text-[10px] px-1.5 py-0 border border-purple-400/30">
+              10 Presets
+            </Badge>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveViewTab('project')}
+            className={`inline-flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+              activeViewTab === 'project'
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted'
+            }`}
+          >
+            <LayoutTemplate className="size-3.5" />
+            My Project Templates
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-border">
+              {templates.length}
+            </Badge>
+          </button>
+        </div>
+
+        {/* Filter Pills & Search (for Ready-Made View) */}
+        {activeViewTab === 'ready_made' && (
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 p-0.5 rounded-lg bg-muted/60 border border-border">
+              {(['All', 'Marketing', 'Utility'] as const).map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setStarterCategoryFilter(cat)}
+                  className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors ${
+                    starterCategoryFilter === cat
+                      ? 'bg-purple-600 text-white shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search ready-made templates..."
+                value={starterSearchQuery}
+                onChange={(e) => setStarterSearchQuery(e.target.value)}
+                className="pl-8 h-8 text-xs bg-muted/50 border-border text-foreground placeholder:text-muted-foreground w-56"
+              />
+              {starterSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setStarterSearchQuery('')}
+                  className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="size-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
       {isSuperAdminUser && templates.some((t) => (t.status || '').toUpperCase() === 'PENDING') && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
@@ -723,163 +862,314 @@ export function TemplateManager() {
         </div>
       )}
 
-      {templates.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <p className="text-muted-foreground text-sm">{t('noTemplates')}</p>
-            <p className="text-muted-foreground mt-1 text-xs">
-              {t('createFirst')}
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-3 xl:grid-cols-2">
-          {templates.map((template) => {
-            const statusKey = template.status || 'DRAFT';
-            const status = templateStatusConfig[statusKey];
-            return (
-              <Card key={template.id}>
-                <CardContent className="flex items-start justify-between pt-4">
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-foreground font-medium">
-                        {template.name}
+      {/* VIEW 1: Ready-Made Templates Gallery directly on the page */}
+      {activeViewTab === 'ready_made' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {STARTER_MESSAGE_TEMPLATES.filter((s) => {
+              if (starterCategoryFilter !== 'All' && s.category !== starterCategoryFilter) {
+                return false;
+              }
+              if (starterSearchQuery.trim()) {
+                const q = starterSearchQuery.toLowerCase();
+                const matchName = s.name.toLowerCase().includes(q);
+                const matchTitle = s.title.toLowerCase().includes(q);
+                const matchDesc = s.description.toLowerCase().includes(q);
+                const matchBody = s.body_text.toLowerCase().includes(q);
+                const matchTags = s.tags.some((t) => t.toLowerCase().includes(q));
+                return matchName || matchTitle || matchDesc || matchBody || matchTags;
+              }
+              return true;
+            }).map((starter) => (
+              <Card
+                key={starter.slug}
+                className="flex flex-col justify-between border-border bg-card/60 hover:border-purple-500/50 hover:shadow-md transition-all"
+              >
+                <CardContent className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="font-semibold text-foreground text-sm flex items-center gap-1.5">
+                        {starter.title}
                       </h3>
-                      <Badge
-                        className={`border text-xs ${categoryColors[template.category] || ''}`}
-                      >
-                        {template.category}
-                      </Badge>
-                      <Badge className={`border text-xs ${status.classes}`}>
-                        {status.label}
-                      </Badge>
-                      <Badge variant="outline" className="border-border text-xs">
-                        {template.language}
-                      </Badge>
-                      {template.rejection_reason && (
-                        <span className="text-xs text-red-400 font-medium">
-                          Reason: {template.rejection_reason}
-                        </span>
-                      )}
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {starter.name}
+                      </span>
                     </div>
-                    {template.body_text && (
-                      <p className="text-muted-foreground line-clamp-2 text-xs">
-                        {template.body_text}
-                      </p>
-                    )}
-                    {template.header_media_url && (
-                      <p className="text-muted-foreground truncate text-[11px]">
-                        {t('attachedMedia', { url: template.header_media_url })}
-                      </p>
-                    )}
-                    {isMediaHeaderType(template.header_type) &&
-                      !template.header_media_url && (
-                        <div className="flex items-start gap-1.5 rounded border border-amber-900/40 bg-amber-950/20 px-2 py-1.5 text-xs text-amber-400">
-                          <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
-                          <span>{t('mediaRequired')}</span>
-                        </div>
-                      )}
+                    <div className="flex items-center gap-1.5">
+                      <Badge className="border border-purple-500/30 bg-purple-500/20 text-[10px] text-purple-300">
+                        Preset
+                      </Badge>
+                      <Badge
+                        className={`border text-[10px] shrink-0 ${categoryColors[starter.category] || ''}`}
+                      >
+                        {starter.category}
+                      </Badge>
+                    </div>
                   </div>
-                  <div className="ml-2 flex shrink-0 items-center gap-1">
-                    {isSuperAdminUser && statusKey === 'PENDING' && (
-                      <>
-                        <Button
-                          size="sm"
-                          onClick={() => handleApproveTemplate(template)}
-                          disabled={approvingId === template.id || rejectingId === template.id}
-                          title="Approve Template"
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium gap-1 h-8 px-2.5 shadow-sm"
-                        >
-                          {approvingId === template.id ? (
-                            <Loader2 className="size-3.5 animate-spin" />
-                          ) : (
-                            <Check className="size-3.5" />
-                          )}
-                          Approve
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setRejectingTemplate(template);
-                            setRejectReason('');
-                          }}
-                          disabled={approvingId === template.id || rejectingId === template.id}
-                          title="Reject Template"
-                          className="border-red-500/40 text-red-400 hover:bg-red-950/30 hover:text-red-300 gap-1 h-8 px-2.5"
-                        >
-                          <X className="size-3.5" />
-                          Reject
-                        </Button>
-                      </>
+
+                  <p className="text-xs text-muted-foreground line-clamp-2">
+                    {starter.description}
+                  </p>
+
+                  {/* WhatsApp Bubble Preview */}
+                  <div className="rounded-lg border border-border/80 bg-background/80 p-3 space-y-2 text-xs">
+                    {starter.header_content && (
+                      <div className="font-semibold text-foreground border-b border-border/60 pb-1 text-[11px]">
+                        {starter.header_content}
+                      </div>
                     )}
-                    {isMediaHeaderType(template.header_type) && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openMediaDialog(template)}
-                        title={t('attachMediaAria')}
-                        aria-label={t('attachMediaAria')}
-                        className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
+                    <p className="text-muted-foreground text-[11px] leading-relaxed whitespace-pre-wrap">
+                      {starter.body_text}
+                    </p>
+                    {starter.footer_text && (
+                      <div className="text-[10px] text-muted-foreground/70 italic border-t border-border/40 pt-1">
+                        {starter.footer_text}
+                      </div>
+                    )}
+                    {starter.buttons && starter.buttons.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-1 border-t border-border/40">
+                        {starter.buttons.map((btn, i) => (
+                          <span
+                            key={i}
+                            className="inline-flex items-center gap-1 rounded bg-muted/60 px-2 py-0.5 text-[10px] text-muted-foreground border border-border/50"
+                          >
+                            {btn.type === 'URL' ? '🔗 ' : btn.type === 'COPY_CODE' ? '📋 ' : '💬 '}
+                            {btn.text}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Tags */}
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {starter.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="text-[10px] rounded bg-muted text-muted-foreground px-1.5 py-0.5"
                       >
-                        <Upload className="size-3.5" />
-                        {t('attachMedia')}
-                      </Button>
-                    )}
-                    {(statusKey === 'APPROVED' || statusKey === 'PENDING' || statusKey === 'DRAFT') && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openEdit(template)}
-                        title={t('editTitle')}
-                        aria-label={t('editLabel')}
-                        className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
-                      >
-                        <Pencil className="size-3.5" />
-                        {t('edit')}
-                      </Button>
-                    )}
-                    {(statusKey === 'REJECTED' || statusKey === 'PAUSED') && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openEdit(template)}
-                        title={t('resubmitTitle')}
-                        aria-label={t('resubmitLabel')}
-                        className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
-                      >
-                        <RotateCcw className="size-3.5" />
-                        {t('resubmit')}
-                      </Button>
-                    )}
+                        #{tag}
+                      </span>
+                    ))}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-2 pt-2 border-t border-border/40">
                     <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setTemplateToDelete(template)}
-                      disabled={deletingId === template.id}
-                      aria-label={
-                        template.meta_template_id
-                          ? t('deleteMetaLocallyAria')
-                          : t('deleteLocallyAria')
-                      }
-                      title={
-                        template.meta_template_id
-                          ? t('deleteMetaLocallyTitle')
-                          : t('deleteLocallyTitle')
-                      }
-                      className="text-muted-foreground h-8 w-8 hover:bg-red-950/30 hover:text-red-400"
+                      size="sm"
+                      onClick={() => useStarterTemplate(starter)}
+                      className="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-xs gap-1.5 h-8"
                     >
-                      {deletingId === template.id ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="size-4" />
-                      )}
+                      <Pencil className="size-3.5" />
+                      Use Template
                     </Button>
+                    {isSuperAdminUser && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={installingSlug === starter.slug}
+                        onClick={() => handleInstallStarter(starter, true)}
+                        title="Deploy as Common Template for all projects"
+                        className="border-border hover:bg-purple-500/10 text-muted-foreground hover:text-purple-300 text-xs gap-1 h-8 px-2.5"
+                      >
+                        {installingSlug === starter.slug ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Globe className="size-3.5 text-purple-400" />
+                        )}
+                        Make Common
+                      </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
-            );
-          })}
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* VIEW 2: Project / Custom Templates */}
+      {activeViewTab === 'project' && (
+        <div>
+          {templates.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 text-center space-y-4">
+                <div>
+                  <p className="text-muted-foreground text-sm">{t('noTemplates')}</p>
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    {t('createFirst')}
+                  </p>
+                </div>
+                <Button
+                  onClick={() => setActiveViewTab('ready_made')}
+                  className="bg-purple-600 hover:bg-purple-700 text-white gap-2"
+                >
+                  <Sparkles className="size-4" />
+                  Browse Ready-Made Templates
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-3 xl:grid-cols-2">
+              {templates.map((template) => {
+                const statusKey = template.status || 'DRAFT';
+                const status = templateStatusConfig[statusKey];
+                const isCommon = !template.project_id || (template as any).is_common;
+                return (
+                  <Card key={template.id}>
+                    <CardContent className="flex items-start justify-between pt-4">
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-foreground font-medium">
+                            {template.name}
+                          </h3>
+                          {isCommon ? (
+                            <Badge className="border border-purple-500/40 bg-purple-500/20 text-purple-300 text-xs gap-1">
+                              <Globe className="size-3" />
+                              Common
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="border-border text-xs text-muted-foreground">
+                              Project Only
+                            </Badge>
+                          )}
+                          <Badge
+                            className={`border text-xs ${categoryColors[template.category] || ''}`}
+                          >
+                            {template.category}
+                          </Badge>
+                          <Badge className={`border text-xs ${status.classes}`}>
+                            {status.label}
+                          </Badge>
+                          <Badge variant="outline" className="border-border text-xs">
+                            {template.language}
+                          </Badge>
+                          {template.rejection_reason && (
+                            <span className="text-xs text-red-400 font-medium">
+                              Reason: {template.rejection_reason}
+                            </span>
+                          )}
+                        </div>
+                        {template.body_text && (
+                          <p className="text-muted-foreground line-clamp-2 text-xs">
+                            {template.body_text}
+                          </p>
+                        )}
+                        {template.header_media_url && (
+                          <p className="text-muted-foreground truncate text-[11px]">
+                            {t('attachedMedia', { url: template.header_media_url })}
+                          </p>
+                        )}
+                        {isMediaHeaderType(template.header_type) &&
+                          !template.header_media_url && (
+                            <div className="flex items-start gap-1.5 rounded border border-amber-900/40 bg-amber-950/20 px-2 py-1.5 text-xs text-amber-400">
+                              <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                              <span>{t('mediaRequired')}</span>
+                            </div>
+                          )}
+                      </div>
+                      <div className="ml-2 flex shrink-0 items-center gap-1">
+                        {isSuperAdminUser && statusKey === 'PENDING' && (
+                          <>
+                            <Button
+                              size="sm"
+                              onClick={() => handleApproveTemplate(template)}
+                              disabled={approvingId === template.id || rejectingId === template.id}
+                              title="Approve Template"
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium gap-1 h-8 px-2.5 shadow-sm"
+                            >
+                              {approvingId === template.id ? (
+                                <Loader2 className="size-3.5 animate-spin" />
+                              ) : (
+                                <Check className="size-3.5" />
+                              )}
+                              Approve
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setRejectingTemplate(template);
+                                setRejectReason('');
+                              }}
+                              disabled={approvingId === template.id || rejectingId === template.id}
+                              title="Reject Template"
+                              className="border-red-500/40 text-red-400 hover:bg-red-950/30 hover:text-red-300 gap-1 h-8 px-2.5"
+                            >
+                              <X className="size-3.5" />
+                              Reject
+                            </Button>
+                          </>
+                        )}
+                        {isMediaHeaderType(template.header_type) && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openMediaDialog(template)}
+                            title={t('attachMediaAria')}
+                            aria-label={t('attachMediaAria')}
+                            className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
+                          >
+                            <Upload className="size-3.5" />
+                            {t('attachMedia')}
+                          </Button>
+                        )}
+                        {(statusKey === 'APPROVED' || statusKey === 'PENDING' || statusKey === 'DRAFT') && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEdit(template)}
+                            title={t('editTitle')}
+                            aria-label={t('editLabel')}
+                            className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
+                          >
+                            <Pencil className="size-3.5" />
+                            {t('edit')}
+                          </Button>
+                        )}
+                        {(statusKey === 'REJECTED' || statusKey === 'PAUSED') && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEdit(template)}
+                            title={t('resubmitTitle')}
+                            aria-label={t('resubmitLabel')}
+                            className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
+                          >
+                            <RotateCcw className="size-3.5" />
+                            {t('resubmit')}
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setTemplateToDelete(template)}
+                          disabled={deletingId === template.id}
+                          aria-label={
+                            template.meta_template_id
+                              ? t('deleteMetaLocallyAria')
+                              : t('deleteLocallyAria')
+                          }
+                          title={
+                            template.meta_template_id
+                              ? t('deleteMetaLocallyTitle')
+                              : t('deleteLocallyTitle')
+                          }
+                          className="text-muted-foreground h-8 w-8 hover:bg-red-950/30 hover:text-red-400"
+                        >
+                          {deletingId === template.id ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="size-4" />
+                          )}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -1581,6 +1871,223 @@ export function TemplateManager() {
                 <X className="size-3.5" />
               )}
               Confirm Rejection
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Ready-Made Starter Templates Gallery Dialog */}
+      <Dialog
+        open={starterGalleryOpen}
+        onOpenChange={setStarterGalleryOpen}
+      >
+        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col bg-card border-border p-0 gap-0 overflow-hidden">
+          <DialogHeader className="p-6 pb-4 border-b border-border bg-muted/20">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="size-9 rounded-lg bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400">
+                  <Sparkles className="size-5" />
+                </div>
+                <div>
+                  <DialogTitle className="text-foreground text-lg flex items-center gap-2">
+                    Ready-Made Message Templates
+                    <Badge variant="outline" className="border-purple-500/30 bg-purple-500/10 text-purple-300 text-xs">
+                      10 Presets
+                    </Badge>
+                  </DialogTitle>
+                  <DialogDescription className="text-muted-foreground text-xs mt-0.5">
+                    Select a ready-to-use WhatsApp template to quickly populate your template editor or deploy to your project.
+                  </DialogDescription>
+                </div>
+              </div>
+            </div>
+
+            {/* Filter Pills & Search */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-4">
+              <div className="flex items-center gap-1.5 p-1 rounded-lg bg-muted/60 border border-border">
+                {(['All', 'Marketing', 'Utility'] as const).map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setStarterCategoryFilter(cat)}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                      starterCategoryFilter === cat
+                        ? 'bg-primary text-primary-foreground shadow-xs'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+
+              <div className="relative flex-1 max-w-xs">
+                <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Search templates by name, title, or tag..."
+                  value={starterSearchQuery}
+                  onChange={(e) => setStarterSearchQuery(e.target.value)}
+                  className="pl-8 h-8 text-xs bg-muted/50 border-border text-foreground placeholder:text-muted-foreground"
+                />
+                {starterSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setStarterSearchQuery('')}
+                    className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </DialogHeader>
+
+          {/* Templates Grid List */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {STARTER_MESSAGE_TEMPLATES.filter((s) => {
+              if (starterCategoryFilter !== 'All' && s.category !== starterCategoryFilter) {
+                return false;
+              }
+              if (starterSearchQuery.trim()) {
+                const q = starterSearchQuery.toLowerCase();
+                const matchName = s.name.toLowerCase().includes(q);
+                const matchTitle = s.title.toLowerCase().includes(q);
+                const matchDesc = s.description.toLowerCase().includes(q);
+                const matchBody = s.body_text.toLowerCase().includes(q);
+                const matchTags = s.tags.some((t) => t.toLowerCase().includes(q));
+                return matchName || matchTitle || matchDesc || matchBody || matchTags;
+              }
+              return true;
+            }).length === 0 ? (
+              <div className="py-12 text-center text-muted-foreground text-sm">
+                No ready-made templates match your filter criteria.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {STARTER_MESSAGE_TEMPLATES.filter((s) => {
+                  if (starterCategoryFilter !== 'All' && s.category !== starterCategoryFilter) {
+                    return false;
+                  }
+                  if (starterSearchQuery.trim()) {
+                    const q = starterSearchQuery.toLowerCase();
+                    const matchName = s.name.toLowerCase().includes(q);
+                    const matchTitle = s.title.toLowerCase().includes(q);
+                    const matchDesc = s.description.toLowerCase().includes(q);
+                    const matchBody = s.body_text.toLowerCase().includes(q);
+                    const matchTags = s.tags.some((t) => t.toLowerCase().includes(q));
+                    return matchName || matchTitle || matchDesc || matchBody || matchTags;
+                  }
+                  return true;
+                }).map((starter) => (
+                  <div
+                    key={starter.slug}
+                    className="flex flex-col justify-between rounded-xl border border-border bg-muted/20 hover:border-purple-500/40 transition-all p-4 space-y-3"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <h4 className="font-semibold text-foreground text-sm flex items-center gap-1.5">
+                            {starter.title}
+                          </h4>
+                          <span className="font-mono text-[11px] text-muted-foreground">
+                            {starter.name}
+                          </span>
+                        </div>
+                        <Badge
+                          className={`border text-[10px] shrink-0 ${categoryColors[starter.category] || ''}`}
+                        >
+                          {starter.category}
+                        </Badge>
+                      </div>
+
+                      <p className="text-xs text-muted-foreground line-clamp-2">
+                        {starter.description}
+                      </p>
+
+                      {/* WhatsApp Bubble Preview */}
+                      <div className="rounded-lg border border-border/80 bg-background/80 p-3 space-y-2 text-xs">
+                        {starter.header_content && (
+                          <div className="font-semibold text-foreground border-b border-border/60 pb-1 text-[11px]">
+                            {starter.header_content}
+                          </div>
+                        )}
+                        <p className="text-muted-foreground text-[11px] leading-relaxed whitespace-pre-wrap">
+                          {starter.body_text}
+                        </p>
+                        {starter.footer_text && (
+                          <div className="text-[10px] text-muted-foreground/70 italic border-t border-border/40 pt-1">
+                            {starter.footer_text}
+                          </div>
+                        )}
+                        {starter.buttons && starter.buttons.length > 0 && (
+                          <div className="flex flex-wrap gap-1 pt-1 border-t border-border/40">
+                            {starter.buttons.map((btn, i) => (
+                              <span
+                                key={i}
+                                className="inline-flex items-center gap-1 rounded bg-muted/60 px-2 py-0.5 text-[10px] text-muted-foreground border border-border/50"
+                              >
+                                {btn.type === 'URL' ? '🔗 ' : btn.type === 'COPY_CODE' ? '📋 ' : '💬 '}
+                                {btn.text}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Tags */}
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {starter.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="text-[10px] rounded bg-muted text-muted-foreground px-1.5 py-0.5"
+                          >
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center gap-2 pt-2 border-t border-border/40">
+                      <Button
+                        size="sm"
+                        onClick={() => useStarterTemplate(starter)}
+                        className="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-xs gap-1.5 h-8"
+                      >
+                        <Pencil className="size-3.5" />
+                        Use Template
+                      </Button>
+                      {isSuperAdminUser && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={installingSlug === starter.slug}
+                          onClick={() => handleInstallStarter(starter, true)}
+                          title="Deploy as Common Template for all projects"
+                          className="border-border hover:bg-purple-500/10 text-muted-foreground hover:text-purple-300 text-xs gap-1 h-8 px-2.5"
+                        >
+                          {installingSlug === starter.slug ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <Globe className="size-3.5 text-purple-400" />
+                          )}
+                          Make Common
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="p-4 border-t border-border bg-muted/20">
+            <Button
+              variant="outline"
+              onClick={() => setStarterGalleryOpen(false)}
+              className="border-border text-muted-foreground text-xs"
+            >
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

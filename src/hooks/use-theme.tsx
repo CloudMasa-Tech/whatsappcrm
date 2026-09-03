@@ -55,7 +55,7 @@ function readInitialTheme(): ThemeId {
   const fromAttr = document.documentElement.dataset.theme;
   if (isThemeId(fromAttr)) return fromAttr;
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem("wacrm.theme");
     if (isThemeId(stored)) return stored;
   } catch {
     // localStorage can throw in private-browsing / sandboxed contexts.
@@ -68,7 +68,7 @@ function readInitialMode(): Mode {
   const fromAttr = document.documentElement.dataset.mode;
   if (isMode(fromAttr)) return fromAttr;
   try {
-    const stored = localStorage.getItem(MODE_STORAGE_KEY);
+    const stored = localStorage.getItem(MODE_STORAGE_KEY) ?? localStorage.getItem("wacrm.mode");
     if (isMode(stored)) return stored;
   } catch {
     // localStorage can throw in private-browsing / sandboxed contexts.

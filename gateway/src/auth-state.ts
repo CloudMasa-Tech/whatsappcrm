@@ -74,13 +74,12 @@ async function readValue<T>(
     return deserialise<T>(data.payload as string);
   } catch (err) {
     // A decrypt failure means the ENCRYPTION_KEY changed since this row
-    // was written. The credential is unrecoverable; report it rather
-    // than crashing the socket, and let the session fall through to a
-    // fresh pairing.
-    logger.error(
+    // was written. Delete this corrupted key so it doesn't fail again.
+    logger.warn(
       { err, projectId, keyType, keyId },
-      "auth-state decrypt failed — ENCRYPTION_KEY may have changed; a re-scan will be required",
+      "auth-state decrypt failed — removing stale key row; a re-scan will be required",
     );
+    void deleteValue(projectId, keyType, keyId).catch(() => {});
     return null;
   }
 }
@@ -144,6 +143,13 @@ export async function useSupabaseAuthState(
     CREDS_TYPE,
     CREDS_ID,
   );
+
+  if (!stored) {
+    // Fresh session or corrupted creds: purge any leftover stale keys
+    // to prevent key collisions during the new pairing flow.
+    await clearAuthState(projectId).catch(() => {});
+  }
+
   const creds: AuthenticationCreds = stored ?? initAuthCreds();
 
   return {

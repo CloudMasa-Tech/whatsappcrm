@@ -27,7 +27,7 @@ export async function GET(request: Request) {
     const ctx = await getCurrentProject();
     const origin = new URL(request.url).origin;
     const webhookUrl = `${origin}/api/facebook/webhook`;
-    const defaultVerifyToken = `wacrm_fb_${ctx.projectId.slice(0, 8)}`;
+    const defaultVerifyToken = `masacrm_fb_${ctx.projectId.slice(0, 8)}`;
 
     const { data: config, error } = await ctx.supabase
       .from('facebook_config')
@@ -70,7 +70,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const ctx = await requireProjectRole('admin');
+    const ctx = await requireProjectRole('agent');
     const body = (await request.json().catch(() => null)) as {
       access_token?: unknown;
       page_id?: unknown;
@@ -112,7 +112,7 @@ export async function POST(request: Request) {
 
     const verifyToken =
       (typeof body.verify_token === 'string' && body.verify_token.trim()) ||
-      `wacrm_fb_${ctx.projectId.slice(0, 8)}`;
+      `masacrm_fb_${ctx.projectId.slice(0, 8)}`;
     const appSecret =
       typeof body.app_secret === 'string' && body.app_secret.trim()
         ? body.app_secret.trim()
@@ -167,7 +167,7 @@ export async function POST(request: Request) {
 
 export async function DELETE() {
   try {
-    const ctx = await requireProjectRole('admin');
+    const ctx = await requireProjectRole('agent');
 
     // Clear the secrets rather than deleting the row, so the disconnect
     // and its timestamps remain visible in the UI.

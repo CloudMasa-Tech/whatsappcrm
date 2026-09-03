@@ -16,6 +16,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Filter,
+  Shield,
   X,
   Trash2,
 } from "lucide-react";
@@ -48,6 +49,7 @@ interface Customer {
   email: string;
   full_name: string | null;
   role?: "agent" | "admin";
+  is_default_admin?: boolean;
   project_id?: string | null;
   project_name?: string | null;
   created_at: string;
@@ -122,6 +124,7 @@ function AdminCustomersContent() {
   // Deletion state
   const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [resendingFor, setResendingFor] = useState<string | null>(null);
 
   // Projects list
   const [projects, setProjects] = useState<Project[]>([]);
@@ -247,7 +250,11 @@ function AdminCustomersContent() {
         return;
       }
 
-      toast.success(t("created") + " & welcome email sent to user!");
+      if (data.emailError) {
+        toast.warning(`${t("created")}, but email delivery failed: ${data.emailError}`);
+      } else {
+        toast.success(t("created") + " & welcome email sent to user!");
+      }
       resetForm();
       setOpen(false);
       setCredentials(data.credentials);
@@ -256,6 +263,39 @@ function AdminCustomersContent() {
       toast.error(t("createError"));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleResendEmail = async (customer: Customer) => {
+    try {
+      setResendingFor(customer.user_id);
+      const res = await fetch("/api/admin/users/resend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: customer.user_id,
+          customerId: customer.id,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to send welcome email");
+        return;
+      }
+      toast.success(`Welcome email delivered to ${customer.email}!`);
+      if (data.temporaryPassword) {
+        setCredentials({
+          email: customer.email,
+          password: data.temporaryPassword,
+          role: customer.role,
+          projectName: data.projectName || "Assigned Workspace",
+          signInUrl: data.signInUrl || `${window.location.origin}/login`,
+        });
+      }
+    } catch {
+      toast.error("Network error while sending welcome email");
+    } finally {
+      setResendingFor(null);
     }
   };
 
@@ -459,30 +499,37 @@ function AdminCustomersContent() {
                         <p className="truncate text-sm font-semibold text-foreground">
                           {c.full_name || t("unnamed")}
                         </p>
-                        <Select
-                          value={c.role === "admin" ? "admin" : "agent"}
-                          onValueChange={(v) =>
-                            void handleRoleChange(c, v as "agent" | "admin")
-                          }
-                          disabled={savingRoleFor === c.user_id}
-                        >
-                          <SelectTrigger
-                            aria-label={`Role for ${c.full_name || c.email}`}
-                            className={cn(
-                              "h-6 w-auto gap-1 rounded-full border px-2 py-0 text-[10px] font-medium capitalize focus:ring-1",
-                              c.role === "admin"
-                                ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20"
-                                : "bg-primary/10 text-primary border-primary/20",
-                              savingRoleFor === c.user_id && "opacity-60"
-                            )}
+                        {c.is_default_admin ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0 text-[10px] font-medium text-purple-600 dark:text-purple-400">
+                            <Shield className="h-3 w-3" />
+                            Default Admin
+                          </span>
+                        ) : (
+                          <Select
+                            value={c.role === "admin" ? "admin" : "agent"}
+                            onValueChange={(v) =>
+                              void handleRoleChange(c, v as "agent" | "admin")
+                            }
+                            disabled={savingRoleFor === c.user_id}
                           >
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="agent">Agent</SelectItem>
-                            <SelectItem value="admin">Admin</SelectItem>
-                          </SelectContent>
-                        </Select>
+                            <SelectTrigger
+                              aria-label={`Role for ${c.full_name || c.email}`}
+                              className={cn(
+                                "h-6 w-auto gap-1 rounded-full border px-2 py-0 text-[10px] font-medium capitalize focus:ring-1",
+                                c.role === "admin"
+                                  ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20"
+                                  : "bg-primary/10 text-primary border-primary/20",
+                                savingRoleFor === c.user_id && "opacity-60"
+                              )}
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="agent">Agent</SelectItem>
+                              <SelectItem value="admin">Admin</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
                         {pName ? (
                           <span className="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs text-foreground font-medium border border-border">
                             <FolderKanban className="h-3 w-3 text-primary" />
@@ -508,6 +555,22 @@ function AdminCustomersContent() {
                     <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-medium text-green-500">
                       Active
                     </span>
+
+                    {/* Resend Welcome Email Button */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void handleResendEmail(c)}
+                      disabled={resendingFor === c.user_id}
+                      className="h-8 w-8 p-0 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                      title="Resend Welcome & Credentials Email"
+                    >
+                      {resendingFor === c.user_id ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                      ) : (
+                        <Mail className="h-4 w-4" />
+                      )}
+                    </Button>
 
                     {/* Delete Customer Button */}
                     <Button

@@ -1,6 +1,6 @@
-# Installing wacrm and wiring up automations
+# Installing MaSa CRM and wiring up automations
 
-A start-to-finish setup guide for getting wacrm running on **any
+A start-to-finish setup guide for getting MaSa CRM running on **any
 machine** (Linux, macOS, Windows, container, or a PaaS box) with
 automations that actually fire.
 
@@ -201,8 +201,8 @@ npm start              # honours PORT and HOSTNAME
 **Docker** — the repo `Dockerfile` builds and runs the app on port 3000:
 
 ```bash
-docker build -t wacrm .
-docker run -d --name wacrm -p 3000:3000 --env-file .env.local wacrm
+docker build -t MaSa CRM .
+docker run -d --name MaSa CRM -p 3000:3000 --env-file .env.local MaSa CRM
 ```
 
 `.dockerignore` excludes `node_modules`, `.next`, and `.git` but **not**
@@ -289,8 +289,8 @@ crontab -e
 CRON_SECRET=<your AUTOMATION_CRON_SECRET>
 BASE=https://crm.example.com
 
-* * * * * curl -fsS -m 55 -H "x-cron-secret: $CRON_SECRET" "$BASE/api/automations/cron" >> /var/log/wacrm-cron.log 2>&1
-*/5 * * * * curl -fsS -m 55 -H "x-cron-secret: $CRON_SECRET" "$BASE/api/flows/cron"      >> /var/log/wacrm-cron.log 2>&1
+* * * * * curl -fsS -m 55 -H "x-cron-secret: $CRON_SECRET" "$BASE/api/automations/cron" >> /var/log/MaSa CRM-cron.log 2>&1
+*/5 * * * * curl -fsS -m 55 -H "x-cron-secret: $CRON_SECRET" "$BASE/api/flows/cron"      >> /var/log/MaSa CRM-cron.log 2>&1
 ```
 
 `-f` makes curl exit non-zero on 4xx/5xx, so a wrong secret shows up in
@@ -302,7 +302,7 @@ On macOS, `cron` still works but needs Full Disk Access for the
 
 ### macOS — launchd
 
-`~/Library/LaunchAgents/tech.wacrm.automations-cron.plist`:
+`~/Library/LaunchAgents/tech.MaSa CRM.automations-cron.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -310,7 +310,7 @@ On macOS, `cron` still works but needs Full Disk Access for the
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>tech.wacrm.automations-cron</string>
+  <key>Label</key><string>tech.MaSa CRM.automations-cron</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/curl</string>
@@ -319,24 +319,24 @@ On macOS, `cron` still works but needs Full Disk Access for the
     <string>https://crm.example.com/api/automations/cron</string>
   </array>
   <key>StartInterval</key><integer>60</integer>
-  <key>StandardErrorPath</key><string>/tmp/wacrm-cron.err</string>
+  <key>StandardErrorPath</key><string>/tmp/MaSa CRM-cron.err</string>
 </dict>
 </plist>
 ```
 
 ```bash
-launchctl load ~/Library/LaunchAgents/tech.wacrm.automations-cron.plist
+launchctl load ~/Library/LaunchAgents/tech.MaSa CRM.automations-cron.plist
 ```
 
 Duplicate the file with `StartInterval` 300 for `/api/flows/cron`.
 
 ### Linux — systemd timer
 
-`/etc/systemd/system/wacrm-automations-cron.service`:
+`/etc/systemd/system/MaSa CRM-automations-cron.service`:
 
 ```ini
 [Unit]
-Description=wacrm automations wait-step drain
+Description=MaSa CRM automations wait-step drain
 
 [Service]
 Type=oneshot
@@ -344,11 +344,11 @@ Environment=CRON_SECRET=REPLACE_WITH_SECRET
 ExecStart=/usr/bin/curl -fsS -m 55 -H "x-cron-secret: ${CRON_SECRET}" https://crm.example.com/api/automations/cron
 ```
 
-`/etc/systemd/system/wacrm-automations-cron.timer`:
+`/etc/systemd/system/MaSa CRM-automations-cron.timer`:
 
 ```ini
 [Unit]
-Description=Run wacrm automations drain every minute
+Description=Run MaSa CRM automations drain every minute
 
 [Timer]
 OnBootSec=60
@@ -361,11 +361,11 @@ WantedBy=timers.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now wacrm-automations-cron.timer
-sudo systemctl list-timers wacrm-\*      # verify
+sudo systemctl enable --now MaSa CRM-automations-cron.timer
+sudo systemctl list-timers MaSa CRM-\*      # verify
 ```
 
-Prefer a systemd drop-in with `EnvironmentFile=/etc/wacrm/cron.env`
+Prefer a systemd drop-in with `EnvironmentFile=/etc/MaSa CRM/cron.env`
 (mode `0600`) over putting the secret in the unit file, since unit
 files are world-readable.
 
@@ -377,8 +377,8 @@ $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
   -Argument "-NoProfile -Command `"Invoke-RestMethod -Uri 'https://crm.example.com/api/automations/cron' -Headers @{'x-cron-secret'='$secret'} -TimeoutSec 55`""
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
   -RepetitionInterval (New-TimeSpan -Minutes 1)
-Register-ScheduledTask -TaskName 'wacrm-automations-cron' `
-  -Action $action -Trigger $trigger -Description 'Drain wacrm automation wait steps'
+Register-ScheduledTask -TaskName 'MaSa CRM-automations-cron' `
+  -Action $action -Trigger $trigger -Description 'Drain MaSa CRM automation wait steps'
 ```
 
 Repeat with a 5-minute interval for `/api/flows/cron`.
@@ -413,10 +413,10 @@ endpoints never need to be reachable from the internet.
 
 ### GitHub Actions (works for any host, including serverless)
 
-`.github/workflows/wacrm-cron.yml`:
+`.github/workflows/MaSa CRM-cron.yml`:
 
 ```yaml
-name: wacrm cron
+name: MaSa CRM cron
 on:
   schedule:
     - cron: '*/5 * * * *'   # GitHub's floor is 5 minutes, and it can lag
@@ -553,13 +553,13 @@ tag-event code the dashboard uses:
 
 ```bash
 curl -X PATCH "$BASE/api/v1/contacts/$CONTACT_ID" \
-  -H "Authorization: Bearer wacrm_live_…" \
+  -H "Authorization: Bearer masacrm_live_…" \
   -H 'Content-Type: application/json' \
   -d '{"tags":["vip","onboarding"]}'
 ```
 
 `tags` **replaces** the contact's tag set; each newly added tag fires
-`tag_added`. So the durable pattern for "trigger a wacrm automation
+`tag_added`. So the durable pattern for "trigger a MaSa CRM automation
 from my own system" is: one automation per integration, triggered by a
 dedicated tag, and your script adds that tag. Create the key under
 **Settings → API keys** (admin/owner only; the full key is shown once).

@@ -1,9 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.ArnasDon/wacrm-mcp",
-  "description": "Drive a self-hosted wacrm WhatsApp CRM from Claude, Cursor and other MCP clients.",
+  "name": "io.github.ArnasDon/masacrm-mcp",
+  "description": "Drive a self-hosted masacrm WhatsApp CRM from Claude, Cursor and other MCP clients.",
   "repository": {
-    "url": "https://github.com/ArnasDon/wacrm",
+    "url": "https://github.com/ArnasDon/masacrm",
     "source": "github",
     "subfolder": "mcp-server"
   },
@@ -11,22 +11,22 @@
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "wacrm-mcp",
+      "identifier": "masacrm-mcp",
       "version": "0.1.1",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
-          "name": "WACRM_BASE_URL",
-          "description": "Base URL of your wacrm instance, e.g. https://crm.example.com",
+          "name": "MASACRM_BASE_URL",
+          "description": "Base URL of your masacrm instance, e.g. https://crm.example.com",
           "isRequired": true,
           "isSecret": false,
           "format": "string"
         },
         {
-          "name": "WACRM_API_KEY",
-          "description": "wacrm API key (Settings → API keys). Its scopes decide what is allowed.",
+          "name": "MASACRM_API_KEY",
+          "description": "masacrm API key (Settings → API keys). Its scopes decide what is allowed.",
           "isRequired": true,
           "isSecret": true,
           "format": "string"

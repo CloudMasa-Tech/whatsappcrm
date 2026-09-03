@@ -1,4 +1,4 @@
-# Deploying wacrm
+# Deploying MaSa CRM
 
 Two processes make up a deployment:
 
@@ -108,7 +108,7 @@ the RLS boundary rather than assuming it. Runs against a throwaway
 local Postgres, never your real project:
 
 ```bash
-docker run -d --name wacrm-pgtest \
+docker run -d --name MaSa CRM-pgtest \
   -e POSTGRES_PASSWORD=pw -p 55433:5432 pgvector/pgvector:pg16
 sleep 8   # let it finish starting, or the first psql silently no-ops
 
@@ -123,7 +123,7 @@ psql -h localhost -p 55433 -U postgres -f supabase/tests/01_isolation.sql
 ```
 
 Expect 26 `pass:` lines and `ALL ISOLATION ASSERTIONS PASSED`. Clean up
-with `docker rm -f wacrm-pgtest`. Details in `supabase/tests/README.md`.
+with `docker rm -f MaSa CRM-pgtest`. Details in `supabase/tests/README.md`.
 
 ---
 
@@ -192,7 +192,7 @@ The shape most self-hosters want: both services on one box, the gateway
 reachable only over the internal network.
 
 ```bash
-git clone <your-fork> wacrm && cd wacrm
+git clone <your-fork> MaSa CRM && cd MaSa CRM
 cp .env.example .env    # or create .env as in §4
 nano .env
 

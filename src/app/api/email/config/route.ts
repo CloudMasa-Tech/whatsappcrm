@@ -1,32 +1,54 @@
 import { NextResponse } from 'next/server';
-import { getCurrentAccount, requireRole, toErrorResponse } from '@/lib/auth/account';
+import { toErrorResponse } from '@/lib/auth/account';
+import { requireProjectRole, requireProject, getCurrentProject } from '@/lib/auth/project';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { resolveEmailConfig } from '@/lib/email/transport';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const ctx = await getCurrentAccount();
-    const config = await resolveEmailConfig(undefined, ctx.accountId);
+    const url = new URL(request.url);
+    const requestedProject = url.searchParams.get('project_id');
 
-    if (!config) {
+    const projectCtx = requestedProject
+      ? await requireProject(requestedProject, 'viewer').catch(() => null)
+      : await getCurrentProject().catch(() => null);
+
+    const projectId = requestedProject || projectCtx?.projectId;
+
+    if (!projectId) {
       return NextResponse.json({
         configured: false,
         config: null,
       });
     }
 
+    const { data } = await supabaseAdmin()
+      .from('email_configs')
+      .select('*')
+      .eq('project_id', projectId)
+      .eq('is_connected', true)
+      .maybeSingle();
+
+    if (!data) {
+      return NextResponse.json({
+        configured: false,
+        project_id: projectId,
+        config: null,
+      });
+    }
+
     return NextResponse.json({
       configured: true,
+      project_id: projectId,
       config: {
-        host: config.host,
-        port: config.port,
-        secure: config.secure,
-        user: config.user,
-        fromEmail: config.fromEmail,
-        fromName: config.fromName,
-        replyTo: config.replyTo,
-        // Mask password for safety
-        hasPassword: Boolean(config.pass),
+        provider: data.provider || 'smtp',
+        host: data.smtp_host,
+        port: data.smtp_port || 587,
+        secure: Boolean(data.smtp_secure),
+        user: data.email_address,
+        fromEmail: data.email_address,
+        fromName: data.from_name || 'MaSa CRM',
+        replyTo: data.reply_to || '',
+        hasPassword: Boolean(data.email_password),
       },
     });
   } catch (err) {
@@ -36,11 +58,10 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    // SMTP credentials decide where every outbound email originates, so
-    // writing them is an admin action. Read (GET) stays open to members,
-    // which only reveals whether email is configured.
-    const ctx = await requireRole('admin');
     const body = (await request.json().catch(() => null)) as {
+      project_id?: string;
+      projectId?: string;
+      provider?: string;
       host?: string;
       port?: number;
       secure?: boolean;
@@ -50,6 +71,15 @@ export async function POST(request: Request) {
       fromEmail?: string;
       replyTo?: string;
     } | null;
+
+    const requestedProject = body?.project_id || body?.projectId;
+
+    const ctx = requestedProject
+      ? await requireProject(requestedProject, 'admin')
+      : await requireProjectRole('admin');
+
+    const projectId = ctx.projectId;
+    const accountId = ctx.accountId;
 
     if (!body || !body.host || !body.user || !body.fromEmail) {
       return NextResponse.json(
@@ -66,16 +96,17 @@ export async function POST(request: Request) {
     const fromName = body.fromName?.trim() || 'MaSa CRM';
     const fromEmail = body.fromEmail.trim().toLowerCase();
     const replyTo = body.replyTo?.trim() || null;
+    const provider = body.provider || 'smtp';
 
-    // Check if config row exists
+    // Check if existing config row exists for this project
     const { data: existing } = await supabaseAdmin()
       .from('email_configs')
-      .select('id, smtp_pass')
-      .eq('account_id', ctx.accountId)
+      .select('id, email_password')
+      .eq('project_id', projectId)
       .maybeSingle();
 
     // If updating without new password, retain existing password
-    const finalPass = pass || (existing?.smtp_pass ?? '');
+    const finalPass = pass || (existing?.email_password ?? '');
 
     if (!finalPass) {
       return NextResponse.json(
@@ -88,31 +119,64 @@ export async function POST(request: Request) {
       .from('email_configs')
       .upsert(
         {
-          account_id: ctx.accountId,
+          project_id: projectId,
+          account_id: accountId,
+          email_address: fromEmail,
+          email_password: finalPass,
+          provider,
           smtp_host: host,
           smtp_port: port,
           smtp_secure: secure,
-          smtp_user: user,
-          smtp_pass: finalPass,
           from_name: fromName,
-          from_email: fromEmail,
           reply_to: replyTo,
+          is_connected: true,
           updated_at: new Date().toISOString(),
         },
-        { onConflict: 'account_id,project_id' }
+        { onConflict: 'project_id' }
       );
 
     if (upsertErr) {
       console.error('[POST /api/email/config] upsert error:', upsertErr);
       return NextResponse.json(
-        { error: 'Failed to save email configuration.' },
+        { error: 'Failed to save email configuration for project.' },
         { status: 500 }
       );
     }
 
     return NextResponse.json({
       success: true,
-      message: 'Email configuration saved successfully.',
+      message: 'Email configuration saved successfully for this project.',
+    });
+  } catch (err) {
+    return toErrorResponse(err);
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const url = new URL(request.url);
+    const requestedProject = url.searchParams.get('project_id');
+
+    const ctx = requestedProject
+      ? await requireProject(requestedProject, 'admin')
+      : await requireProjectRole('admin');
+
+    const { error } = await supabaseAdmin()
+      .from('email_configs')
+      .delete()
+      .eq('project_id', ctx.projectId);
+
+    if (error) {
+      console.error('[DELETE /api/email/config] error:', error);
+      return NextResponse.json(
+        { error: 'Failed to disconnect email configuration.' },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'Email disconnected successfully for this project.',
     });
   } catch (err) {
     return toErrorResponse(err);

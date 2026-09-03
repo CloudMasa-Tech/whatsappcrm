@@ -245,6 +245,17 @@ async function resolveContact(
   // different customer relationship and must not be reused here.
   const existing = await findExistingContact(db, accountId, phone, projectId);
   if (existing) {
+    if (
+      name &&
+      name.trim() &&
+      name !== phone &&
+      (!existing.name || existing.name === phone || existing.name.startsWith("+"))
+    ) {
+      await db
+        .from("contacts")
+        .update({ name: name.trim(), updated_at: new Date().toISOString() })
+        .eq("id", existing.id);
+    }
     return {
       id: existing.id,
       userId: (existing.user_id as string) ?? (await accountOwner(db, accountId)),

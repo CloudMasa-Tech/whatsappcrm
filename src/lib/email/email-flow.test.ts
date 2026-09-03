@@ -130,16 +130,22 @@ describe('Email Campaign Flow - Unit & Integration Tests', () => {
     });
   });
 
-  describe('Transport & Simulated Dispatch', () => {
-    it('safely handles sendEmail with simulation when no SMTP is configured in dev', async () => {
+  describe('Transport Error Handling & Project Isolation', () => {
+    it('returns a clear failure error when no SMTP is configured', async () => {
       const res = await sendEmail({
         to: 'customer@example.com',
         subject: 'Test Campaign',
         html: '<p>Hello!</p>',
       });
 
-      expect(res.success).toBe(true);
-      expect(res.messageId).toBeDefined();
+      expect(res.success).toBe(false);
+      expect(res.error).toBeDefined();
+    });
+
+    it('enforces that an unconfigured project returns null and does not leak global fallback', async () => {
+      // With a specific project that has no db row, it returns null
+      const config = await resolveEmailConfig('non-existent-project-id', 'test-account');
+      expect(config).toBeNull();
     });
   });
 });

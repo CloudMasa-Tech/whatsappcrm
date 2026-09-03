@@ -125,6 +125,12 @@ export function ChannelStatusBanner({ projectId }: { projectId: string | null })
   const [readiness, setReadiness] = useState<Record<string, Readiness> | null>(null);
 
   useEffect(() => {
+    const currentProjectId = projectId;
+    if (!currentProjectId) {
+      setReadiness(null);
+      return;
+    }
+
     // `ignore` drops a stale response if the project changes or the
     // component unmounts before the fetch settles.
     let ignore = false;
@@ -146,6 +152,8 @@ export function ChannelStatusBanner({ projectId }: { projectId: string | null })
       ignore = true;
     };
   }, [projectId]);
+
+  if (!projectId) return null;
 
   const items: ChannelItem[] = [];
 

@@ -53,7 +53,7 @@ export const GATEWAY_HEARTBEAT_MS = 60_000;
  * Three missed beats — enough that one slow write, a brief network
  * partition, or a Supabase hiccup doesn't flap a healthy session.
  */
-export const STALE_AFTER_MS = 3 * GATEWAY_HEARTBEAT_MS;
+export const STALE_AFTER_MS = 10 * GATEWAY_HEARTBEAT_MS;
 
 /**
  * Derive the status to display from the stored row.

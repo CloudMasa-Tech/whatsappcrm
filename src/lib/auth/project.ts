@@ -45,7 +45,8 @@ import { hasMinRole, type AccountRole, type PlatformRole } from "./roles";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 /** Cookie holding the caller's active project id. */
-export const ACTIVE_PROJECT_COOKIE = "wacrm_project";
+export const ACTIVE_PROJECT_COOKIE = "masacrm_project";
+export const LEGACY_ACTIVE_PROJECT_COOKIE = "wacrm_project";
 
 /** How a project's WhatsApp connection is wired up. */
 export type ChannelType = "cloud_api" | "qr";
@@ -227,14 +228,16 @@ export async function resolveProject(
  * Resolve the caller's account, then their ACTIVE project.
  *
  * Selection order:
- *   1. the `wacrm_project` cookie, if it names a project they are allocated to
+ *   1. the `masacrm_project` cookie (or legacy `wacrm_project`), if it names a project they are allocated to
  *   2. otherwise their first allocated project
  */
 export async function getCurrentProject(): Promise<ProjectContext> {
   const account = await getCurrentAccount();
 
   const cookieStore = await cookies();
-  const requested = cookieStore.get(ACTIVE_PROJECT_COOKIE)?.value;
+  const requested =
+    cookieStore.get(ACTIVE_PROJECT_COOKIE)?.value ||
+    cookieStore.get(LEGACY_ACTIVE_PROJECT_COOKIE)?.value;
 
   if (requested) {
     try {

@@ -8,7 +8,7 @@
 let soundEnabled = true;
 
 if (typeof window !== 'undefined') {
-  const stored = localStorage.getItem('wacrm_notification_sound');
+  const stored = localStorage.getItem('masacrm_notification_sound') ?? localStorage.getItem('wacrm_notification_sound');
   if (stored !== null) {
     soundEnabled = stored === 'true';
   }
@@ -21,7 +21,7 @@ export function isSoundEnabled(): boolean {
 export function setSoundEnabled(enabled: boolean): void {
   soundEnabled = enabled;
   if (typeof window !== 'undefined') {
-    localStorage.setItem('wacrm_notification_sound', enabled ? 'true' : 'false');
+    localStorage.setItem('masacrm_notification_sound', enabled ? 'true' : 'false');
   }
 }
 

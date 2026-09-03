@@ -191,9 +191,25 @@ export function FacebookConnect({ onConnected }: { onConnected?: () => void }) {
       </div>
 
       {expanded && !connected && (
-        <form onSubmit={handleConnect} className="mt-4 space-y-3 border-t border-border pt-4">
+        <form onSubmit={handleConnect} className="mt-4 space-y-4">
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-xs">
+            <div>
+              <span className="font-semibold text-foreground">Need a Meta Page Token?</span>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Generate a Page Access Token in 1 click with `pages_messaging` &amp; `pages_show_list`.</p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 shrink-0 gap-1 border-blue-500/30 text-xs text-blue-600 hover:bg-blue-500/10 dark:text-blue-400"
+              onClick={() => window.open("https://developers.facebook.com/tools/explorer/", "_blank")}
+            >
+              Open Explorer
+            </Button>
+          </div>
+
           <div className="space-y-1.5">
-            <Label htmlFor="fb-token">Page access token *</Label>
+            <Label htmlFor="fb-token">Page access token</Label>
             <Input
               id="fb-token"
               type="password"

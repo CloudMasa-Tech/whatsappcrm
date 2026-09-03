@@ -105,11 +105,13 @@ export default function AdminTemplatesPage() {
   }, [loadTemplates]);
 
   // Actions
-  async function handleApprove(template: TemplateWithProject) {
+  async function handleApprove(template: TemplateWithProject, makeCommon = false) {
     setActionLoading(true);
     try {
       const res = await fetch(`/api/admin/templates/${template.id}/approve`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ makeCommon }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -123,7 +125,12 @@ export default function AdminTemplatesPage() {
             : t,
         ),
       );
-      toast.success(`Template "${template.name}" approved successfully!`);
+      if (makeCommon) {
+        toast.success(`Template "${template.name}" approved as Common Template for all projects!`);
+      } else {
+        toast.success(`Template "${template.name}" approved for project "${template.project?.name || "Current Project"}"!`);
+      }
+      loadTemplates();
     } catch (err: any) {
       toast.error(err.message || "Approval failed");
     } finally {
@@ -527,15 +534,26 @@ export default function AdminTemplatesPage() {
                     {/* Action Buttons */}
                     <div className="flex shrink-0 flex-row lg:flex-col items-center gap-2">
                       {!isApproved && (
-                        <Button
-                          size="sm"
-                          onClick={() => handleApprove(template)}
-                          disabled={actionLoading}
-                          className="w-full bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
-                        >
-                          <CheckCircle2 className="mr-1.5 h-4 w-4" />
-                          Approve
-                        </Button>
+                        <>
+                          <Button
+                            size="sm"
+                            onClick={() => handleApprove(template, false)}
+                            disabled={actionLoading}
+                            className="w-full bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm text-xs"
+                          >
+                            <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                            Approve (Project Only)
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handleApprove(template, true)}
+                            disabled={actionLoading}
+                            className="w-full bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm text-xs"
+                          >
+                            <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                            Approve for All Projects
+                          </Button>
+                        </>
                       )}
 
                       {!isRejected && (

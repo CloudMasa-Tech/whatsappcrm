@@ -1,14 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
-import { Mail, Server, ShieldCheck, Send, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Mail, Server, ShieldCheck, Send, Loader2, CheckCircle2, AlertCircle, Unplug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { getPresetSmtpConfig } from '@/lib/email/presets';
+import { useAuth } from '@/hooks/use-auth';
 
 export function EmailConfigPanel() {
+  const { activeProjectId, activeProjectName } = useAuth();
+
   const [provider, setProvider] = useState<'gmail' | 'outlook' | 'zoho' | 'custom'>('custom');
   const [host, setHost] = useState('');
   const [port, setPort] = useState(587);
@@ -25,29 +28,54 @@ export function EmailConfigPanel() {
   const [configured, setConfigured] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
-  useEffect(() => {
-    async function loadConfig() {
-      try {
-        const res = await fetch('/api/email/config');
-        const data = await res.json();
-        if (data?.configured && data?.config) {
-          setConfigured(true);
-          setHost(data.config.host || '');
-          setPort(data.config.port || 587);
-          setSecure(Boolean(data.config.secure));
-          setUser(data.config.user || '');
-          setFromName(data.config.fromName || 'MaSa CRM');
-          setFromEmail(data.config.fromEmail || '');
-          setReplyTo(data.config.replyTo || '');
-        }
-      } catch (err) {
-        console.error('Failed to load email configuration:', err);
-      } finally {
-        setLoading(false);
-      }
+  const loadConfig = useCallback(async (pId: string | null) => {
+    if (!pId) {
+      setLoading(false);
+      setConfigured(false);
+      return;
     }
-    loadConfig();
+    setLoading(true);
+    setTestResult(null);
+    try {
+      const res = await fetch(`/api/email/config?project_id=${encodeURIComponent(pId)}`);
+      const data = await res.json();
+      if (data?.configured && data?.config) {
+        setConfigured(true);
+        setProvider((data.config.provider as any) || 'custom');
+        setHost(data.config.host || '');
+        setPort(data.config.port || 587);
+        setSecure(Boolean(data.config.secure));
+        setUser(data.config.user || '');
+        setFromName(data.config.fromName || 'MaSa CRM');
+        setFromEmail(data.config.fromEmail || '');
+        setReplyTo(data.config.replyTo || '');
+        setPass('');
+      } else {
+        setConfigured(false);
+        setProvider('custom');
+        setHost('');
+        setPort(587);
+        setSecure(false);
+        setUser('');
+        setPass('');
+        setFromName('MaSa CRM');
+        setFromEmail('');
+        setReplyTo('');
+      }
+    } catch (err) {
+      console.error('Failed to load email configuration:', err);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    if (activeProjectId) {
+      void loadConfig(activeProjectId);
+    } else {
+      setLoading(false);
+    }
+  }, [activeProjectId, loadConfig]);
 
   const handleProviderSelect = (selected: 'gmail' | 'outlook' | 'zoho' | 'custom') => {
     setProvider(selected);
@@ -79,6 +107,11 @@ export function EmailConfigPanel() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!activeProjectId) {
+      toast.error('Please select an active project before configuring email');
+      return;
+    }
+
     if (!host.trim() || !user.trim() || !fromEmail.trim()) {
       toast.error('Host, Username/Email, and From Email are required');
       return;
@@ -92,6 +125,8 @@ export function EmailConfigPanel() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          project_id: activeProjectId,
+          provider,
           host,
           port,
           secure,
@@ -109,10 +144,43 @@ export function EmailConfigPanel() {
         return;
       }
 
-      toast.success('Email configuration saved successfully');
+      toast.success(data.message || `Email configuration saved for "${activeProjectName}"`);
       setConfigured(true);
+      void loadConfig(activeProjectId);
     } catch {
       toast.error('Network error saving email settings');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (!activeProjectId) return;
+    if (!window.confirm(`Disconnect email for project "${activeProjectName}"?`)) {
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/email/config?project_id=${encodeURIComponent(activeProjectId)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to disconnect email');
+        return;
+      }
+
+      toast.success(`Email disconnected for "${activeProjectName}"`);
+      setConfigured(false);
+      setUser('');
+      setPass('');
+      setHost('');
+      setFromEmail('');
+      setReplyTo('');
+      setTestResult(null);
+    } catch {
+      toast.error('Network error disconnecting email');
     } finally {
       setSaving(false);
     }
@@ -132,6 +200,7 @@ export function EmailConfigPanel() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          projectId: activeProjectId,
           host,
           port,
           secure,
@@ -176,20 +245,51 @@ export function EmailConfigPanel() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-foreground">Email Connection & SMTP</h2>
-        <p className="text-sm text-muted-foreground">
-          Connect your email account to send customer welcome invitations, onboarding credentials, and bulk email broadcasts.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Email Connection & SMTP</h2>
+          <p className="text-sm text-muted-foreground">
+            Connect each project&apos;s email account to send customer welcome invitations, onboarding credentials, and bulk email broadcasts.
+          </p>
+        </div>
+        {activeProjectName && (
+          <div className="flex items-center gap-2 rounded-full border border-border bg-muted/50 px-3.5 py-1 text-xs font-medium text-foreground shadow-sm">
+            <span className={`h-2 w-2 rounded-full ${configured ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+            Configuring: <strong className="text-primary">{activeProjectName}</strong>
+          </div>
+        )}
       </div>
 
-      {configured && (
-        <div className="flex items-center gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-emerald-400">
-          <CheckCircle2 className="h-5 w-5 shrink-0" />
+      {configured ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-emerald-400">
+          <div className="flex items-center gap-3">
+            <CheckCircle2 className="h-5 w-5 shrink-0" />
+            <div className="text-sm">
+              <p className="font-medium">Email Gateway Active for &ldquo;{activeProjectName}&rdquo;</p>
+              <p className="text-xs text-emerald-400/80">
+                Sending from <strong>{user}</strong> via <strong>{host}:{port}</strong>
+              </p>
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleDisconnect}
+            disabled={saving || testing}
+            className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300"
+          >
+            <Unplug className="mr-1.5 h-4 w-4" />
+            Disconnect Email
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/30 p-4 text-muted-foreground">
+          <Mail className="h-5 w-5 shrink-0 text-muted-foreground" />
           <div className="text-sm">
-            <p className="font-medium">Email Gateway Active</p>
-            <p className="text-xs text-emerald-400/80">
-              Sending from <strong>{user}</strong> via <strong>{host}:{port}</strong>
+            <p className="font-medium text-foreground">No Email Connected for &ldquo;{activeProjectName || 'this project'}&rdquo;</p>
+            <p className="text-xs">
+              Each project connects its own email for marketing campaigns and outbound messages. Connect below:
             </p>
           </div>
         </div>
@@ -370,7 +470,7 @@ export function EmailConfigPanel() {
             ) : (
               <>
                 <ShieldCheck className="mr-2 h-4 w-4" />
-                Save Email Configuration
+                Save Email Configuration for {activeProjectName || 'Project'}
               </>
             )}
           </Button>

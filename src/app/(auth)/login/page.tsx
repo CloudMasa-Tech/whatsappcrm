@@ -79,15 +79,18 @@ function LoginPageInner() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="items-center text-center">
-          <div className="mb-4 flex items-center justify-center py-2">
+          <div className="mb-4 flex flex-col items-center justify-center gap-1.5 py-2">
             <Image
               src="/logo.png"
               alt="MaSa CRM"
-              width={300}
-              height={84}
+              width={340}
+              height={95}
               className="h-16 w-auto object-contain"
               priority
             />
+            <span className="text-xs font-semibold text-muted-foreground/85 tracking-tight">
+              All-in-One Social Media Platform
+            </span>
           </div>
           <CardTitle className="text-xl text-foreground">
             {inviteToken ? t('titleAccept') : t('titleWelcome')}
