@@ -150,15 +150,18 @@ export function AgentDashboard() {
         db
           .from("messages")
           .select("id", { count: "exact", head: true })
+          .eq("project_id", activeProjectId)
           .eq("sender_type", "agent")
           .gte("created_at", todayStart.toISOString()),
         db
           .from("messages")
           .select("id", { count: "exact", head: true })
+          .eq("project_id", activeProjectId)
           .eq("sender_type", "agent"),
         db
           .from("messages")
           .select("id, conversation_id, content_text, content_type, created_at, status, sender_type, channel")
+          .eq("project_id", activeProjectId)
           .eq("sender_type", "agent")
           .order("created_at", { ascending: false })
           .limit(20),

@@ -315,11 +315,19 @@ export function CustomerDashboard() {
     setActivityLoading(true);
     try {
       const [todayRes, totalRes, recentMsgRes] = await Promise.all([
-        db.from("messages").select("id", { count: "exact", head: true }).gte("created_at", todayStart.toISOString()),
-        db.from("messages").select("id", { count: "exact", head: true }),
+        db
+          .from("messages")
+          .select("id", { count: "exact", head: true })
+          .eq("project_id", activeProjectId)
+          .gte("created_at", todayStart.toISOString()),
+        db
+          .from("messages")
+          .select("id", { count: "exact", head: true })
+          .eq("project_id", activeProjectId),
         db
           .from("messages")
           .select("id, conversation_id, content_text, content_type, created_at, status, sender_type, channel")
+          .eq("project_id", activeProjectId)
           .order("created_at", { ascending: false })
           .limit(10),
       ]);
@@ -340,6 +348,7 @@ export function CustomerDashboard() {
       const { data: broadcasts } = await db
         .from("broadcasts")
         .select("id, name, status, total_recipients, delivered_count, sent_count, failed_count, created_at")
+        .eq("project_id", activeProjectId)
         .order("created_at", { ascending: false })
         .limit(5);
 
