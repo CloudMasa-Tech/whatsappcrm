@@ -1,7 +1,8 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import type { Deal, PipelineStage } from "@/types";
-import { Calendar, Check, X } from "lucide-react";
+import { Calendar, Check, MessageSquare, X } from "lucide-react";
 import { formatCurrency } from "@/lib/currency";
 import { useTranslations } from "next-intl";
 
@@ -27,6 +28,7 @@ function initials(name?: string, fallback?: string) {
 }
 
 export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
+  const router = useRouter();
   const t = useTranslations("Pipelines.card");
   const contactLabel = deal.contact?.name || deal.contact?.phone || t("noContact");
   const assigneeLabel = deal.assignee?.full_name || null;
@@ -73,11 +75,27 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
       </div>
 
       {/* Contact row */}
-      <div className="mt-2 flex items-center gap-2">
-        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-foreground">
-          {initials(deal.contact?.name, deal.contact?.phone)}
-        </span>
-        <span className="truncate text-xs text-muted-foreground">{contactLabel}</span>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-foreground">
+            {initials(deal.contact?.name, deal.contact?.phone)}
+          </span>
+          <span className="truncate text-xs text-muted-foreground">{contactLabel}</span>
+        </div>
+        {deal.contact && (
+          <button
+            type="button"
+            title="Open Chat in Inbox"
+            onClick={(e) => {
+              e.stopPropagation();
+              router.push(`/inbox?contactId=${deal.contact?.id}`);
+            }}
+            className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 hover:bg-emerald-500/20 dark:text-emerald-400 transition-colors shrink-0"
+          >
+            <MessageSquare className="h-2.5 w-2.5" />
+            <span>Chat</span>
+          </button>
+        )}
       </div>
 
       <div className="mt-2 flex items-center justify-between">

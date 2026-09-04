@@ -202,10 +202,10 @@ export interface Conversation {
 }
 
 // ============================================================
-// Notifications (migration 027)
+// Notifications (migration 027 + 060)
 // ============================================================
 
-export type NotificationType = 'conversation_assigned';
+export type NotificationType = 'conversation_assigned' | 'new_message' | 'snooze_reminder';
 
 export interface Notification {
   id: string;
@@ -222,6 +222,18 @@ export interface Notification {
   title: string;
   body?: string;
   read_at?: string;
+  created_at: string;
+}
+
+export interface ConversationReminder {
+  id: string;
+  account_id: string;
+  project_id?: string;
+  conversation_id: string;
+  user_id: string;
+  remind_at: string;
+  note?: string | null;
+  completed_at?: string | null;
   created_at: string;
 }
 

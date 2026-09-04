@@ -30,6 +30,7 @@ import { dispatchInboundToFlows } from "@/lib/flows/engine";
 import { dispatchInboundToAiReply } from "@/lib/ai/auto-reply";
 import { getNextRoundRobinAgentId } from "@/lib/inbox/round-robin";
 import { dispatchWebhookEvent } from "@/lib/webhooks/deliver";
+import { dispatchNotification } from "@/lib/notifications/dispatch";
 import type { InboundMessage } from "@/lib/channels/types";
 
 export interface IngestResult {
@@ -205,6 +206,45 @@ export async function ingestInboundMessage(
   // gateway, or it will retry and we will process it twice.
   // Only trigger automations and AI reply for real live incoming customer messages.
   if (!fromMe && !isHistory) {
+    if (conversation.assignedAgentId) {
+      void dispatchNotification(db, {
+        accountId,
+        projectId,
+        userId: conversation.assignedAgentId,
+        type: "new_message",
+        title: `New message from ${message.senderName || phone}`,
+        body: previewText(message),
+        conversationId: conversation.id,
+        contactId: contact.id,
+      });
+    }
+
+    // Auto-unsnooze any active reminders for this conversation
+    void (async () => {
+      try {
+        const { data: activeReminders } = await db
+          .from("conversation_reminders")
+          .select("id")
+          .eq("conversation_id", conversation.id)
+          .is("completed_at", null);
+
+        if (activeReminders && activeReminders.length > 0) {
+          await db
+            .from("conversation_reminders")
+            .update({ completed_at: new Date().toISOString() })
+            .eq("conversation_id", conversation.id)
+            .is("completed_at", null);
+
+          await db
+            .from("conversations")
+            .update({ status: "open", updated_at: new Date().toISOString() })
+            .eq("id", conversation.id);
+        }
+      } catch (err) {
+        console.error("[ingest] auto-unsnooze failed:", err);
+      }
+    })();
+
     void dispatchDownstream({
       db,
       accountId,
@@ -328,12 +368,12 @@ interface ResolveConversationArgs {
 async function resolveConversation(
   db: SupabaseClient,
   args: ResolveConversationArgs,
-): Promise<{ id: string; unreadCount: number; lastMessageAt: string | null; created: boolean } | null> {
+): Promise<{ id: string; unreadCount: number; lastMessageAt: string | null; created: boolean; assignedAgentId: string | null } | null> {
   const { accountId, projectId, contactId, ownerUserId } = args;
 
   const { data: existing } = await db
     .from("conversations")
-    .select("id, unread_count, last_message_at")
+    .select("id, unread_count, last_message_at, assigned_agent_id")
     .eq("project_id", projectId)
     .eq("contact_id", contactId)
     .maybeSingle();
@@ -344,6 +384,7 @@ async function resolveConversation(
       unreadCount: (existing.unread_count as number) ?? 0,
       lastMessageAt: (existing.last_message_at as string) ?? null,
       created: false,
+      assignedAgentId: (existing.assigned_agent_id as string) ?? null,
     };
   }
 
@@ -359,7 +400,7 @@ async function resolveConversation(
       status: "open",
       assigned_agent_id: roundRobinAgentId,
     })
-    .select("id, unread_count, last_message_at")
+    .select("id, unread_count, last_message_at, assigned_agent_id")
     .single();
 
   if (error) {
@@ -367,7 +408,7 @@ async function resolveConversation(
     if (isUniqueViolation(error)) {
       const { data: raced } = await db
         .from("conversations")
-        .select("id, unread_count, last_message_at")
+        .select("id, unread_count, last_message_at, assigned_agent_id")
         .eq("project_id", projectId)
         .eq("contact_id", contactId)
         .maybeSingle();
@@ -377,6 +418,7 @@ async function resolveConversation(
           unreadCount: (raced.unread_count as number) ?? 0,
           lastMessageAt: (raced.last_message_at as string) ?? null,
           created: false,
+          assignedAgentId: (raced.assigned_agent_id as string) ?? null,
         };
       }
     }
@@ -384,7 +426,13 @@ async function resolveConversation(
     return null;
   }
 
-  return { id: created.id as string, unreadCount: 0, lastMessageAt: null, created: true };
+  return {
+    id: created.id as string,
+    unreadCount: 0,
+    lastMessageAt: null,
+    created: true,
+    assignedAgentId: (created.assigned_agent_id as string) ?? roundRobinAgentId ?? null,
+  };
 }
 
 // ------------------------------------------------------------

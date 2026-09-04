@@ -17,6 +17,9 @@ import type {
   Profile,
   AccountMember,
   InteractiveMessagePayload,
+  Deal,
+  PipelineStage,
+  ConversationReminder,
 } from "@/types";
 import { fetchAccountMembers } from "@/lib/account/members";
 import {
@@ -36,7 +39,18 @@ import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { useTranslations } from "next-intl";
 import { Instagram } from "@/components/icons/instagram";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { formatDisplayPhone, getContactDisplay } from "@/lib/whatsapp/phone-utils";
+import { formatCurrency } from "@/lib/currency";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -542,6 +556,168 @@ export function MessageThread({
     },
     [contact?.id, conversation, user?.id],
   );
+
+  // ------------------------------------------------------------
+  // Active Deal & In-Chat Stage Management
+  // ------------------------------------------------------------
+  const [activeDeal, setActiveDeal] = useState<(Deal & { stage?: PipelineStage | null }) | null>(null);
+  const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
+
+  useEffect(() => {
+    if (!contact?.id) {
+      setActiveDeal(null);
+      setPipelineStages([]);
+      return;
+    }
+    const supabase = createClient();
+    let cancelled = false;
+
+    (async () => {
+      const { data: deal } = await supabase
+        .from("deals")
+        .select("*, stage:pipeline_stages(*)")
+        .eq("contact_id", contact.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (deal) {
+        setActiveDeal(deal as (Deal & { stage?: PipelineStage | null }));
+        if (deal.pipeline_id) {
+          const { data: stages } = await supabase
+            .from("pipeline_stages")
+            .select("*")
+            .eq("pipeline_id", deal.pipeline_id)
+            .order("position");
+          if (!cancelled && stages) {
+            setPipelineStages(stages as PipelineStage[]);
+          }
+        }
+      } else {
+        setActiveDeal(null);
+        setPipelineStages([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [contact?.id, resyncToken]);
+
+  const handleDealStageChange = useCallback(
+    async (newStage: PipelineStage) => {
+      if (!activeDeal) return;
+      const prevDeal = activeDeal;
+      setActiveDeal({ ...activeDeal, stage_id: newStage.id, stage: newStage });
+
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("deals")
+        .update({ stage_id: newStage.id, updated_at: new Date().toISOString() })
+        .eq("id", activeDeal.id);
+
+      if (error) {
+        setActiveDeal(prevDeal);
+        toast.error("Failed to update deal stage");
+      } else {
+        toast.success(`Deal moved to ${newStage.name}`);
+      }
+    },
+    [activeDeal],
+  );
+
+  // ------------------------------------------------------------
+  // Chat Snooze & Follow-up Reminders
+  // ------------------------------------------------------------
+  const [activeReminder, setActiveReminder] = useState<ConversationReminder | null>(null);
+  const [snoozeCustomOpen, setSnoozeCustomOpen] = useState(false);
+  const [customSnoozeDate, setCustomSnoozeDate] = useState("");
+  const [customSnoozeNote, setCustomSnoozeNote] = useState("");
+
+  useEffect(() => {
+    if (!conversationId) {
+      setActiveReminder(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/inbox/snooze?conversation_id=${conversationId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data) {
+          setActiveReminder(data.reminder ?? null);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, resyncToken]);
+
+  const handleSnooze = useCallback(
+    async (remindAt: Date, note?: string) => {
+      if (!conversation) return;
+      try {
+        const res = await fetch("/api/inbox/snooze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversation_id: conversation.id,
+            remind_at: remindAt.toISOString(),
+            note: note?.trim() || undefined,
+          }),
+        });
+
+        if (!res.ok) throw new Error("Failed to snooze");
+        const data = await res.json();
+        setActiveReminder(data.reminder);
+        onStatusChange(conversation.id, "pending");
+        toast.success(`Snoozed until ${format(remindAt, "MMM d, h:mm a")}`);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : "Network error";
+        toast.error(`Failed to snooze: ${reason}`);
+      }
+    },
+    [conversation, onStatusChange],
+  );
+
+  const handleSnoozePreset = useCallback(
+    (preset: "1hour" | "tomorrow" | "2days" | "nextweek") => {
+      const target = new Date();
+      if (preset === "1hour") {
+        target.setTime(target.getTime() + 3600 * 1000);
+      } else if (preset === "tomorrow") {
+        target.setDate(target.getDate() + 1);
+        target.setHours(9, 0, 0, 0);
+      } else if (preset === "2days") {
+        target.setDate(target.getDate() + 2);
+        target.setHours(9, 0, 0, 0);
+      } else if (preset === "nextweek") {
+        const day = target.getDay();
+        const diff = ((8 - day) % 7) || 7;
+        target.setDate(target.getDate() + diff);
+        target.setHours(9, 0, 0, 0);
+      }
+      handleSnooze(target);
+    },
+    [handleSnooze],
+  );
+
+  const handleUnsnooze = useCallback(async () => {
+    if (!conversation) return;
+    try {
+      const res = await fetch(`/api/inbox/snooze?conversation_id=${conversation.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to unsnooze");
+      setActiveReminder(null);
+      onStatusChange(conversation.id, "open");
+      toast.success("Conversation reopened");
+    } catch (err) {
+      toast.error("Failed to unsnooze conversation");
+    }
+  }, [conversation, onStatusChange]);
 
   // Clear any in-progress reply draft when the active conversation changes —
   // a quote pulled from conversation A shouldn't bleed into conversation B.
@@ -1280,8 +1456,138 @@ export function MessageThread({
               </span>
             </div>
           )}
+
+          {/* Deal Stage Quick Selector (In-Chat Pipeline Control) */}
+          {activeDeal && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                className="inline-flex items-center justify-center h-7 gap-1.5 px-2 text-xs font-medium rounded-md border border-border/80 bg-muted/60 hover:bg-muted transition-colors max-w-[170px]"
+                title={`Deal: ${activeDeal.title} (${formatCurrency(activeDeal.value, activeDeal.currency)})`}
+              >
+                <span
+                  className="h-2 w-2 rounded-full shrink-0"
+                  style={{ backgroundColor: activeDeal.stage?.color || "#3b82f6" }}
+                />
+                <span className="truncate">{activeDeal.stage?.name || "Deal Stage"}</span>
+                <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52 border-border bg-popover text-popover-foreground">
+                <div className="px-2 py-1.5 text-[11px] font-semibold text-muted-foreground border-b border-border">
+                  Stage: {formatCurrency(activeDeal.value, activeDeal.currency)}
+                </div>
+                {pipelineStages.map((stg) => {
+                  const isCurrent = stg.id === activeDeal.stage_id;
+                  return (
+                    <DropdownMenuItem
+                      key={stg.id}
+                      onClick={() => handleDealStageChange(stg)}
+                      className="flex items-center justify-between text-xs cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="h-2 w-2 rounded-full shrink-0"
+                          style={{ backgroundColor: stg.color || "#3b82f6" }}
+                        />
+                        <span className={isCurrent ? "font-semibold text-primary" : ""}>
+                          {stg.name}
+                        </span>
+                      </div>
+                      {isCurrent && <Check className="h-3 w-3 text-primary" />}
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+
+          {/* Chat Snooze Dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className={cn(
+                "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md transition-colors",
+                activeReminder
+                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 font-medium hover:bg-amber-500/25 border border-amber-500/30"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              )}
+              title={activeReminder ? `Snoozed until ${format(new Date(activeReminder.remind_at), "MMM d, h:mm a")}` : "Snooze conversation"}
+            >
+              <Clock className="h-3 w-3" />
+              <span className="hidden md:inline">{activeReminder ? "Snoozed" : "Snooze"}</span>
+              <ChevronDown className="h-3 w-3" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52 border-border bg-popover text-popover-foreground">
+              <div className="px-2 py-1.5 text-[11px] font-semibold text-muted-foreground border-b border-border">
+                Snooze until...
+              </div>
+              <DropdownMenuItem
+                onClick={() => handleSnoozePreset("1hour")}
+                className="text-xs cursor-pointer"
+              >
+                In 1 hour
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => handleSnoozePreset("tomorrow")}
+                className="text-xs cursor-pointer"
+              >
+                Tomorrow, 9:00 AM
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => handleSnoozePreset("2days")}
+                className="text-xs cursor-pointer"
+              >
+                In 2 days, 9:00 AM
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => handleSnoozePreset("nextweek")}
+                className="text-xs cursor-pointer"
+              >
+                Next week (Mon, 9:00 AM)
+              </DropdownMenuItem>
+              <DropdownMenuSeparator className="bg-border" />
+              <DropdownMenuItem
+                onClick={() => setSnoozeCustomOpen(true)}
+                className="text-xs cursor-pointer"
+              >
+                Custom date & time...
+              </DropdownMenuItem>
+              {activeReminder && (
+                <>
+                  <DropdownMenuSeparator className="bg-border" />
+                  <DropdownMenuItem
+                    onClick={handleUnsnooze}
+                    className="text-xs text-red-500 font-medium cursor-pointer"
+                  >
+                    Unsnooze now
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
+
+      {/* Snooze Active Banner */}
+      {activeReminder && (
+        <div className="flex items-center justify-between gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-700 dark:text-amber-400">
+          <div className="flex items-center gap-2">
+            <Clock className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+            <span>
+              Snoozed until{" "}
+              <strong className="font-semibold">
+                {format(new Date(activeReminder.remind_at), "MMM d, h:mm a")}
+              </strong>
+              {activeReminder.note && ` (${activeReminder.note})`}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={handleUnsnooze}
+            className="shrink-0 font-medium underline underline-offset-2 hover:text-amber-800 dark:hover:text-amber-300 transition-colors"
+          >
+            Unsnooze now
+          </button>
+        </div>
+      )}
 
       {/* Messages Area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
@@ -1424,6 +1730,59 @@ export function MessageThread({
         onOpenChange={setTemplateModalOpen}
         onSelect={handleSendTemplate}
       />
+
+      {/* Custom Snooze Dialog */}
+      <Dialog open={snoozeCustomOpen} onOpenChange={setSnoozeCustomOpen}>
+        <DialogContent className="sm:max-w-sm bg-popover border-border">
+          <DialogHeader>
+            <DialogTitle className="text-popover-foreground">Snooze Conversation</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs text-muted-foreground">Remind Date & Time</Label>
+              <Input
+                type="datetime-local"
+                value={customSnoozeDate}
+                onChange={(e) => setCustomSnoozeDate(e.target.value)}
+                className="mt-1.5 bg-muted border-border text-foreground"
+              />
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Follow-up Note (Optional)</Label>
+              <Input
+                type="text"
+                placeholder="e.g. Call back about discounted proposal"
+                value={customSnoozeNote}
+                onChange={(e) => setCustomSnoozeNote(e.target.value)}
+                className="mt-1.5 bg-muted border-border text-foreground"
+              />
+            </div>
+          </div>
+          <DialogFooter className="bg-popover/50 border-border">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSnoozeCustomOpen(false)}
+              className="border-border text-muted-foreground hover:bg-muted"
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={!customSnoozeDate}
+              onClick={() => {
+                if (customSnoozeDate) {
+                  handleSnooze(new Date(customSnoozeDate), customSnoozeNote);
+                  setSnoozeCustomOpen(false);
+                }
+              }}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              Set Reminder
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

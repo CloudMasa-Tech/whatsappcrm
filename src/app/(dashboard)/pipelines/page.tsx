@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Pipeline, PipelineStage, Deal } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { GitBranch, Plus, ChevronDown, Settings } from "lucide-react";
+import { GitBranch, Plus, ChevronDown, Settings, Search, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 import { useCan } from "@/hooks/use-can";
 import { useAuth } from "@/hooks/use-auth";
@@ -57,6 +57,40 @@ export default function PipelinesPage() {
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Search and assignee filters
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedAssignee, setSelectedAssignee] = useState<string>("all");
+
+  const assignees = useMemo(() => {
+    const map = new Map<string, { id: string; name: string }>();
+    for (const d of deals) {
+      if (d.assigned_to && d.assignee) {
+        map.set(d.assigned_to, {
+          id: d.assigned_to,
+          name: d.assignee.full_name || d.assignee.email || "Agent",
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [deals]);
+
+  const filteredDeals = useMemo(() => {
+    return deals.filter((deal) => {
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const matchTitle = deal.title.toLowerCase().includes(q);
+        const matchContact =
+          deal.contact?.name?.toLowerCase().includes(q) ||
+          deal.contact?.phone?.toLowerCase().includes(q);
+        if (!matchTitle && !matchContact) return false;
+      }
+      if (selectedAssignee !== "all") {
+        if (deal.assigned_to !== selectedAssignee) return false;
+      }
+      return true;
+    });
+  }, [deals, searchQuery, selectedAssignee]);
 
   // Dialog / sheet state
   const [newPipelineOpen, setNewPipelineOpen] = useState(false);
@@ -383,10 +417,78 @@ export default function PipelinesPage() {
         </div>
       ) : (
         <>
-          <PipelineAnalytics stages={stages} deals={deals} />
+          {/* Filters Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[240px]">
+              {/* Search input */}
+              <div className="relative w-full max-w-xs">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  type="text"
+                  placeholder="Search deals or contacts..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9 h-9 bg-card border-border text-xs"
+                />
+              </div>
+
+              {/* Assignee Filter */}
+              {assignees.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-border bg-card text-xs text-muted-foreground hover:text-foreground transition-colors">
+                    <UserCheck className="h-3.5 w-3.5" />
+                    <span>
+                      {selectedAssignee === "all"
+                        ? "All Assignees"
+                        : assignees.find((a) => a.id === selectedAssignee)?.name || "Assignee"}
+                    </span>
+                    <ChevronDown className="h-3 w-3" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-44 border-border bg-popover text-popover-foreground">
+                    <DropdownMenuItem
+                      onClick={() => setSelectedAssignee("all")}
+                      className="text-xs cursor-pointer"
+                    >
+                      All Assignees
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator className="bg-border" />
+                    {assignees.map((a) => (
+                      <DropdownMenuItem
+                        key={a.id}
+                        onClick={() => setSelectedAssignee(a.id)}
+                        className="text-xs cursor-pointer"
+                      >
+                        {a.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+
+              {(searchQuery || selectedAssignee !== "all") && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setSelectedAssignee("all");
+                  }}
+                  className="h-8 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Clear Filters
+                </Button>
+              )}
+            </div>
+
+            <div className="text-xs text-muted-foreground font-medium">
+              {filteredDeals.length} of {deals.length} {deals.length === 1 ? "deal" : "deals"}
+            </div>
+          </div>
+
+          <PipelineAnalytics stages={stages} deals={filteredDeals} />
           <PipelineBoard
             stages={stages}
-            deals={deals}
+            deals={filteredDeals}
             onDealMoved={handleDealMoved}
             onAddDeal={handleAddDeal}
             onEditDeal={handleEditDeal}

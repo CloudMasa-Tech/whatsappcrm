@@ -39,11 +39,12 @@ function InboxPageInner() {
   const { user, canManageMembers, isSuperAdmin } = useAuth();
   const isProjectAdmin = canManageMembers || isSuperAdmin;
   /**
-   * `?c=<id>` deep-link support. Used when landing here from the
-   * dashboard's recent-conversations list so the right thread opens
+   * `?c=<id>` or `?contactId=<id>` deep-link support. Used when landing
+   * here from the dashboard or deals kanban board so the right thread opens
    * automatically instead of showing the empty center panel.
    */
   const deepLinkConvId = searchParams.get("c");
+  const deepLinkContactId = searchParams.get("contactId");
 
   // The active project scopes both the connection banner below and the
   // realtime subscription further down — a member of several projects
@@ -396,31 +397,26 @@ function InboxPageInner() {
       // react-hooks/set-state-in-effect. Runs once per ?c=<id> URL value
       // via the ref, so realtime refreshes of the list can't snap the
       // user back to the deep-linked thread after they've navigated.
+      const deepLinkTarget = deepLinkConvId || deepLinkContactId;
       if (
-        deepLinkConvId &&
-        autoSelectedForDeepLinkRef.current !== deepLinkConvId &&
+        deepLinkTarget &&
+        autoSelectedForDeepLinkRef.current !== deepLinkTarget &&
         loaded.length > 0
       ) {
-        autoSelectedForDeepLinkRef.current = deepLinkConvId;
-        // If the deep-linked conversation is already the active one
-        // (e.g. because the user clicked it in the list and we
-        // router.replace()'d the URL, which made the ConversationList
-        // refetch and land us back here), do NOT re-apply it. Doing so
-        // would setMessages([]) on a thread whose messages have
-        // already been loaded by MessageThread — and because
-        // conversationId didn't change, MessageThread wouldn't
-        // refetch. The thread would read "No messages yet" until a
-        // full page reload rehydrated state from scratch.
-        if (activeConversation?.id === deepLinkConvId) return;
-        const match = loaded.find((c) => c.id === deepLinkConvId);
+        autoSelectedForDeepLinkRef.current = deepLinkTarget;
+        if (
+          activeConversation?.id === deepLinkConvId ||
+          (deepLinkContactId && activeConversation?.contact_id === deepLinkContactId)
+        ) return;
+
+        const match = loaded.find((c) =>
+          (deepLinkConvId && c.id === deepLinkConvId) ||
+          (deepLinkContactId && (c.contact_id === deepLinkContactId || c.contact?.id === deepLinkContactId))
+        );
         if (match) {
           setActiveConversation(match);
           setActiveContact(match.contact ?? null);
           setMessages([]);
-          // Mirror the optimistic unread reset that handleSelectConversation
-          // does — the user just deep-linked into this conv, treat that the
-          // same as a click. Leaves activeConversation.unread_count alone so
-          // the MessageThread reset effect still fires the server UPDATE.
           if (match.unread_count > 0) {
             setConversations((prev) =>
               prev.map((c) =>
@@ -431,8 +427,27 @@ function InboxPageInner() {
         }
       }
     },
-    [deepLinkConvId, activeConversation?.id]
+    [deepLinkConvId, deepLinkContactId, activeConversation?.id, activeConversation?.contact_id]
   );
+
+  // Fallback direct query if contactId deep-link was not found in initial loaded conversations
+  useEffect(() => {
+    if (!deepLinkContactId || activeConversation) return;
+    const supabase = createClient();
+    supabase
+      .from("conversations")
+      .select(CONVERSATION_SELECT)
+      .eq("contact_id", deepLinkContactId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          const norm = normalizeConversation(data);
+          setActiveConversation(norm);
+          setActiveContact(norm.contact ?? null);
+          setMessages([]);
+        }
+      });
+  }, [deepLinkContactId, activeConversation]);
 
   const handleSelectConversation = useCallback(
     (conv: Conversation) => {
