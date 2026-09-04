@@ -5,6 +5,7 @@ import {
   useRef,
   useCallback,
   useEffect,
+  useMemo,
   KeyboardEvent,
 } from "react";
 import {
@@ -22,6 +23,7 @@ import {
   Plus,
   MessageSquareDashed,
   Zap,
+  Lock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GatedButton } from "@/components/ui/gated-button";
@@ -118,6 +120,7 @@ interface MessageComposerProps {
   onOpenTemplates: () => void;
   replyTo?: ReplyDraft | null;
   onClearReply?: () => void;
+  onSendInternalNote?: (text: string) => Promise<void> | void;
 }
 
 function formatDuration(seconds: number): string {
@@ -140,6 +143,7 @@ export function MessageComposer({
   onOpenTemplates,
   replyTo,
   onClearReply,
+  onSendInternalNote,
 }: MessageComposerProps) {
   const t = useTranslations("Inbox.composer");
 
@@ -212,6 +216,39 @@ export function MessageComposer({
     };
   }, [clearTimer, removeStaged]);
 
+  const [composerMode, setComposerMode] = useState<"message" | "note">("message");
+  const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
+  const [slashQuery, setSlashQuery] = useState<string | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
+
+  // Fetch quick replies to support '/' slash-command autocomplete
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/quick-replies")
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled && Array.isArray(data)) {
+          setQuickReplies(data);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const matchingQuickReplies = useMemo(() => {
+    if (slashQuery === null) return [];
+    const q = slashQuery.toLowerCase().trim();
+    return quickReplies
+      .filter((qr) => {
+        const titleMatch = qr.title?.toLowerCase().includes(q);
+        const textMatch = qr.content_text?.toLowerCase().includes(q);
+        return titleMatch || textMatch;
+      })
+      .slice(0, 6);
+  }, [slashQuery, quickReplies]);
+
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -219,84 +256,6 @@ export function MessageComposer({
     // Max 4 lines (~96px)
     el.style.height = `${Math.min(el.scrollHeight, 96)}px`;
   }, []);
-
-  const handleSend = useCallback(async () => {
-    const trimmed = text.trim();
-    if (!trimmed || sending || sessionExpired) return;
-
-    setSending(true);
-    try {
-      onSend(trimmed, replyTo?.id);
-      setText("");
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "auto";
-      }
-    } finally {
-      setSending(false);
-    }
-  }, [text, sending, sessionExpired, onSend, replyTo?.id]);
-
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        handleSend();
-      }
-    },
-    [handleSend]
-  );
-
-  const handleChange = useCallback(
-    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      setText(e.target.value);
-      adjustHeight();
-    },
-    [adjustHeight]
-  );
-
-  // Ask the AI assistant for a suggested reply and drop it into the
-  // composer for the agent to edit + send. Read-only server-side —
-  // nothing is sent until the agent hits Send.
-  const handleDraft = useCallback(async () => {
-    if (drafting) return;
-    setDrafting(true);
-    try {
-      const res = await fetch("/api/ai/draft", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversation_id: conversationId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        if (data.code === "ai_not_configured") {
-          toast.error("AI isn't set up yet — enable it in Settings → AI Assistant.");
-        } else {
-          toast.error(data.error ?? "Couldn't draft a reply.");
-        }
-        return;
-      }
-      const draftText = typeof data.draft === "string" ? data.draft.trim() : "";
-      if (!draftText) {
-        toast.error("The assistant didn't return a reply.");
-        return;
-      }
-      setText(draftText);
-      // Let the textarea grow to fit and drop the cursor at the end so
-      // the agent can tweak immediately.
-      requestAnimationFrame(() => {
-        adjustHeight();
-        const el = textareaRef.current;
-        if (el) {
-          el.focus();
-          el.setSelectionRange(el.value.length, el.value.length);
-        }
-      });
-    } catch {
-      toast.error("Couldn't reach the AI assistant.");
-    } finally {
-      setDrafting(false);
-    }
-  }, [drafting, conversationId, adjustHeight]);
 
   // ---- Interactive message + quick replies --------------------------
 
@@ -354,8 +313,6 @@ export function MessageComposer({
     }
   }, [interactivePayload, t]);
 
-  // A picked quick reply: text fills the composer; interactive opens the
-  // builder pre-filled so the agent can tweak before sending.
   const handlePickQuickReply = useCallback(
     (qr: QuickReply) => {
       setQuickReplyOpen(false);
@@ -364,11 +321,15 @@ export function MessageComposer({
         return;
       }
       const body = qr.content_text ?? "";
-      // Separate the snippet from any existing draft with a newline so the
-      // words don't run together ("Thanks" + "we'll…" → "Thankswe'll…").
-      setText((prev) =>
-        prev && !/\s$/.test(prev) ? `${prev}\n${body}` : `${prev}${body}`,
-      );
+      setText((prev) => {
+        if (/(?:^|\s)\/([a-zA-Z0-9_-]*)$/.test(prev)) {
+          return prev.replace(/(?:^|\s)\/([a-zA-Z0-9_-]*)$/, (m) => {
+            const leadingSpace = m.startsWith(" ") ? " " : "";
+            return leadingSpace + body;
+          });
+        }
+        return prev && !/\s$/.test(prev) ? `${prev}\n${body}` : `${prev}${body}`;
+      });
       requestAnimationFrame(() => {
         adjustHeight();
         const el = textareaRef.current;
@@ -380,6 +341,143 @@ export function MessageComposer({
     },
     [openInteractiveBuilder, adjustHeight],
   );
+
+  const handleSend = useCallback(async () => {
+    const trimmed = text.trim();
+    if (!trimmed || sending) return;
+
+    if (composerMode === "note") {
+      if (onSendInternalNote) {
+        setSending(true);
+        try {
+          await onSendInternalNote(trimmed);
+          setText("");
+          setSlashQuery(null);
+          if (textareaRef.current) {
+            textareaRef.current.style.height = "auto";
+          }
+        } finally {
+          setSending(false);
+        }
+      }
+      return;
+    }
+
+    if (sessionExpired) return;
+
+    setSending(true);
+    try {
+      onSend(trimmed, replyTo?.id);
+      setText("");
+      setSlashQuery(null);
+      if (textareaRef.current) {
+        textareaRef.current.style.height = "auto";
+      }
+    } finally {
+      setSending(false);
+    }
+  }, [text, sending, composerMode, sessionExpired, onSendInternalNote, onSend, replyTo?.id]);
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (slashQuery !== null && matchingQuickReplies.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSlashIndex((i) => (i + 1) % matchingQuickReplies.length);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSlashIndex(
+            (i) => (i - 1 + matchingQuickReplies.length) % matchingQuickReplies.length,
+          );
+          return;
+        }
+        if (e.key === "Enter" || e.key === "Tab") {
+          e.preventDefault();
+          const selected =
+            matchingQuickReplies[slashIndex] ?? matchingQuickReplies[0];
+          if (selected) {
+            handlePickQuickReply(selected);
+            setSlashQuery(null);
+          }
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setSlashQuery(null);
+          return;
+        }
+      }
+
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        void handleSend();
+      }
+    },
+    [slashQuery, matchingQuickReplies, slashIndex, handlePickQuickReply, handleSend],
+  );
+
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const val = e.target.value;
+      setText(val);
+      adjustHeight();
+
+      const match = val.match(/(?:^|\s)\/([a-zA-Z0-9_-]*)$/);
+      if (match) {
+        setSlashQuery(match[1]);
+        setSlashIndex(0);
+      } else {
+        setSlashQuery(null);
+      }
+    },
+    [adjustHeight],
+  );
+
+  // Ask the AI assistant for a suggested reply and drop it into the
+  // composer for the agent to edit + send. Read-only server-side —
+  // nothing is sent until the agent hits Send.
+  const handleDraft = useCallback(async () => {
+    if (drafting) return;
+    setDrafting(true);
+    try {
+      const res = await fetch("/api/ai/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: conversationId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (data.code === "ai_not_configured") {
+          toast.error("AI isn't set up yet — enable it in Settings → AI Assistant.");
+        } else {
+          toast.error(data.error ?? "Couldn't draft a reply.");
+        }
+        return;
+      }
+      const draftText = typeof data.draft === "string" ? data.draft.trim() : "";
+      if (!draftText) {
+        toast.error("The assistant didn't return a reply.");
+        return;
+      }
+      setText(draftText);
+      // Let the textarea grow to fit and drop the cursor at the end so
+      // the agent can tweak immediately.
+      requestAnimationFrame(() => {
+        adjustHeight();
+        const el = textareaRef.current;
+        if (el) {
+          el.focus();
+          el.setSelectionRange(el.value.length, el.value.length);
+        }
+      });
+    } catch {
+      toast.error("Couldn't reach the AI assistant.");
+    } finally {
+      setDrafting(false);
+    }
+  }, [drafting, conversationId, adjustHeight]);
 
   // Upload a captured file to chat-media and stage it as a draft.
   const stageUpload = useCallback(
@@ -536,7 +634,92 @@ export function MessageComposer({
   // ---- Render --------------------------------------------------------
 
   return (
-    <div className="border-t border-border bg-card p-3">
+    <div className="relative border-t border-border bg-card p-3">
+      {/* Mode switcher: Customer Message vs Private Internal Note */}
+      <div className="mb-2 flex items-center justify-between">
+        <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-muted/60 p-0.5">
+          <button
+            type="button"
+            onClick={() => setComposerMode("message")}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-all",
+              composerMode === "message"
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <span>💬</span>
+            <span>Customer Message</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setComposerMode("note")}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-all",
+              composerMode === "note"
+                ? "border border-amber-500/30 bg-amber-500/20 text-amber-500 shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Lock className="h-3 w-3" />
+            <span>Internal Note</span>
+          </button>
+        </div>
+        {composerMode === "note" ? (
+          <span className="flex items-center gap-1 text-[11px] font-medium text-amber-500/90">
+            <Lock className="h-3 w-3" /> Private team note — not sent to customer
+          </span>
+        ) : (
+          <span className="text-[10px] text-muted-foreground hidden sm:inline">
+            Type <kbd className="px-1 py-0.5 rounded bg-muted font-mono text-[9px]">/</kbd> for quick replies
+          </span>
+        )}
+      </div>
+
+      {/* Slash command autocomplete popup */}
+      {slashQuery !== null && matchingQuickReplies.length > 0 && (
+        <div className="absolute bottom-full left-4 mb-2 z-50 w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-popover p-1.5 shadow-xl animate-in fade-in zoom-in-95">
+          <div className="mb-1 flex items-center justify-between border-b border-border/50 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span className="flex items-center gap-1 text-primary">
+              <Zap className="h-3 w-3" /> Quick Replies
+            </span>
+            <span className="text-[9px] font-normal lowercase opacity-70">
+              ↑↓ navigate · enter select · esc
+            </span>
+          </div>
+          <div className="max-h-52 space-y-0.5 overflow-y-auto">
+            {matchingQuickReplies.map((qr: QuickReply, idx: number) => (
+              <button
+                key={qr.id}
+                type="button"
+                onClick={() => {
+                  handlePickQuickReply(qr);
+                  setSlashQuery(null);
+                }}
+                className={cn(
+                  "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors",
+                  idx === slashIndex
+                    ? "bg-primary/15 text-primary font-medium"
+                    : "text-foreground hover:bg-muted",
+                )}
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium">{qr.title}</p>
+                  <p className="truncate text-[10px] text-muted-foreground">
+                    {qr.kind === "interactive"
+                      ? "[Interactive Form]"
+                      : qr.content_text?.slice(0, 45)}
+                  </p>
+                </div>
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] text-muted-foreground font-mono">
+                  Enter
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {replyTo && (
         <div className="mb-2">
           <ReplyQuote
@@ -546,7 +729,7 @@ export function MessageComposer({
           />
         </div>
       )}
-      {sessionExpired && (
+      {composerMode !== "note" && sessionExpired && (
         <div className="mb-2 flex items-center justify-between rounded-lg bg-amber-500/10 px-3 py-2">
           <p className="text-xs text-amber-400">
             {t("sessionExpiredHint")}
@@ -740,34 +923,49 @@ export function MessageComposer({
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             placeholder={
-              readOnly
-                ? t("readOnlyPlaceholder")
-                : sessionExpired
-                  ? t("sessionExpiredPlaceholder")
-                  : t("typeMessagePlaceholder")
+              composerMode === "note"
+                ? "Write a private internal note for the team (Shift+Enter for new line)..."
+                : readOnly
+                  ? t("readOnlyPlaceholder")
+                  : sessionExpired
+                    ? t("sessionExpiredPlaceholder")
+                    : t("typeMessagePlaceholder")
             }
-            disabled={sessionExpired || readOnly}
+            disabled={composerMode === "note" ? readOnly : sessionExpired || readOnly}
             rows={1}
-            // Textarea keeps its own inline title — the GatedButton
-            // wrapping pattern doesn't apply to non-button inputs.
-            // The placeholder text also surfaces the read-only state.
             title={readOnly ? t("readOnlyTitle") : undefined}
             className={cn(
-              "flex-1 resize-none rounded-xl border border-border bg-muted px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors focus:border-primary/50",
-              (sessionExpired || readOnly) && "cursor-not-allowed opacity-50"
+              "flex-1 resize-none rounded-xl border px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors",
+              composerMode === "note"
+                ? "border-amber-500/40 bg-amber-500/5 focus:border-amber-500/70"
+                : "border-border bg-muted focus:border-primary/50",
+              composerMode !== "note" && (sessionExpired || readOnly) && "cursor-not-allowed opacity-50"
             )}
           />
 
-          <GatedButton
-            size="sm"
-            canAct={!readOnly}
-            gateReason="send messages"
-            disabled={!text.trim() || sessionExpired || sending}
-            onClick={handleSend}
-            className="h-9 w-9 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40"
-          >
-            <Send className="h-4 w-4" />
-          </GatedButton>
+          {composerMode === "note" ? (
+            <Button
+              size="sm"
+              disabled={!text.trim() || sending || readOnly}
+              onClick={handleSend}
+              className="h-9 shrink-0 gap-1.5 bg-amber-500 px-3 text-xs font-medium text-white hover:bg-amber-600 disabled:opacity-40"
+              title="Save internal note (Enter)"
+            >
+              <Lock className="h-3.5 w-3.5" />
+              <span>Add Note</span>
+            </Button>
+          ) : (
+            <GatedButton
+              size="sm"
+              canAct={!readOnly}
+              gateReason="send messages"
+              disabled={!text.trim() || sessionExpired || sending}
+              onClick={handleSend}
+              className="h-9 w-9 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40"
+            >
+              <Send className="h-4 w-4" />
+            </GatedButton>
+          )}
         </div>
       )}
 

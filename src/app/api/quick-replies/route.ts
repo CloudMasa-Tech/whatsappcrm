@@ -9,6 +9,8 @@ import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
 // the automations route: RLS-scoped read via the user client, service-
 // role write after an explicit role check.
 
+import { DEFAULT_QUICK_REPLIES } from '@/lib/inbox/default-quick-replies'
+
 export async function GET() {
   try {
     const { supabase } = await getCurrentProject()
@@ -18,7 +20,17 @@ export async function GET() {
       .select('*')
       .order('created_at', { ascending: false })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ quick_replies: data ?? [] })
+
+    const list = (data && data.length > 0) ? data : DEFAULT_QUICK_REPLIES.map((d, i) => ({
+      id: `default-${i}`,
+      title: `${d.title} (${d.shortcut})`,
+      content_text: d.content,
+      shortcut: d.shortcut,
+      kind: 'text',
+      created_at: new Date().toISOString(),
+    }))
+
+    return NextResponse.json({ quick_replies: list })
   } catch (err) {
     return toErrorResponse(err)
   }

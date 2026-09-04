@@ -50,7 +50,8 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
   closed: "bg-muted-foreground",
 };
 
-type InboxFilter = ConversationStatus | "all" | "unread" | "mine" | "unassigned";
+export type AssignmentTab = "mine" | "unassigned" | "all";
+type StatusFilter = ConversationStatus | "all" | "unread";
 type ChannelFilter = "all" | InboxChannel;
 
 const CHANNEL_OPTIONS: {
@@ -100,30 +101,18 @@ export function ConversationList({
   const t = useTranslations("Inbox.conversationList");
   const { user, canManageMembers, isSuperAdmin } = useAuth();
   const isProjectAdmin = canManageMembers || isSuperAdmin;
-  
-  const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => {
-    if (isProjectAdmin) {
-      return [
-        { label: t("filterAll"), value: "all" },
-        { label: "Assigned to me", value: "mine" },
-        { label: "Unassigned", value: "unassigned" },
-        { label: t("filterUnread"), value: "unread" },
-        { label: t("filterOpen"), value: "open" },
-        { label: t("filterPending"), value: "pending" },
-        { label: t("filterClosed"), value: "closed" },
-      ];
-    }
-    return [
-      { label: "All Assigned", value: "all" },
-      { label: t("filterUnread"), value: "unread" },
-      { label: t("filterOpen"), value: "open" },
-      { label: t("filterPending"), value: "pending" },
-      { label: t("filterClosed"), value: "closed" },
-    ];
-  }, [t, isProjectAdmin]);
+
+  const STATUS_FILTER_OPTIONS: { label: string; value: StatusFilter }[] = useMemo(() => [
+    { label: t("filterAll"), value: "all" },
+    { label: t("filterUnread"), value: "unread" },
+    { label: t("filterOpen"), value: "open" },
+    { label: t("filterPending"), value: "pending" },
+    { label: t("filterClosed"), value: "closed" },
+  ], [t]);
 
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<InboxFilter>("all");
+  const [assignmentTab, setAssignmentTab] = useState<AssignmentTab>(isProjectAdmin ? "all" : "mine");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
   const [loading, setLoading] = useState(true);
   // Contact-based filters (issue #272). Tags use OR logic (a conversation
@@ -161,9 +150,9 @@ export function ConversationList({
         .select(CONVERSATION_SELECT)
         .order("last_message_at", { ascending: false });
 
-      // If non-admin agent, query only assigned conversations
+      // If non-admin agent, query conversations assigned to them OR unassigned
       if (!isProjectAdmin && user) {
-        query = query.eq("assigned_agent_id", user.id);
+        query = query.or(`assigned_agent_id.eq.${user.id},assigned_agent_id.is.null`);
       }
 
       const { data, error } = await query;
@@ -226,28 +215,39 @@ export function ConversationList({
     return m;
   }, [tags]);
 
+  const counts = useMemo(() => {
+    let mine = 0;
+    let unassigned = 0;
+    let total = 0;
+    for (const c of conversations) {
+      if (user && c.assigned_agent_id === user.id) mine++;
+      if (!c.assigned_agent_id) unassigned++;
+      if (isProjectAdmin || (user && c.assigned_agent_id === user.id) || !c.assigned_agent_id) {
+        total++;
+      }
+    }
+    return { mine, unassigned, total };
+  }, [conversations, user, isProjectAdmin]);
+
   const filtered = useMemo(() => {
     let result = conversations;
 
-    // Strict Agent Isolation: Agents only ever see conversations assigned to them.
-    if (!isProjectAdmin && user) {
+    // Assignment Tab Filter
+    if (assignmentTab === "mine" && user) {
       result = result.filter((c) => c.assigned_agent_id === user.id);
-    } else if (isProjectAdmin) {
-      if (filter === "mine" && user) {
-        result = result.filter((c) => c.assigned_agent_id === user.id);
-      } else if (filter === "unassigned") {
-        result = result.filter((c) => !c.assigned_agent_id);
+    } else if (assignmentTab === "unassigned") {
+      result = result.filter((c) => !c.assigned_agent_id);
+    } else if (assignmentTab === "all") {
+      if (!isProjectAdmin && user) {
+        result = result.filter((c) => c.assigned_agent_id === user.id || !c.assigned_agent_id);
       }
     }
 
-    if (filter === "unread") {
+    // Status Filter
+    if (statusFilter === "unread") {
       result = result.filter((c) => c.unread_count > 0);
-    } else if (
-      filter !== "all" &&
-      filter !== "mine" &&
-      filter !== "unassigned"
-    ) {
-      result = result.filter((c) => c.status === filter);
+    } else if (statusFilter !== "all") {
+      result = result.filter((c) => c.status === statusFilter);
     }
 
     if (channelFilter !== "all") {
@@ -285,7 +285,8 @@ export function ConversationList({
     return result;
   }, [
     conversations,
-    filter,
+    assignmentTab,
+    statusFilter,
     channelFilter,
     search,
     selectedTagIds,
@@ -321,7 +322,7 @@ export function ConversationList({
     [onSelect]
   );
 
-  const activeFilter = FILTER_OPTIONS.find((o) => o.value === filter);
+  const activeStatusFilter = STATUS_FILTER_OPTIONS.find((o) => o.value === statusFilter);
 
   return (
     // w-full on mobile so the list occupies the whole viewport when it's
@@ -329,7 +330,7 @@ export function ConversationList({
     // row with the thread + contact sidebar.
     <div className="flex h-full w-full flex-col border-r border-border bg-card lg:w-80">
       {/* Search + Filter + New Chat */}
-      <div className="space-y-2 border-b border-border p-3">
+      <div className="space-y-2.5 border-b border-border p-3">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -352,25 +353,96 @@ export function ConversationList({
           </Button>
         </div>
 
+        {/* Primary Segmented Assignment Tabs */}
+        <div className="grid grid-cols-3 gap-1 p-1 bg-muted/60 rounded-lg text-xs font-medium border border-border/50">
+          <button
+            type="button"
+            onClick={() => setAssignmentTab("mine")}
+            className={cn(
+              "flex items-center justify-center gap-1.5 py-1 px-1.5 rounded-md transition-all text-xs",
+              assignmentTab === "mine"
+                ? "bg-background text-foreground shadow-sm font-semibold"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <span>Mine</span>
+            <span
+              className={cn(
+                "text-[10px] px-1.5 py-0.2 rounded-full font-mono font-medium",
+                assignmentTab === "mine"
+                  ? "bg-primary/15 text-primary"
+                  : "bg-muted text-muted-foreground"
+              )}
+            >
+              {counts.mine}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setAssignmentTab("unassigned")}
+            className={cn(
+              "flex items-center justify-center gap-1.5 py-1 px-1.5 rounded-md transition-all text-xs",
+              assignmentTab === "unassigned"
+                ? "bg-background text-foreground shadow-sm font-semibold"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <span>Unassigned</span>
+            {counts.unassigned > 0 ? (
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full font-mono font-semibold bg-amber-500/20 text-amber-500 animate-pulse">
+                {counts.unassigned}
+              </span>
+            ) : (
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full font-mono font-medium bg-muted text-muted-foreground">
+                0
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setAssignmentTab("all")}
+            className={cn(
+              "flex items-center justify-center gap-1.5 py-1 px-1.5 rounded-md transition-all text-xs",
+              assignmentTab === "all"
+                ? "bg-background text-foreground shadow-sm font-semibold"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <span>All</span>
+            <span
+              className={cn(
+                "text-[10px] px-1.5 py-0.2 rounded-full font-mono font-medium",
+                assignmentTab === "all"
+                  ? "bg-primary/15 text-primary"
+                  : "bg-muted text-muted-foreground"
+              )}
+            >
+              {counts.total}
+            </span>
+          </button>
+        </div>
+
         <div className="flex flex-wrap items-center gap-1">
           {/* Status Filter */}
           <DropdownMenu>
             <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
-                {activeFilter?.label ?? t("filterAll")}
+                {activeStatusFilter?.label ?? t("filterAll")}
                 <ChevronDown className="h-3 w-3" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="start"
               className="border-border bg-popover"
             >
-              {FILTER_OPTIONS.map((opt) => (
+              {STATUS_FILTER_OPTIONS.map((opt) => (
                 <DropdownMenuItem
                   key={opt.value}
-                  onClick={() => setFilter(opt.value)}
+                  onClick={() => setStatusFilter(opt.value)}
                   className={cn(
                     "text-sm",
-                    filter === opt.value
-                      ? "text-primary"
+                    statusFilter === opt.value
+                      ? "text-primary font-medium"
                       : "text-popover-foreground"
                   )}
                 >

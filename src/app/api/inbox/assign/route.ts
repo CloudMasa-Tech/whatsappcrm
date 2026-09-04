@@ -15,18 +15,20 @@ export async function POST(request: Request) {
   try {
     const ctx = await getCurrentAccount();
 
-    // Only Admin / Owner / Super Admin can assign chats
-    const isAllowed = canManageMembers(ctx.role) || ctx.platformRole === "super_admin";
-    if (!isAllowed) {
-      return NextResponse.json(
-        { error: "Only administrators can assign conversations" },
-        { status: 403 }
-      );
-    }
-
     const body = await request.json().catch(() => ({}));
     const conversation_id = (body.conversation_id || body.conversationId || "") as string;
     const agent_id = body.agent_id !== undefined ? body.agent_id : body.agentId;
+    const newAgentId = agent_id || null;
+
+    // Admins can assign to anyone; agents can self-claim (assign to themselves)
+    const isSelfClaim = newAgentId === ctx.userId;
+    const isAllowed = canManageMembers(ctx.role) || ctx.platformRole === "super_admin" || isSelfClaim;
+    if (!isAllowed) {
+      return NextResponse.json(
+        { error: "Only administrators can assign conversations to other agents" },
+        { status: 403 }
+      );
+    }
 
     if (!conversation_id) {
       return NextResponse.json(
@@ -58,8 +60,6 @@ export async function POST(request: Request) {
         { status: 403 }
       );
     }
-
-    const newAgentId = agent_id || null;
 
     // 2. Update conversation assigned_agent_id
     const { error: updateErr } = await admin

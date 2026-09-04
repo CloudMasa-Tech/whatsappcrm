@@ -156,8 +156,8 @@ function InboxPageInner() {
       if (!data) return;
       const fetched = normalizeConversation(data);
 
-      // If user is an agent, ignore conversations not assigned to them
-      if (!isProjectAdmin && user && fetched.assigned_agent_id !== user.id) {
+      // If user is an agent, allow conversations assigned to them or unassigned
+      if (!isProjectAdmin && user && fetched.assigned_agent_id && fetched.assigned_agent_id !== user.id) {
         return;
       }
 

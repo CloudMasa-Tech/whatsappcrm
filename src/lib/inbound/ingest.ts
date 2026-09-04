@@ -28,6 +28,7 @@ import { normalizePhone } from "@/lib/whatsapp/phone-utils";
 import { runAutomationsForTrigger } from "@/lib/automations/engine";
 import { dispatchInboundToFlows } from "@/lib/flows/engine";
 import { dispatchInboundToAiReply } from "@/lib/ai/auto-reply";
+import { getNextRoundRobinAgentId } from "@/lib/inbox/round-robin";
 import { dispatchWebhookEvent } from "@/lib/webhooks/deliver";
 import type { InboundMessage } from "@/lib/channels/types";
 
@@ -346,6 +347,8 @@ async function resolveConversation(
     };
   }
 
+  const roundRobinAgentId = await getNextRoundRobinAgentId(db, projectId, accountId);
+
   const { data: created, error } = await db
     .from("conversations")
     .insert({
@@ -354,6 +357,7 @@ async function resolveConversation(
       contact_id: contactId,
       user_id: ownerUserId,
       status: "open",
+      assigned_agent_id: roundRobinAgentId,
     })
     .select("id, unread_count, last_message_at")
     .single();

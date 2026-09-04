@@ -30,6 +30,7 @@ import {
   PanelRightOpen,
   PanelRightClose,
   MessageCircle,
+  Lock,
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { useTranslations } from "next-intl";
@@ -63,6 +64,20 @@ interface ReplyDraft {
   authorLabel: string;
   preview: string;
 }
+
+export interface ContactNote {
+  id: string;
+  contact_id: string;
+  account_id?: string;
+  project_id?: string;
+  user_id: string;
+  note_text: string;
+  created_at: string;
+}
+
+export type TimelineItem =
+  | { kind: "message"; id: string; created_at: string; data: Message }
+  | { kind: "note"; id: string; created_at: string; data: ContactNote };
 
 function renderTemplateBody(body: string, params: string[]): string {
   return body.replace(/\{\{(\d+)\}\}/g, (_, raw) => {
@@ -135,6 +150,23 @@ function groupMessagesByDate(messages: Message[]) {
       groups.push({ date: msg.created_at, messages: [msg] });
     } else {
       groups[groups.length - 1].messages.push(msg);
+    }
+  }
+
+  return groups;
+}
+
+function groupTimelineItemsByDate(items: TimelineItem[]) {
+  const groups: { date: string; items: TimelineItem[] }[] = [];
+  let currentDate = "";
+
+  for (const item of items) {
+    const day = format(new Date(item.created_at), "yyyy-MM-dd");
+    if (day !== currentDate) {
+      currentDate = day;
+      groups.push({ date: item.created_at, items: [item] });
+    } else {
+      groups[groups.length - 1].items.push(item);
     }
   }
 
@@ -414,6 +446,103 @@ export function MessageThread({
     };
   }, [conversationId]);
 
+  // Contact internal notes state and fetch
+  const [notes, setNotes] = useState<ContactNote[]>([]);
+
+  useEffect(() => {
+    if (!contact?.id) {
+      setNotes([]);
+      return;
+    }
+    const supabase = createClient();
+    let cancelled = false;
+
+    (async () => {
+      const { data, error } = await supabase
+        .from("contact_notes")
+        .select("*")
+        .eq("contact_id", contact.id)
+        .order("created_at", { ascending: true });
+
+      if (cancelled) return;
+      if (!error && data) {
+        setNotes(data as ContactNote[]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [contact?.id, resyncToken]);
+
+  // Realtime subscription for internal notes on the active contact
+  useEffect(() => {
+    if (!contact?.id) return;
+    const supabase = createClient();
+
+    const channel = supabase
+      .channel(`contact_notes:${contact.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "contact_notes",
+          filter: `contact_id=eq.${contact.id}`,
+        },
+        (payload) => {
+          const row = payload.new as ContactNote;
+          setNotes((prev) => (prev.some((n) => n.id === row.id) ? prev : [...prev, row]));
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [contact?.id]);
+
+  const handleSendInternalNote = useCallback(
+    async (text: string) => {
+      if (!contact?.id || !text.trim() || !conversation) return;
+      const supabase = createClient();
+      const tempId = `temp-note-${Date.now()}`;
+      const optimisticNote: ContactNote = {
+        id: tempId,
+        contact_id: contact.id,
+        account_id: conversation.account_id,
+        project_id: conversation.project_id,
+        user_id: user?.id ?? "",
+        note_text: text.trim(),
+        created_at: new Date().toISOString(),
+      };
+      setNotes((prev) => [...prev, optimisticNote]);
+
+      const { data, error } = await supabase
+        .from("contact_notes")
+        .insert({
+          contact_id: contact.id,
+          account_id: conversation.account_id,
+          project_id: conversation.project_id,
+          user_id: user?.id,
+          note_text: text.trim(),
+        })
+        .select()
+        .single();
+
+      if (error) {
+        toast.error(`Failed to save note: ${error.message}`);
+        setNotes((prev) => prev.filter((n) => n.id !== tempId));
+      } else if (data) {
+        setNotes((prev) =>
+          prev.map((n) => (n.id === tempId ? (data as ContactNote) : n)),
+        );
+        toast.success("Internal note saved");
+      }
+    },
+    [contact?.id, conversation, user?.id],
+  );
+
   // Clear any in-progress reply draft when the active conversation changes —
   // a quote pulled from conversation A shouldn't bleed into conversation B.
   useEffect(() => {
@@ -441,13 +570,13 @@ export function MessageThread({
       });
   }, [conversationId, hasUnread]);
 
-  // Auto-scroll to bottom on new messages
+  // Auto-scroll to bottom on new messages or notes
   useEffect(() => {
     if (scrollRef.current) {
       const el = scrollRef.current;
       el.scrollTop = el.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, notes]);
 
   const handleSend = useCallback(
     async (text: string, replyToId?: string) => {
@@ -877,9 +1006,31 @@ export function MessageThread({
   }
 
   const { title: displayTitle, subtitle: displaySubtitle, initials } = getContactDisplay(contact, t("selectConversation"));
-  const messageGroups = groupMessagesByDate(messages);
   const currentStatus = STATUS_OPTIONS.find(
     (s) => s.value === conversation.status
+  );
+
+  const timelineItems: TimelineItem[] = useMemo(() => {
+    const msgItems: TimelineItem[] = messages.map((m) => ({
+      kind: "message",
+      id: m.id,
+      created_at: m.created_at,
+      data: m,
+    }));
+    const noteItems: TimelineItem[] = notes.map((n) => ({
+      kind: "note",
+      id: n.id,
+      created_at: n.created_at,
+      data: n,
+    }));
+    return [...msgItems, ...noteItems].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    );
+  }, [messages, notes]);
+
+  const timelineGroups = useMemo(
+    () => groupTimelineItemsByDate(timelineItems),
+    [timelineItems],
   );
   const assignedAgentId = conversation.assigned_agent_id ?? null;
   const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
@@ -1101,6 +1252,16 @@ export function MessageThread({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+          ) : !assignedAgentId ? (
+            <button
+              type="button"
+              onClick={() => user && handleAssignChange(user.id)}
+              className="inline-flex items-center justify-center h-7 gap-1.5 px-2.5 text-xs font-medium rounded-md bg-amber-500/15 text-amber-500 border border-amber-500/30 hover:bg-amber-500/25 transition-all shadow-sm"
+              title="Claim this conversation for yourself"
+            >
+              <UserPlus className="h-3 w-3" />
+              <span>Claim</span>
+            </button>
           ) : (
             <div
               className={cn(
@@ -1128,7 +1289,7 @@ export function MessageThread({
           <div className="flex items-center justify-center py-12">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           </div>
-        ) : messages.length === 0 ? (
+        ) : timelineItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12">
             <p className="text-sm text-muted-foreground">{t("noMessagesYet")}</p>
             <p className="text-xs text-muted-foreground">
@@ -1137,7 +1298,7 @@ export function MessageThread({
           </div>
         ) : (
           <div className="space-y-4">
-            {messageGroups.map((group) => (
+            {timelineGroups.map((group) => (
               <div key={group.date}>
                 {/* Date separator */}
                 <div className="mb-4 flex items-center justify-center">
@@ -1145,9 +1306,40 @@ export function MessageThread({
                     {formatDateSeparator(group.date, t)}
                   </span>
                 </div>
-                {/* Messages */}
+                {/* Messages & Internal Notes */}
                 <div className="space-y-2">
-                  {group.messages.map((msg) => {
+                  {group.items.map((item) => {
+                    if (item.kind === "note") {
+                      const note = item.data;
+                      const author = profiles.find((p) => p.user_id === note.user_id);
+                      const authorName =
+                        author?.full_name ||
+                        author?.email ||
+                        (note.user_id === user?.id ? t("me") : "Team Member");
+                      return (
+                        <div key={note.id} className="my-3 flex justify-center px-2 sm:px-4">
+                          <div className="w-full max-w-xl rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 shadow-sm dark:bg-amber-950/20">
+                            <div className="mb-1.5 flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-500">
+                                <Lock className="h-3.5 w-3.5" />
+                                <span>Internal Team Note</span>
+                                <span className="ml-1 text-[11px] font-normal text-muted-foreground">
+                                  by {authorName}
+                                </span>
+                              </div>
+                              <span className="font-mono text-[10px] text-muted-foreground">
+                                {format(new Date(note.created_at), "h:mm a")}
+                              </span>
+                            </div>
+                            <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground/90 font-sans">
+                              {note.note_text}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    const msg = item.data;
                     const parent = msg.reply_to_message_id
                       ? messagesById.get(msg.reply_to_message_id)
                       : null;
@@ -1224,6 +1416,7 @@ export function MessageThread({
         onOpenTemplates={handleOpenTemplates}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
+        onSendInternalNote={handleSendInternalNote}
       />
 
       <TemplatePicker

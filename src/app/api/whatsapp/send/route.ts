@@ -117,7 +117,7 @@ export async function POST(request: Request) {
     if (conversationIdInput) {
       const { data, error: convError } = await supabase
         .from('conversations')
-        .select('id')
+        .select('id, assigned_agent_id')
         .eq('id', conversationIdInput)
         .eq('project_id', projectId)
         .single()
@@ -128,6 +128,15 @@ export async function POST(request: Request) {
           { status: 404 }
         )
       }
+
+      // Auto-assign on first reply if conversation is currently unassigned
+      if (!data.assigned_agent_id) {
+        await supabase
+          .from('conversations')
+          .update({ assigned_agent_id: user.id })
+          .eq('id', data.id);
+      }
+
       conversationId = data.id
     } else {
       // contact_id path: verify the contact is in this account first so a
@@ -261,12 +270,20 @@ async function findOrCreateConversation(
 ): Promise<string | null> {
   const { data: existing } = await supabase
     .from('conversations')
-    .select('id')
+    .select('id, assigned_agent_id')
     .eq('project_id', projectId)
     .eq('contact_id', contactId)
     .maybeSingle()
 
-  if (existing) return existing.id
+  if (existing) {
+    if (!existing.assigned_agent_id) {
+      await supabase
+        .from('conversations')
+        .update({ assigned_agent_id: userId })
+        .eq('id', existing.id);
+    }
+    return existing.id;
+  }
 
   const { data: created, error } = await supabase
     .from('conversations')
@@ -275,6 +292,7 @@ async function findOrCreateConversation(
       project_id: projectId,
       user_id: userId,
       contact_id: contactId,
+      assigned_agent_id: userId,
     })
     .select('id')
     .single()
