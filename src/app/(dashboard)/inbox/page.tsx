@@ -379,6 +379,30 @@ function InboxPageInner() {
     };
   }, []);
 
+  // Periodic background check for due snooze reminders
+  useEffect(() => {
+    let cancelled = false;
+    const checkReminders = () => {
+      fetch("/api/inbox/snooze/check", { method: "POST" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!cancelled && data?.processed && data.processed > 0) {
+            setResyncToken((n) => n + 1);
+          }
+        })
+        .catch(() => {});
+    };
+
+    // Run once on mount and every 30 seconds
+    checkReminders();
+    const interval = setInterval(checkReminders, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+
   /**
    * Manual refresh trigger for the thread-header refresh button.
    * Bumps the same resyncToken the reconnect / visibility paths use,

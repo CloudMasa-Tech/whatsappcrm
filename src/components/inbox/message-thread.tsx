@@ -648,6 +648,10 @@ export function MessageThread({
       .then((data) => {
         if (!cancelled && data) {
           setActiveReminder(data.reminder ?? null);
+          if (data.reopened) {
+            onStatusChange(conversationId, "open");
+            toast.info("Follow-up reminder: Snooze ended, chat reopened in Inbox.");
+          }
         }
       })
       .catch(() => {});
@@ -655,7 +659,7 @@ export function MessageThread({
     return () => {
       cancelled = true;
     };
-  }, [conversationId, resyncToken]);
+  }, [conversationId, resyncToken, onStatusChange]);
 
   const handleSnooze = useCallback(
     async (remindAt: Date, note?: string) => {
@@ -671,7 +675,10 @@ export function MessageThread({
           }),
         });
 
-        if (!res.ok) throw new Error("Failed to snooze");
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || "Failed to snooze");
+        }
         const data = await res.json();
         setActiveReminder(data.reminder);
         onStatusChange(conversation.id, "pending");
@@ -712,14 +719,38 @@ export function MessageThread({
       const res = await fetch(`/api/inbox/snooze?conversation_id=${conversation.id}`, {
         method: "DELETE",
       });
-      if (!res.ok) throw new Error("Failed to unsnooze");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to unsnooze");
+      }
       setActiveReminder(null);
       onStatusChange(conversation.id, "open");
       toast.success("Conversation reopened");
     } catch (err) {
-      toast.error("Failed to unsnooze conversation");
+      const reason = err instanceof Error ? err.message : "Network error";
+      toast.error(`Failed to unsnooze: ${reason}`);
     }
   }, [conversation, onStatusChange]);
+
+  // Live auto-unsnooze countdown timer while viewing the thread
+  useEffect(() => {
+    if (!activeReminder || !conversation) return;
+
+    const diff = new Date(activeReminder.remind_at).getTime() - Date.now();
+    if (diff <= 0) {
+      handleUnsnooze();
+      toast.info("Follow-up reminder: Time reached! Chat reopened.");
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      handleUnsnooze();
+      toast.info("Follow-up reminder: Time reached! Chat reopened.");
+    }, Math.min(diff, 2147483647));
+
+    return () => clearTimeout(timer);
+  }, [activeReminder, conversation, handleUnsnooze]);
+
 
   // Clear any in-progress reply draft when the active conversation changes —
   // a quote pulled from conversation A shouldn't bleed into conversation B.

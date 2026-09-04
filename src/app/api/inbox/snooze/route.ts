@@ -37,7 +37,34 @@ export async function GET(request: Request) {
       return NextResponse.json({ reminder: null });
     }
 
-    return NextResponse.json({ reminder: reminder ?? null });
+    if (!reminder) {
+      return NextResponse.json({ reminder: null });
+    }
+
+    // If snooze time has passed, auto-complete reminder and restore status to 'open'
+    if (new Date(reminder.remind_at).getTime() <= Date.now()) {
+      const nowIso = new Date().toISOString();
+      await client
+        .from("conversation_reminders")
+        .update({ completed_at: nowIso })
+        .eq("id", reminder.id);
+
+      await client
+        .from("conversations")
+        .update({
+          status: "open",
+          updated_at: nowIso,
+        })
+        .eq("id", conversationId);
+
+      return NextResponse.json({
+        reminder: null,
+        reopened: true,
+        message: "Snooze duration ended. Chat reopened in Inbox.",
+      });
+    }
+
+    return NextResponse.json({ reminder });
   } catch (err) {
     return toErrorResponse(err);
   }

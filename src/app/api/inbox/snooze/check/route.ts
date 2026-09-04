@@ -5,11 +5,16 @@ import { processDueReminders } from "@/lib/inbox/reminders";
 
 export async function POST() {
   try {
-    await getCurrentAccount();
-    const admin = supabaseAdmin();
-    const processed = await processDueReminders(admin);
+    const ctx = await getCurrentAccount();
+    const client = ctx.supabase;
+    const processed = await processDueReminders(client);
     return NextResponse.json({ success: true, processed });
   } catch (err) {
     return toErrorResponse(err);
   }
 }
+
+export async function GET() {
+  return POST();
+}
+
