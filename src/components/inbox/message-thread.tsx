@@ -1040,6 +1040,29 @@ export function MessageThread({
     return map;
   }, [reactions]);
 
+  const timelineItems: TimelineItem[] = useMemo(() => {
+    const msgItems: TimelineItem[] = messages.map((m) => ({
+      kind: "message",
+      id: m.id,
+      created_at: m.created_at,
+      data: m,
+    }));
+    const noteItems: TimelineItem[] = notes.map((n) => ({
+      kind: "note",
+      id: n.id,
+      created_at: n.created_at,
+      data: n,
+    }));
+    return [...msgItems, ...noteItems].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    );
+  }, [messages, notes]);
+
+  const timelineGroups = useMemo(
+    () => groupTimelineItemsByDate(timelineItems),
+    [timelineItems],
+  );
+
   const contactDisplayName = contact?.name || contact?.phone || "Customer";
 
   // Author label for a quoted message: "You" when we sent the parent,
@@ -1188,28 +1211,6 @@ export function MessageThread({
     (s) => s.value === conversation.status
   );
 
-  const timelineItems: TimelineItem[] = useMemo(() => {
-    const msgItems: TimelineItem[] = messages.map((m) => ({
-      kind: "message",
-      id: m.id,
-      created_at: m.created_at,
-      data: m,
-    }));
-    const noteItems: TimelineItem[] = notes.map((n) => ({
-      kind: "note",
-      id: n.id,
-      created_at: n.created_at,
-      data: n,
-    }));
-    return [...msgItems, ...noteItems].sort(
-      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-    );
-  }, [messages, notes]);
-
-  const timelineGroups = useMemo(
-    () => groupTimelineItemsByDate(timelineItems),
-    [timelineItems],
-  );
   const assignedAgentId = conversation.assigned_agent_id ?? null;
   const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
   const assignLabel = assignedAgentId
