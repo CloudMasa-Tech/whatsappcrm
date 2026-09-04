@@ -520,9 +520,28 @@ export function QrPairing({
             <li>2. Go to Settings → Linked devices → Link a device.</li>
             <li>3. Scan this code.</li>
           </ol>
-          <p className="text-xs text-muted-foreground">
-            The code refreshes every few seconds until it is scanned.
-          </p>
+
+          <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-center max-w-sm">
+            <p className="text-xs font-semibold text-foreground flex items-center justify-center gap-1.5">
+              <RefreshCw className="h-3.5 w-3.5 text-primary animate-spin" />
+              <span>Live Pairing Mode Active</span>
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+              WhatsApp QR codes automatically cycle every 60 seconds until scanned. This auto-refresh is standard protocol and ensures session security.
+            </p>
+          </div>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={disconnect}
+            disabled={busy}
+            className="text-xs text-muted-foreground hover:text-destructive gap-1 mt-1"
+            title="Clean previous pairing data and restart with a completely fresh session"
+          >
+            <Unplug className="h-3 w-3" />
+            <span>Reset session & start fresh</span>
+          </Button>
         </div>
       )}
 

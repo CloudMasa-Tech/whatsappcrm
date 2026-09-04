@@ -28,6 +28,8 @@ import {
   UserPlus,
   Check,
   Clock,
+  AlarmClock,
+  Hourglass,
   ArrowLeft,
   RefreshCw,
   PanelRightOpen,
@@ -1274,18 +1276,22 @@ export function MessageThread({
               </p>
             )}
           </div>
-          {/* Session timer badge — hidden on the narrowest phones so
-              the name + back arrow keep their room. */}
-          <Badge
-            variant="outline"
-            className={cn(
-              "ml-1 hidden gap-1 border-border text-[10px] sm:inline-flex sm:ml-2",
-              sessionInfo.expired ? "text-red-400" : "text-primary"
-            )}
-          >
-            <Clock className="h-3 w-3" />
-            {sessionInfo.remaining}
-          </Badge>
+          {/* Session timer badge — WhatsApp 24-hour customer service window */}
+          {sessionInfo.remaining && (
+            <Badge
+              variant="outline"
+              title="WhatsApp 24-Hour Customer Service Window: When open, free-form messages can be sent. (To snooze this chat for follow-up reminders, click 'Snooze' in the action bar)"
+              className={cn(
+                "ml-1 hidden gap-1 border-border text-[10px] sm:inline-flex sm:ml-2 font-normal cursor-help select-none",
+                sessionInfo.expired
+                  ? "border-red-500/30 text-red-500 bg-red-500/5"
+                  : "border-primary/30 text-primary bg-primary/5"
+              )}
+            >
+              <Hourglass className="h-3 w-3" />
+              <span>24h: {sessionInfo.remaining}</span>
+            </Badge>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -1504,20 +1510,21 @@ export function MessageThread({
           <DropdownMenu>
             <DropdownMenuTrigger
               className={cn(
-                "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md transition-colors",
+                "inline-flex items-center justify-center h-7 gap-1 px-2.5 text-xs rounded-md transition-colors cursor-pointer border",
                 activeReminder
-                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 font-medium hover:bg-amber-500/25 border border-amber-500/30"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  ? "bg-purple-500/15 text-purple-600 dark:text-purple-400 font-medium hover:bg-purple-500/25 border-purple-500/40"
+                  : "border-border/60 text-muted-foreground hover:bg-muted hover:text-foreground"
               )}
               title={activeReminder ? `Snoozed until ${format(new Date(activeReminder.remind_at), "MMM d, h:mm a")}` : "Snooze conversation"}
             >
-              <Clock className="h-3 w-3" />
-              <span className="hidden md:inline">{activeReminder ? "Snoozed" : "Snooze"}</span>
-              <ChevronDown className="h-3 w-3" />
+              <AlarmClock className="h-3.5 w-3.5" />
+              <span className="hidden md:inline font-medium">{activeReminder ? "Snoozed" : "Snooze"}</span>
+              <ChevronDown className="h-3 w-3 opacity-60" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52 border-border bg-popover text-popover-foreground">
-              <div className="px-2 py-1.5 text-[11px] font-semibold text-muted-foreground border-b border-border">
-                Snooze until...
+            <DropdownMenuContent align="end" className="w-56 border-border bg-popover text-popover-foreground shadow-lg">
+              <div className="flex items-center gap-1.5 px-2.5 py-2 text-[11px] font-semibold text-muted-foreground border-b border-border">
+                <AlarmClock className="h-3 w-3 text-purple-500" />
+                <span>Snooze Follow-up Until...</span>
               </div>
               <DropdownMenuItem
                 onClick={() => handleSnoozePreset("1hour")}
@@ -1568,9 +1575,9 @@ export function MessageThread({
 
       {/* Snooze Active Banner */}
       {activeReminder && (
-        <div className="flex items-center justify-between gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-700 dark:text-amber-400">
+        <div className="flex items-center justify-between gap-2 border-b border-purple-500/20 bg-purple-500/10 px-4 py-2 text-xs text-purple-700 dark:text-purple-300">
           <div className="flex items-center gap-2">
-            <Clock className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+            <AlarmClock className="h-3.5 w-3.5 text-purple-500 shrink-0" />
             <span>
               Snoozed until{" "}
               <strong className="font-semibold">
@@ -1582,7 +1589,7 @@ export function MessageThread({
           <button
             type="button"
             onClick={handleUnsnooze}
-            className="shrink-0 font-medium underline underline-offset-2 hover:text-amber-800 dark:hover:text-amber-300 transition-colors"
+            className="shrink-0 font-medium underline underline-offset-2 hover:text-purple-900 dark:hover:text-purple-200 transition-colors"
           >
             Unsnooze now
           </button>

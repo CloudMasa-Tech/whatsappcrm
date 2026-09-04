@@ -777,6 +777,20 @@ export function CustomerDashboard() {
                           Waiting {timeAgo}
                         </span>
 
+                        {/* 1-Click Quick Claim */}
+                        {user?.id && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={assigningId === conv.id}
+                            className="h-7 px-2 text-xs font-medium border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                            onClick={() => handleAssign(conv.id, user.id)}
+                            title="Assign this conversation directly to yourself"
+                          >
+                            Claim
+                          </Button>
+                        )}
+
                         {/* Assign Dropdown */}
                         <DropdownMenu>
                           <DropdownMenuTrigger
@@ -795,23 +809,37 @@ export function CustomerDashboard() {
                               <DropdownMenuLabel className="text-xs">Select Project Agent</DropdownMenuLabel>
                             </DropdownMenuGroup>
                             <DropdownMenuSeparator />
-                            {projectMembers.length === 0 ? (
+                            {user?.id && (
+                              <DropdownMenuItem
+                                className="text-xs flex items-center justify-between cursor-pointer font-medium text-primary"
+                                onClick={() => handleAssign(conv.id, user.id)}
+                              >
+                                <span>Assign to Me ({adminName})</span>
+                                <Badge variant="outline" className="text-[9px] px-1 py-0 border-primary/40 text-primary">
+                                  You
+                                </Badge>
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuSeparator />
+                            {projectMembers.filter((m) => m.user_id !== user?.id).length === 0 && !user?.id ? (
                               <div className="p-2 text-xs text-muted-foreground text-center">
                                 No agents in project
                               </div>
                             ) : (
-                              projectMembers.map((member) => (
-                                <DropdownMenuItem
-                                  key={member.user_id}
-                                  className="text-xs flex items-center justify-between cursor-pointer"
-                                  onClick={() => handleAssign(conv.id, member.user_id)}
-                                >
-                                  <span>{member.full_name}</span>
-                                  <Badge variant="secondary" className="text-[9px] px-1 py-0 capitalize">
-                                    {member.role} ({member.active_chats})
-                                  </Badge>
-                                </DropdownMenuItem>
-                              ))
+                              projectMembers
+                                .filter((m) => m.user_id !== user?.id)
+                                .map((member) => (
+                                  <DropdownMenuItem
+                                    key={member.user_id}
+                                    className="text-xs flex items-center justify-between cursor-pointer"
+                                    onClick={() => handleAssign(conv.id, member.user_id)}
+                                  >
+                                    <span>{member.full_name}</span>
+                                    <Badge variant="secondary" className="text-[9px] px-1 py-0 capitalize">
+                                      {member.role} ({member.active_chats})
+                                    </Badge>
+                                  </DropdownMenuItem>
+                                ))
                             )}
                           </DropdownMenuContent>
                         </DropdownMenu>

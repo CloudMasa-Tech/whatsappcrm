@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { AlertTriangle, Loader2, Mail, QrCode, WifiOff } from "lucide-react";
+import { AlertTriangle, Loader2, Mail, QrCode, WifiOff, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Instagram } from "@/components/icons/instagram";
@@ -123,6 +123,22 @@ export function ChannelStatusBanner({ projectId }: { projectId: string | null })
   const t = useTranslations("Inbox.status");
   const whatsapp = useChannelStatus(projectId);
   const [readiness, setReadiness] = useState<Record<string, Readiness> | null>(null);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("masacrm_channel_banner_dismissed") === "true") {
+        setDismissed(true);
+      }
+    } catch {}
+  }, []);
+
+  const handleDismiss = () => {
+    setDismissed(true);
+    try {
+      localStorage.setItem("masacrm_channel_banner_dismissed", "true");
+    } catch {}
+  };
 
   useEffect(() => {
     const currentProjectId = projectId;
@@ -227,12 +243,14 @@ export function ChannelStatusBanner({ projectId }: { projectId: string | null })
     );
   }
 
+  if (dismissed) return null;
+
   const tone = worstTone(items.map((i) => i.tone));
 
   return (
     <div
       className={cn(
-        "flex shrink-0 flex-wrap items-center justify-center gap-x-5 gap-y-1.5 border-b px-4 py-2 text-xs",
+        "relative flex shrink-0 flex-wrap items-center justify-center gap-x-5 gap-y-1.5 border-b px-4 py-2 pr-9 text-xs",
         TONE_CLASS[tone],
       )}
       role="status"
@@ -269,6 +287,16 @@ export function ChannelStatusBanner({ projectId }: { projectId: string | null })
           </span>
         );
       })}
+
+      <button
+        type="button"
+        onClick={handleDismiss}
+        className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex h-5 w-5 items-center justify-center rounded hover:bg-black/10 dark:hover:bg-white/10 opacity-70 hover:opacity-100 transition-opacity"
+        title="Dismiss channel alerts"
+        aria-label="Dismiss banner"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }
