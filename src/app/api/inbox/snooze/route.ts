@@ -8,7 +8,6 @@
 
 import { NextResponse } from "next/server";
 import { getCurrentAccount, toErrorResponse } from "@/lib/auth/account";
-import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export async function GET(request: Request) {
   try {
@@ -23,11 +22,10 @@ export async function GET(request: Request) {
       );
     }
 
-    const admin = supabaseAdmin();
-    const { data: reminder, error } = await admin
+    const client = ctx.supabase;
+    const { data: reminder, error } = await client
       .from("conversation_reminders")
       .select("*")
-      .eq("account_id", ctx.accountId)
       .eq("conversation_id", conversationId)
       .is("completed_at", null)
       .order("remind_at", { ascending: true })
@@ -35,7 +33,8 @@ export async function GET(request: Request) {
       .maybeSingle();
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      console.warn("[snooze GET] reminder lookup warning:", error.message);
+      return NextResponse.json({ reminder: null });
     }
 
     return NextResponse.json({ reminder: reminder ?? null });
@@ -67,10 +66,10 @@ export async function POST(request: Request) {
       );
     }
 
-    const admin = supabaseAdmin();
+    const client = ctx.supabase;
 
     // Verify conversation belongs to this account
-    const { data: conv, error: convErr } = await admin
+    const { data: conv, error: convErr } = await client
       .from("conversations")
       .select("id, account_id, project_id")
       .eq("id", conversationId)
@@ -91,14 +90,14 @@ export async function POST(request: Request) {
     }
 
     // Complete any prior incomplete reminders for this conversation
-    await admin
+    await client
       .from("conversation_reminders")
       .update({ completed_at: new Date().toISOString() })
       .eq("conversation_id", conversationId)
       .is("completed_at", null);
 
     // Insert new reminder
-    const { data: newReminder, error: insertErr } = await admin
+    const { data: newReminder, error: insertErr } = await client
       .from("conversation_reminders")
       .insert({
         account_id: ctx.accountId,
@@ -112,11 +111,12 @@ export async function POST(request: Request) {
       .single();
 
     if (insertErr) {
+      console.error("[snooze POST] insert error:", insertErr.message);
       return NextResponse.json({ error: insertErr.message }, { status: 500 });
     }
 
     // Automatically put conversation in 'pending' status
-    await admin
+    await client
       .from("conversations")
       .update({
         status: "pending",
@@ -143,10 +143,10 @@ export async function DELETE(request: Request) {
       );
     }
 
-    const admin = supabaseAdmin();
+    const client = ctx.supabase;
 
     // Verify conversation belongs to account
-    const { data: conv, error: convErr } = await admin
+    const { data: conv, error: convErr } = await client
       .from("conversations")
       .select("id, account_id")
       .eq("id", conversationId)
@@ -160,14 +160,14 @@ export async function DELETE(request: Request) {
     }
 
     // Mark active reminders as completed
-    await admin
+    await client
       .from("conversation_reminders")
       .update({ completed_at: new Date().toISOString() })
       .eq("conversation_id", conversationId)
       .is("completed_at", null);
 
     // Restore conversation status to 'open'
-    await admin
+    await client
       .from("conversations")
       .update({
         status: "open",
@@ -180,3 +180,4 @@ export async function DELETE(request: Request) {
     return toErrorResponse(err);
   }
 }
+

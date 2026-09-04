@@ -42,4 +42,5 @@ DROP POLICY IF EXISTS "Members can delete reminders" ON conversation_reminders;
 CREATE POLICY "Members can delete reminders" ON conversation_reminders FOR DELETE
   USING (is_account_member(account_id, 'agent'));
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.conversation_reminders TO authenticated;
+GRANT ALL ON public.conversation_reminders TO service_role, authenticated;
+
