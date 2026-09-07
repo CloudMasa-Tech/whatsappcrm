@@ -429,37 +429,35 @@ export function QrPairing({
         </div>
 
         {canManage && (
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCleanSyncedContacts}
+              disabled={busy || cleaning}
+              title="Clean up un-used WhatsApp synced contacts, preserving active contacts"
+            >
+              {cleaning ? (
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-1.5 h-4 w-4 text-muted-foreground" />
+              )}
+              Clean Synced Contacts
+            </Button>
             {status === "connected" ? (
               canDisconnect ? (
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleCleanSyncedContacts}
-                    disabled={busy || cleaning}
-                    title="Clean up un-used WhatsApp synced contacts without disconnecting"
-                  >
-                    {cleaning ? (
-                      <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="mr-1.5 h-4 w-4 text-muted-foreground" />
-                    )}
-                    Clean Synced Contacts
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={disconnect}
-                    disabled={busy || cleaning}
-                  >
-                    <Unplug className="mr-1.5 h-4 w-4" />
-                    Disconnect
-                  </Button>
-                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={disconnect}
+                  disabled={busy || cleaning}
+                >
+                  <Unplug className="mr-1.5 h-4 w-4" />
+                  Disconnect
+                </Button>
               ) : null
             ) : (
-              <Button size="sm" onClick={connect} disabled={busy}>
+              <Button size="sm" onClick={connect} disabled={busy || cleaning}>
                 {busy ? (
                   <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
                 ) : (

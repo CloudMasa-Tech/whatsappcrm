@@ -81,16 +81,33 @@ export async function cleanupSyncedWhatsAppContacts(
     }
   }
 
-  // 3. Find conversations with messages sent from CRM by agents/admins
-  const { data: agentMsgs } = await db
-    .from('messages')
-    .select('conversation_id')
-    .eq('project_id', projectId)
-    .eq('sender_type', 'agent');
+  // 3. Find conversations with messages sent from CRM by agents/admins (paginated)
+  let agentFrom = 0;
+  while (true) {
+    const { data: agentMsgs, error } = await db
+      .from('messages')
+      .select('conversation_id')
+      .eq('project_id', projectId)
+      .eq('sender_type', 'agent')
+      .range(agentFrom, agentFrom + PAGE_SIZE - 1);
 
-  if (agentMsgs) {
+    if (error || !agentMsgs || agentMsgs.length === 0) break;
     for (const m of agentMsgs) {
       const cid = convToContact.get(m.conversation_id);
+      if (cid) keepContactIds.add(cid);
+    }
+    if (agentMsgs.length < PAGE_SIZE) break;
+    agentFrom += PAGE_SIZE;
+  }
+
+  // 3b. Preserve conversations with active reminders
+  const { data: reminders } = await db
+    .from('conversation_reminders')
+    .select('conversation_id')
+    .eq('project_id', projectId);
+  if (reminders) {
+    for (const r of reminders) {
+      const cid = convToContact.get(r.conversation_id);
       if (cid) keepContactIds.add(cid);
     }
   }
