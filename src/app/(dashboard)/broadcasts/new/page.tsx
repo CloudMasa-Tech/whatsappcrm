@@ -10,7 +10,7 @@ import { Step1ChooseTemplate } from '@/components/broadcasts/step1-choose-templa
 import { Step2SelectAudience } from '@/components/broadcasts/step2-select-audience';
 import { Step3Personalize } from '@/components/broadcasts/step3-personalize';
 import { Step4ScheduleSend } from '@/components/broadcasts/step4-schedule-send';
-import { useBroadcastSending } from '@/hooks/use-broadcast-sending';
+import { useBroadcastSending, CustomFieldOperator } from '@/hooks/use-broadcast-sending';
 import { Check } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
@@ -34,7 +34,7 @@ export default function NewBroadcastPage() {
     tagIds?: string[];
     customField?: {
       fieldId: string;
-      operator: 'is' | 'is_not' | 'contains';
+      operator: CustomFieldOperator;
       value: string;
     };
     csvContacts?: { phone: string; name?: string }[];

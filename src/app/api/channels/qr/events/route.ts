@@ -4,6 +4,9 @@ import { createClient } from '@supabase/supabase-js'
 import { verifySignatureHeader } from '@/lib/webhooks/sign'
 import { ingestInboundMessage } from '@/lib/inbound/ingest'
 import { cleanupSyncedWhatsAppContacts } from '@/lib/contacts/cleanup-synced'
+import { findExistingContact } from '@/lib/contacts/dedupe'
+import { resolveAuditUserId } from '@/lib/api/v1/contacts'
+import { ensureContactDeal } from '@/lib/deals/auto-lead'
 import type { InboundMessage, MessageKind } from '@/lib/channels/types'
 
 // ============================================================
@@ -177,40 +180,166 @@ async function applyReaction(raw: unknown): Promise<void> {
   }
 }
 
-/** Sync contact names arriving from WhatsApp address book / chat sync. */
+/** Sync contact names arriving from WhatsApp address book / chat sync in bulk. */
 async function applyContactsBatch(raw: unknown): Promise<void> {
   if (!raw || typeof raw !== 'object') return
   const p = raw as {
     projectId?: string
     contacts?: Array<{ phone: string; name?: string | null }>
   }
-  if (!isUuid(p.projectId) || !Array.isArray(p.contacts)) return
+  if (!isUuid(p.projectId) || !Array.isArray(p.contacts) || p.contacts.length === 0) return
+
+  const { data: project } = await supabaseAdmin()
+    .from('projects')
+    .select('id, account_id')
+    .eq('id', p.projectId)
+    .maybeSingle()
+
+  if (!project) return
+  const accountId = project.account_id as string
+
+  let ownerUserId = ''
+  try {
+    ownerUserId = await resolveAuditUserId(supabaseAdmin(), accountId, p.projectId)
+  } catch {
+    const { data: account } = await supabaseAdmin()
+      .from('accounts')
+      .select('owner_user_id')
+      .eq('id', accountId)
+      .maybeSingle()
+    ownerUserId = (account?.owner_user_id as string) || ''
+  }
+
+  // 1. Fetch all existing contacts for this project in bulk
+  const existingContactsMap = new Map<string, { id: string; name: string | null; phone: string }>()
+  let from = 0
+  const PAGE_SIZE = 1000
+  while (true) {
+    const { data, error } = await supabaseAdmin()
+      .from('contacts')
+      .select('id, name, phone')
+      .eq('project_id', p.projectId)
+      .range(from, from + PAGE_SIZE - 1)
+
+    if (error || !data || data.length === 0) break
+    for (const c of data) {
+      const digits = c.phone.replace(/\D/g, '')
+      if (digits) {
+        existingContactsMap.set(digits, c)
+        if (digits.length >= 10) {
+          existingContactsMap.set(digits.slice(-10), c)
+        }
+      }
+      existingContactsMap.set(c.phone, c)
+    }
+    if (data.length < PAGE_SIZE) break
+    from += PAGE_SIZE
+  }
+
+  // 2. Separate into new contacts to insert and existing contacts to update
+  const newContactsToInsert: Array<{
+    account_id: string
+    project_id: string
+    user_id: string
+    phone: string
+    name: string | null
+  }> = []
+
+  const nameUpdates: Array<{ id: string; name: string }> = []
+  const seenDigits = new Set<string>()
 
   for (const c of p.contacts) {
-    if (!c.phone || !c.name || !c.name.trim() || c.name.startsWith('+')) continue
-    const phone = c.phone.trim()
-    const name = c.name.trim()
+    if (!c.phone || !c.phone.trim()) continue
+    const rawPhone = c.phone.trim()
+    const digits = rawPhone.replace(/\D/g, '')
+    // Must be valid E.164 phone length (7 to 15 digits)
+    if (!digits || digits.length < 7 || digits.length > 15) continue
+    const phone = rawPhone.startsWith('+') ? rawPhone : `+${digits}`
+    const name = c.name && c.name.trim() ? c.name.trim() : null
 
-    const { data: existing } = await supabaseAdmin()
-      .from('contacts')
-      .select('id, name')
-      .eq('project_id', p.projectId)
-      .eq('phone', phone)
-      .maybeSingle()
+    const existing =
+      existingContactsMap.get(digits) ||
+      (digits.length >= 10 ? existingContactsMap.get(digits.slice(-10)) : undefined) ||
+      existingContactsMap.get(phone)
 
     if (existing) {
-      if (
-        !existing.name ||
-        existing.name === phone ||
-        existing.name.startsWith('+') ||
-        existing.name !== name
-      ) {
-        await supabaseAdmin()
-          .from('contacts')
-          .update({ name, updated_at: new Date().toISOString() })
-          .eq('id', existing.id)
+      if (name && name !== phone && !/^\+?[\d\s\-()]+$/.test(name)) {
+        const existingNameDigits = existing.name ? existing.name.replace(/\D/g, '') : ''
+        const isExistingNamePhone =
+          !existing.name ||
+          existing.name === existing.phone ||
+          existing.name === phone ||
+          existingNameDigits === digits
+        if (isExistingNamePhone || existing.name !== name) {
+          nameUpdates.push({ id: existing.id, name })
+          existing.name = name
+        }
       }
+    } else if (ownerUserId && !seenDigits.has(digits)) {
+      seenDigits.add(digits)
+      newContactsToInsert.push({
+        account_id: accountId,
+        project_id: p.projectId,
+        user_id: ownerUserId,
+        phone,
+        name: name || null,
+      })
     }
+  }
+
+  // 3. Bulk insert new contacts in chunks of 100
+  const insertedContacts: Array<{ id: string; phone: string; name: string | null }> = []
+  for (let i = 0; i < newContactsToInsert.length; i += 100) {
+    const chunk = newContactsToInsert.slice(i, i + 100)
+    const { data: inserted, error: insertError } = await supabaseAdmin()
+      .from('contacts')
+      .insert(chunk)
+      .select('id, phone, name')
+
+    if (!insertError && inserted) {
+      insertedContacts.push(...inserted)
+    }
+  }
+
+  // 4. Bulk insert open conversations for all new contacts
+  if (insertedContacts.length > 0 && ownerUserId) {
+    const convRows = insertedContacts.map((c) => ({
+      account_id: accountId,
+      project_id: p.projectId as string,
+      user_id: ownerUserId,
+      contact_id: c.id,
+      status: 'open' as const,
+    }))
+
+    for (let i = 0; i < convRows.length; i += 100) {
+      const chunk = convRows.slice(i, i + 100)
+      await supabaseAdmin().from('conversations').insert(chunk)
+    }
+
+    // Ensure deals asynchronously
+    for (const c of insertedContacts) {
+      void ensureContactDeal(supabaseAdmin(), {
+        contactId: c.id,
+        projectId: p.projectId,
+        accountId,
+        userId: ownerUserId,
+        name: c.name,
+        phone: c.phone,
+      })
+    }
+  }
+
+  // 5. Bulk execute name updates in parallel batches of 20
+  for (let i = 0; i < nameUpdates.length; i += 20) {
+    const chunk = nameUpdates.slice(i, i + 20)
+    await Promise.all(
+      chunk.map((u) =>
+        supabaseAdmin()
+          .from('contacts')
+          .update({ name: u.name, updated_at: new Date().toISOString() })
+          .eq('id', u.id)
+      )
+    )
   }
 }
 

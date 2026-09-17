@@ -29,6 +29,7 @@ import {
   SessionError,
   shutdownAll,
   startHeartbeat,
+  syncSessionContacts,
 } from "./session-manager.js";
 
 const app = new Hono();
@@ -137,6 +138,19 @@ app.get("/v1/sessions/:projectId", (c) =>
   c.json(getSessionStatus(c.req.param("projectId"))),
 );
 
+app.post("/v1/sessions/:projectId/sync-contacts", async (c) => {
+  const rawBody = c.get("rawBody" as never) as unknown as string;
+  const check = projectIdFromRequest(c.req.param("projectId"), rawBody);
+  if (!check.ok) return c.json({ error: check.error, code: "project_mismatch" }, 400);
+
+  try {
+    return c.json(await syncSessionContacts(check.projectId));
+  } catch (err) {
+    const { body, status } = handleError(err);
+    return c.json(body, status as 400);
+  }
+});
+
 app.delete("/v1/sessions/:projectId", async (c) => {
   const rawBody = c.get("rawBody" as never) as unknown as string;
   const check = projectIdFromRequest(c.req.param("projectId"), rawBody);
@@ -199,7 +213,7 @@ app.post("/v1/sessions/:projectId/messages", async (c) => {
 // Boot
 // ------------------------------------------------------------
 
-const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
+const server = serve({ fetch: app.fetch, port: config.port, hostname: '0.0.0.0' }, (info) => {
   logger.info(
     { port: info.port, instance: config.instanceId },
     "gateway listening",
@@ -222,5 +236,14 @@ async function shutdown(signal: string) {
   setTimeout(() => process.exit(0), 10_000).unref();
 }
 
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "uncaught exception in gateway (prevented crash)");
+});
+
+process.on("unhandledRejection", (reason) => {
+  logger.warn({ reason }, "unhandled promise rejection in gateway (prevented crash)");
+});
+
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
+

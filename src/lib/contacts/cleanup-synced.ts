@@ -120,14 +120,16 @@ export async function cleanupSyncedWhatsAppContacts(
     }
   }
 
-  // 5. Preserve contacts with deals
+  // 5. Preserve contacts with meaningful deals (deals with notes, value > 0, or won/lost status)
   const { data: deals } = await db
     .from('deals')
-    .select('contact_id')
+    .select('contact_id, value, status, notes')
     .eq('project_id', projectId);
   if (deals) {
     for (const d of deals) {
-      if (d.contact_id) keepContactIds.add(d.contact_id);
+      if (d.contact_id && (d.value > 0 || d.status === 'won' || d.status === 'lost' || d.notes)) {
+        keepContactIds.add(d.contact_id);
+      }
     }
   }
 
@@ -146,6 +148,8 @@ export async function cleanupSyncedWhatsAppContacts(
   let keptCount = 0;
 
   for (const contact of allContacts) {
+    const digits = contact.phone ? contact.phone.replace(/\D/g, '') : '';
+    const isMaskedLid = digits.length > 13 && !contact.name;
     // Preserve imported / manual contacts (have email or company)
     const isImportedOrManual = Boolean(contact.email || contact.company);
     // Preserve non-WhatsApp contacts (e.g. Instagram, Facebook, Email)
@@ -154,7 +158,7 @@ export async function cleanupSyncedWhatsAppContacts(
     // Preserve contacts interacted with in CRM
     const hasInteraction = keepContactIds.has(contact.id);
 
-    if (isImportedOrManual || isNonWhatsApp || isInstagram || hasInteraction) {
+    if (!isMaskedLid && (isImportedOrManual || isNonWhatsApp || isInstagram || hasInteraction)) {
       keptCount++;
     } else {
       toDeleteIds.push(contact.id);
@@ -167,6 +171,11 @@ export async function cleanupSyncedWhatsAppContacts(
 
   for (let i = 0; i < toDeleteIds.length; i += DELETE_CHUNK_SIZE) {
     const chunk = toDeleteIds.slice(i, i + DELETE_CHUNK_SIZE);
+    
+    // Clean up dependent tables first
+    await db.from('deals').delete().in('contact_id', chunk);
+    await db.from('conversations').delete().in('contact_id', chunk);
+
     const { error: delErr } = await db
       .from('contacts')
       .delete()

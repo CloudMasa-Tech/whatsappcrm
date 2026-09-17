@@ -17,6 +17,7 @@ import {
   resolveImportTagIds,
   type ContactTagAssignment,
 } from '@/lib/contacts/resolve-import-tags';
+import { ensureContactDeal } from '@/lib/deals/auto-lead';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
@@ -302,6 +303,27 @@ export function ImportModal({
 
             if (!singleErr && singleData) {
               imported++;
+              if (activeProjectId) {
+                await supabase.from('conversations').insert({
+                  user_id: user.id,
+                  account_id: accountId,
+                  project_id: activeProjectId,
+                  contact_id: singleData.id,
+                  channel: 'whatsapp',
+                  status: 'open',
+                  last_message_text: null,
+                  last_message_at: new Date().toISOString(),
+                  unread_count: 0,
+                });
+                void ensureContactDeal(supabase, {
+                  contactId: singleData.id,
+                  projectId: activeProjectId,
+                  accountId,
+                  userId: user.id,
+                  name: row.name,
+                  phone: row.phone,
+                });
+              }
               if (source.tagNames.length > 0) {
                 tagAssignments.push({
                   contactId: singleData.id,
@@ -317,6 +339,33 @@ export function ImportModal({
         } else {
           const inserted = data ?? [];
           imported += inserted.length;
+
+          if (inserted.length > 0 && activeProjectId) {
+            const convRows = inserted.map((c) => ({
+              user_id: user.id,
+              account_id: accountId,
+              project_id: activeProjectId,
+              contact_id: c.id,
+              channel: 'whatsapp',
+              status: 'open',
+              last_message_text: null,
+              last_message_at: new Date().toISOString(),
+              unread_count: 0,
+            }));
+            await supabase.from('conversations').insert(convRows);
+
+            for (let k = 0; k < inserted.length; k++) {
+              void ensureContactDeal(supabase, {
+                contactId: inserted[k].id,
+                projectId: activeProjectId,
+                accountId,
+                userId: user.id,
+                name: rows[k]?.name,
+                phone: rows[k]?.phone,
+              });
+            }
+          }
+
           // inserted[j] ↔ chunk[j] only holds because a single INSERT
           // preserves RETURNING order. If this path is ever split into
           // parallel inserts, zip by phone or returned id instead.

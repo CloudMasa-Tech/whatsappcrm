@@ -68,13 +68,17 @@ export function CustomFieldsPanel() {
   const fetchFields = useCallback(async () => {
     if (!accountId) return;
     setLoading(true);
-    const { data } = await supabase
+    let query = supabase
       .from('custom_fields')
       .select('*')
       .order('field_name');
+    if (activeProjectId) {
+      query = query.eq('project_id', activeProjectId);
+    }
+    const { data } = await query;
     setFields((data as CustomField[] | null) ?? []);
     setLoading(false);
-  }, [supabase, accountId]);
+  }, [supabase, accountId, activeProjectId]);
 
   // Load the field list on mount once the account is known. The setters
   // inside fetchFields run after the Supabase await — not synchronously in

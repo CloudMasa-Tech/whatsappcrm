@@ -197,6 +197,18 @@ export function getSessionStatus(projectId: string) {
   });
 }
 
+/** Trigger on-demand sync of all known contacts from the active session. */
+export function syncContactsViaGateway(projectId: string) {
+  return gatewayRequest<{ synced: number }>(
+    `/v1/sessions/${projectId}/sync-contacts`,
+    {
+      method: "POST",
+      body: { projectId },
+      timeoutMs: 25_000,
+    },
+  );
+}
+
 export interface GatewaySendParams {
   projectId: string;
   to: string;

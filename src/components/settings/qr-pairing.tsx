@@ -344,6 +344,30 @@ export function QrPairing({
   }
 
   const [cleaning, setCleaning] = useState(false);
+  const [syncingContacts, setSyncingContacts] = useState(false);
+
+  async function handleSyncContacts() {
+    setSyncingContacts(true);
+    try {
+      const response = await fetch("/api/whatsapp/qr/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        toast.error(data.error ?? "Failed to sync WhatsApp contacts");
+        return;
+      }
+      toast.success(
+        `WhatsApp sync complete: ${data.synced ?? 0} contacts queued/synced`
+      );
+    } catch {
+      toast.error("Could not reach the server to sync contacts");
+    } finally {
+      setSyncingContacts(false);
+    }
+  }
 
   async function handleCleanSyncedContacts() {
     if (
@@ -433,8 +457,22 @@ export function QrPairing({
             <Button
               variant="outline"
               size="sm"
+              onClick={handleSyncContacts}
+              disabled={busy || cleaning || syncingContacts || status !== "connected"}
+              title="Sync WhatsApp contacts and active chats into CRM"
+            >
+              {syncingContacts ? (
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-1.5 h-4 w-4 text-muted-foreground" />
+              )}
+              Sync Contacts
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={handleCleanSyncedContacts}
-              disabled={busy || cleaning}
+              disabled={busy || cleaning || syncingContacts}
               title="Clean up un-used WhatsApp synced contacts, preserving active contacts"
             >
               {cleaning ? (
@@ -450,14 +488,14 @@ export function QrPairing({
                   variant="outline"
                   size="sm"
                   onClick={disconnect}
-                  disabled={busy || cleaning}
+                  disabled={busy || cleaning || syncingContacts}
                 >
                   <Unplug className="mr-1.5 h-4 w-4" />
                   Disconnect
                 </Button>
               ) : null
             ) : (
-              <Button size="sm" onClick={connect} disabled={busy || cleaning}>
+              <Button size="sm" onClick={connect} disabled={busy || cleaning || syncingContacts}>
                 {busy ? (
                   <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
                 ) : (

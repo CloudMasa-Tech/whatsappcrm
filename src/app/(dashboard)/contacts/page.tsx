@@ -49,12 +49,14 @@ import {
   SlidersHorizontal,
   Filter,
   X,
+  RefreshCw,
 } from 'lucide-react';
 import { ContactForm } from '@/components/contacts/contact-form';
 import { ContactDetailView } from '@/components/contacts/contact-detail-view';
 import { ImportModal } from '@/components/contacts/import-modal';
 import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager';
 import { useCan } from '@/hooks/use-can';
+import { useAuth } from '@/hooks/use-auth';
 import { GatedButton } from '@/components/ui/gated-button';
 import { useTranslations } from 'next-intl';
 
@@ -67,6 +69,7 @@ interface ContactWithTags extends Contact {
 export default function ContactsPage() {
   const t = useTranslations('Contacts.page');
   const supabase = createClient();
+  const { activeProjectId } = useAuth();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
 
@@ -89,6 +92,7 @@ export default function ContactsPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Contact | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   // Bulk selection (page-scoped — only the loaded rows are selectable)
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -104,7 +108,11 @@ export default function ContactsPage() {
   const fetchSeq = useRef(0);
 
   const fetchTags = useCallback(async () => {
-    const { data } = await supabase.from('tags').select('*');
+    let query = supabase.from('tags').select('*');
+    if (activeProjectId) {
+      query = query.eq('project_id', activeProjectId);
+    }
+    const { data } = await query;
     if (data) {
       const map: Record<string, Tag> = {};
       data.forEach((t) => (map[t.id] = t));
@@ -116,7 +124,7 @@ export default function ContactsPage() {
         return pruned.length === prev.length ? prev : pruned;
       });
     }
-  }, [supabase]);
+  }, [supabase, activeProjectId]);
 
   const fetchContacts = useCallback(async () => {
     const seq = ++fetchSeq.current;
@@ -134,31 +142,40 @@ export default function ContactsPage() {
     let count: number;
 
     if (selectedTagIds.length > 0) {
-      // Tag filter active — resolve it server-side (join + distinct +
-      // windowed total count + pagination) so a tag covering many
-      // contacts can't silently truncate the result or overflow an IN
-      // clause. See migration 025_filter_contacts_by_tags.
-      const { data, error } = await supabase.rpc('filter_contacts_by_tags', {
-        p_tag_ids: selectedTagIds,
-        p_search: term || null,
-        p_limit: PAGE_SIZE,
-        p_offset: from,
-      });
-      if (seq !== fetchSeq.current) return; // superseded by a newer fetch
+      let query = supabase
+        .from('contacts')
+        .select('*, contact_tags!inner(tag_id)', { count: 'exact' })
+        .in('contact_tags.tag_id', selectedTagIds)
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+      if (activeProjectId) {
+        query = query.eq('project_id', activeProjectId);
+      }
+      if (term) {
+        const like = `%${term}%`;
+        query = query.or(`name.ilike.${like},phone.ilike.${like},email.ilike.${like}`);
+      }
+
+      const { data, count: exactCount, error } = await query;
+      if (seq !== fetchSeq.current) return;
       if (error) {
         toast.error(t('toastFailedLoad'));
         setLoading(false);
         return;
       }
-      const rows = (data ?? []) as { contact: Contact; total_count: number }[];
-      contactRows = rows.map((r) => r.contact);
-      count = rows.length > 0 ? Number(rows[0].total_count) : 0;
+      contactRows = data ?? [];
+      count = exactCount ?? 0;
     } else {
       let query = supabase
         .from('contacts')
         .select('*', { count: 'exact' })
         .order('created_at', { ascending: false })
         .range(from, to);
+
+      if (activeProjectId) {
+        query = query.eq('project_id', activeProjectId);
+      }
 
       if (term) {
         const like = `%${term}%`;
@@ -207,7 +224,13 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, selectedTagIds, tagsMap, t]);
+  }, [supabase, page, search, selectedTagIds, tagsMap, activeProjectId, t]);
+
+  useEffect(() => {
+    setPage(0);
+    setSelected(new Set());
+    setSelectedTagIds([]);
+  }, [activeProjectId]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -270,6 +293,28 @@ export default function ContactsPage() {
     setDeleteTarget(null);
   }
 
+  async function handleSyncWhatsApp() {
+    setSyncing(true);
+    try {
+      const res = await fetch('/api/whatsapp/qr/sync', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ project_id: activeProjectId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to sync WhatsApp contacts');
+      } else {
+        toast.success(`WhatsApp sync complete: ${data.synced ?? 0} contacts synced`);
+        await fetchContacts();
+      }
+    } catch {
+      toast.error('Could not reach server to sync contacts');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   const allOnPageSelected =
     contacts.length > 0 && contacts.every((c) => selected.has(c.id));
   const someOnPageSelected = contacts.some((c) => selected.has(c.id));
@@ -303,7 +348,7 @@ export default function ContactsPage() {
     const { error } = await supabase.from('contacts').delete().in('id', ids);
 
     if (error) {
-      toast.error(t('toastBulkFailedDelete'));
+      toast.error(t('toastFailedBulkDelete'));
     } else {
       toast.success(t('toastBulkDeleted', { count: ids.length }));
       setSelected(new Set());
@@ -360,6 +405,15 @@ export default function ContactsPage() {
               {t('customFieldsBtn')}
             </Button>
           )}
+          <Button
+            variant="outline"
+            onClick={handleSyncWhatsApp}
+            disabled={syncing}
+            className="border-border text-muted-foreground hover:bg-muted"
+          >
+            <RefreshCw className={`size-4 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? 'Syncing...' : 'Sync WhatsApp'}
+          </Button>
           <GatedButton
             variant="outline"
             canAct={canEdit}

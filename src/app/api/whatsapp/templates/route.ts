@@ -40,9 +40,7 @@ export async function GET(request: Request) {
     const accountId = profile?.account_id;
 
     // Build query for message_templates:
-    // Fetches:
-    // 1. Templates belonging to the active project
-    // 2. Common templates (project_id IS NULL)
+    // Fetches templates strictly belonging to the active project
     let query = supabase.from('message_templates').select('*');
 
     if (accountId) {
@@ -50,8 +48,10 @@ export async function GET(request: Request) {
     }
 
     if (activeProjectId) {
-      query = query.or(`project_id.eq.${activeProjectId},project_id.is.null`);
-    } else if (!isSuperAdmin) {
+      query = query.eq('project_id', activeProjectId);
+    } else if (isSuperAdmin) {
+      // Super admin without active project can view all
+    } else {
       query = query.is('project_id', null);
     }
 
@@ -93,7 +93,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { starter_slug, make_common } = body;
+    const { starter_slug, make_common, projectId: bodyProjectId } = body;
 
     if (!starter_slug) {
       return NextResponse.json({ error: 'starter_slug is required' }, { status: 400 });
@@ -117,15 +117,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Account not found for user' }, { status: 400 });
     }
 
-    let targetProjectId: string | null = null;
-    if (!make_common) {
+    let targetProjectId: string | null = bodyProjectId || null;
+    if (!targetProjectId && !make_common) {
       try {
         const proj = await getCurrentProject();
         targetProjectId = proj?.projectId ?? null;
       } catch {
         targetProjectId = null;
       }
-    } else if (!isSuperAdmin) {
+    } else if (make_common && !isSuperAdmin) {
       return NextResponse.json(
         { error: 'Only super admins can install templates as Common Templates for all projects' },
         { status: 403 }

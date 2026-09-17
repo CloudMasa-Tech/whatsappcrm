@@ -305,6 +305,7 @@ export function TemplateManager() {
         body: JSON.stringify({
           starter_slug: starter.slug,
           make_common: makeCommon,
+          projectId: activeProjectId,
         }),
       });
       const data = await res.json();
@@ -322,6 +323,11 @@ export function TemplateManager() {
   const fetchTemplates = useCallback(async () => {
     try {
       setLoading(true);
+      if (!activeProjectId) {
+        setTemplates([]);
+        setLoading(false);
+        return;
+      }
       const res = await fetch(`/api/whatsapp/templates?project_id=${activeProjectId || ''}`);
       if (res.ok) {
         const json = await res.json();
@@ -329,9 +335,7 @@ export function TemplateManager() {
       } else {
         let query = supabase.from('message_templates').select('*');
         if (activeProjectId) {
-          query = query.or(`project_id.eq.${activeProjectId},project_id.is.null`);
-        } else if (user?.id) {
-          query = query.or(`user_id.eq.${user.id},project_id.is.null`);
+          query = query.eq('project_id', activeProjectId);
         }
         const { data, error } = await query.order('created_at', { ascending: false });
         if (error) throw error;
@@ -343,7 +347,7 @@ export function TemplateManager() {
     } finally {
       setLoading(false);
     }
-  }, [activeProjectId, supabase, user?.id, t]);
+  }, [activeProjectId, supabase, t]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -380,6 +384,7 @@ export function TemplateManager() {
       buttons: form.buttons.length > 0 ? form.buttons : undefined,
       sample_values:
         Object.keys(sample_values).length > 0 ? sample_values : undefined,
+      projectId: activeProjectId,
     };
   }
 

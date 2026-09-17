@@ -64,7 +64,7 @@ COPY --from=build --chown=node:node /app/public ./public
 COPY --from=build --chown=node:node /app/next.config.ts ./
 COPY --from=build --chown=node:node /app/messages ./messages
 
-RUN mkdir -p /app/.next/cache && chown -R node:node /app
+RUN mkdir -p /app/.next/cache && chown -R node:node /app/.next
 
 EXPOSE 3000
 

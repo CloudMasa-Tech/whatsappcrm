@@ -99,7 +99,7 @@ export function ConversationList({
   resyncToken = 0,
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
-  const { user, canManageMembers, isSuperAdmin } = useAuth();
+  const { user, canManageMembers, isSuperAdmin, activeProjectId } = useAuth();
   const isProjectAdmin = canManageMembers || isSuperAdmin;
 
   const STATUS_FILTER_OPTIONS: { label: string; value: StatusFilter }[] = useMemo(() => [
@@ -150,6 +150,10 @@ export function ConversationList({
         .select(CONVERSATION_SELECT)
         .order("last_message_at", { ascending: false });
 
+      if (activeProjectId) {
+        query = query.eq("project_id", activeProjectId);
+      }
+
       // If non-admin agent, query conversations assigned to them OR unassigned
       if (!isProjectAdmin && user) {
         query = query.or(`assigned_agent_id.eq.${user.id},assigned_agent_id.is.null`);
@@ -171,17 +175,59 @@ export function ConversationList({
         return;
       }
 
-      onConversationsLoadedRef.current(normalizeConversations(data ?? []));
+      let conversationList = data ?? [];
+
+      // Auto-sync: If there are project contacts without a conversation row, create them
+      if (activeProjectId && user) {
+        try {
+          const { data: projectContacts } = await supabase
+            .from("contacts")
+            .select("id, name, phone, channel, created_at, account_id")
+            .eq("project_id", activeProjectId);
+
+          if (projectContacts && projectContacts.length > 0) {
+            const existingContactIds = new Set(conversationList.map((c: any) => c.contact_id));
+            const missing = projectContacts.filter((c) => !existingContactIds.has(c.id));
+
+            if (missing.length > 0 && !cancelled) {
+              const newConvRows = missing.map((c) => ({
+                user_id: user.id,
+                account_id: c.account_id,
+                project_id: activeProjectId,
+                contact_id: c.id,
+                channel: c.channel || (c.phone?.startsWith("ig_") ? "instagram" : "whatsapp"),
+                status: "open" as const,
+                unread_count: 0,
+                last_message_text: null,
+                last_message_at: c.created_at || new Date().toISOString(),
+              }));
+
+              const { data: createdConvs } = await supabase
+                .from("conversations")
+                .insert(newConvRows)
+                .select(CONVERSATION_SELECT);
+
+              if (createdConvs && createdConvs.length > 0) {
+                conversationList = [...conversationList, ...createdConvs];
+              }
+            }
+          }
+        } catch (syncErr) {
+          console.warn("[conversation-list] contact sync notice:", syncErr);
+        }
+      }
+
+      onConversationsLoadedRef.current(normalizeConversations(conversationList));
       setLoading(false);
     })();
 
     return () => {
       cancelled = true;
     };
-    // `resyncToken` is included so the parent can force a refetch when
-    // the realtime channel reconnects or the tab regains focus — catches
-    // up on any events sent while the WS was disconnected or throttled.
-  }, [resyncToken, user, isProjectAdmin]);
+    // `resyncToken` and `activeProjectId` force a refetch when the
+    // active project changes, the realtime channel reconnects, or the tab
+    // regains focus.
+  }, [resyncToken, user, isProjectAdmin, activeProjectId]);
 
   // Tag definitions for the filter picker — loaded once so labels/colours
   // stay stable regardless of which conversations happen to be loaded.
@@ -189,13 +235,15 @@ export function ConversationList({
     const supabase = createClient();
     let cancelled = false;
     (async () => {
-      const { data } = await supabase.from("tags").select("*").order("name");
+      let q = supabase.from("tags").select("*").order("name");
+      if (activeProjectId) q = q.eq("project_id", activeProjectId);
+      const { data } = await q;
       if (!cancelled && data) setTags(data as Tag[]);
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeProjectId]);
 
   // Company options are derived from the loaded conversations — there's no
   // separate companies table, and only companies with a live conversation

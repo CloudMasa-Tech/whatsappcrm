@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import { MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,6 +48,7 @@ export function Step4ScheduleSend({
   progress,
 }: Step4Props) {
   const t = useTranslations('Broadcasts.wizard');
+  const { activeProjectId } = useAuth();
   const [showConfirm, setShowConfirm] = useState(false);
   const [estimatedReach, setEstimatedReach] = useState<number>(0);
   const [loadingReach, setLoadingReach] = useState(true);
@@ -58,18 +60,24 @@ export function Step4ScheduleSend({
         const supabase = createClient();
 
         if (audience.type === 'all') {
-          const { count } = await supabase
+          let query = supabase
             .from('contacts')
             .select('*', { count: 'exact', head: true });
+          if (activeProjectId) {
+            query = query.eq('project_id', activeProjectId);
+          }
+          const { count } = await query;
           setEstimatedReach(count ?? 0);
         } else if (audience.type === 'tags' && audience.tagIds && audience.tagIds.length > 0) {
-          const { data: contactTags } = await supabase
-            .from('contact_tags')
-            .select('contact_id')
-            .in('tag_id', audience.tagIds);
-
-          const uniqueIds = new Set((contactTags ?? []).map((ct) => ct.contact_id));
-          setEstimatedReach(uniqueIds.size);
+          let query = supabase
+            .from('contacts')
+            .select('id, contact_tags!inner(tag_id)', { count: 'exact', head: true })
+            .in('contact_tags.tag_id', audience.tagIds);
+          if (activeProjectId) {
+            query = query.eq('project_id', activeProjectId);
+          }
+          const { count } = await query;
+          setEstimatedReach(count ?? 0);
         } else if (audience.type === 'csv' && audience.csvContacts) {
           setEstimatedReach(audience.csvContacts.length);
         } else {
@@ -81,7 +89,7 @@ export function Step4ScheduleSend({
     }
 
     calculateReach();
-  }, [audience]);
+  }, [audience, activeProjectId]);
 
   const audienceLabel =
     audience.type === 'all'

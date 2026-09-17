@@ -4,6 +4,7 @@ import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
+import { ensureContactDeal } from '@/lib/deals/auto-lead'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
@@ -1026,12 +1027,22 @@ async function findOrCreateContact(
   )
 
   if (existingContact) {
-    // Update name if it changed
-    if (name && name !== existingContact.name) {
-      await supabaseAdmin()
-        .from('contacts')
-        .update({ name, updated_at: new Date().toISOString() })
-        .eq('id', existingContact.id)
+    const cleanPhoneDigits = phone.replace(/\D/g, '')
+    const cleanExistingNameDigits = existingContact.name ? existingContact.name.replace(/\D/g, '') : ''
+    const isExistingNamePhone =
+      !existingContact.name ||
+      existingContact.name === phone ||
+      existingContact.name === existingContact.phone ||
+      cleanExistingNameDigits === cleanPhoneDigits
+
+    if (name && name.trim() && name.trim() !== phone) {
+      const newName = name.trim()
+      if (isExistingNamePhone || (existingContact.name !== newName && !/^\+?[\d\s\-()]+$/.test(newName))) {
+        await supabaseAdmin()
+          .from('contacts')
+          .update({ name: newName, updated_at: new Date().toISOString() })
+          .eq('id', existingContact.id)
+      }
     }
     return { contact: existingContact, wasCreated: false }
   }
@@ -1047,7 +1058,7 @@ async function findOrCreateContact(
       project_id: projectId,
       user_id: configOwnerUserId,
       phone,
-      name: name || phone,
+      name: name || null,
     })
     .select()
     .single()
@@ -1063,6 +1074,17 @@ async function findOrCreateContact(
     }
     console.error('Error creating contact:', createError)
     return null
+  }
+
+  if (newContact) {
+    void ensureContactDeal(supabaseAdmin(), {
+      contactId: newContact.id,
+      projectId,
+      accountId,
+      userId: configOwnerUserId,
+      name,
+      phone,
+    })
   }
 
   return { contact: newContact, wasCreated: true }

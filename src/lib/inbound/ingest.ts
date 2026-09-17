@@ -25,6 +25,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { findExistingContact, isUniqueViolation } from "@/lib/contacts/dedupe";
 import { normalizePhone } from "@/lib/whatsapp/phone-utils";
+import { ensureContactDeal } from "@/lib/deals/auto-lead";
 import { runAutomationsForTrigger } from "@/lib/automations/engine";
 import { dispatchInboundToFlows } from "@/lib/flows/engine";
 import { dispatchInboundToAiReply } from "@/lib/ai/auto-reply";
@@ -286,16 +287,22 @@ async function resolveContact(
   // different customer relationship and must not be reused here.
   const existing = await findExistingContact(db, accountId, phone, projectId);
   if (existing) {
-    if (
-      name &&
-      name.trim() &&
-      name !== phone &&
-      (!existing.name || existing.name === phone || existing.name.startsWith("+"))
-    ) {
-      await db
-        .from("contacts")
-        .update({ name: name.trim(), updated_at: new Date().toISOString() })
-        .eq("id", existing.id);
+    const cleanPhoneDigits = phone.replace(/\D/g, '');
+    const cleanExistingNameDigits = existing.name ? existing.name.replace(/\D/g, '') : '';
+    const isExistingNamePhone =
+      !existing.name ||
+      existing.name === phone ||
+      existing.name === existing.phone ||
+      cleanExistingNameDigits === cleanPhoneDigits;
+
+    if (name && name.trim() && name.trim() !== phone) {
+      const newName = name.trim();
+      if (isExistingNamePhone || (existing.name !== newName && !/^\+?[\d\s\-()]+$/.test(newName))) {
+        await db
+          .from("contacts")
+          .update({ name: newName, updated_at: new Date().toISOString() })
+          .eq("id", existing.id);
+      }
     }
     return {
       id: existing.id,
@@ -316,7 +323,7 @@ async function resolveContact(
       project_id: projectId,
       user_id: ownerUserId,
       phone,
-      name: name || phone,
+      name: name || null,
     })
     .select("id, user_id")
     .single();
@@ -333,6 +340,16 @@ async function resolveContact(
     console.error("[ingest] contact insert failed:", error);
     return null;
   }
+
+  // Auto-create lead deal in pipeline for new contact
+  void ensureContactDeal(db, {
+    contactId: created.id as string,
+    projectId,
+    accountId,
+    userId: ownerUserId,
+    name,
+    phone,
+  });
 
   return { id: created.id as string, userId: created.user_id as string };
 }

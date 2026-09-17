@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { Contact, MessageTemplate } from '@/types';
 
-export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
+export type CustomFieldOperator = 'is' | 'is_not' | 'contains' | 'has_value';
 
 export interface CustomFieldFilter {
   fieldId: string;
@@ -156,7 +156,11 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     let contacts: Contact[] = [];
 
     if (audience.type === 'all') {
-      const { data, error } = await supabase.from('contacts').select('*');
+      let query = supabase.from('contacts').select('*');
+      if (activeProjectId) {
+        query = query.eq('project_id', activeProjectId);
+      }
+      const { data, error } = await query;
       if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
       contacts = data ?? [];
     } else if (
@@ -176,15 +180,19 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         const uniqueContactIds = [
           ...new Set(contactTags.map((ct) => ct.contact_id)),
         ];
-        const { data, error } = await supabase
+        let query = supabase
           .from('contacts')
           .select('*')
           .in('id', uniqueContactIds);
+        if (activeProjectId) {
+          query = query.eq('project_id', activeProjectId);
+        }
+        const { data, error } = await query;
         if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
         contacts = data ?? [];
       }
     } else if (audience.type === 'custom_field' && audience.customField) {
-      contacts = await resolveCustomFieldAudience(supabase, audience.customField);
+      contacts = await resolveCustomFieldAudience(supabase, audience.customField, activeProjectId);
     } else if (audience.type === 'csv' && audience.csvContacts) {
       contacts = await upsertCsvContacts(supabase, audience.csvContacts);
     }
@@ -289,6 +297,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
   async function resolveCustomFieldAudience(
     supabase: ReturnType<typeof createClient>,
     filter: CustomFieldFilter,
+    projectId?: string | null,
   ): Promise<Contact[]> {
     const { fieldId, operator, value } = filter;
 
@@ -303,6 +312,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     if (operator === 'is') query = query.eq('value', value);
     else if (operator === 'is_not') query = query.neq('value', value);
     else if (operator === 'contains') query = query.ilike('value', `%${value}%`);
+    else if (operator === 'has_value') query = query.neq('value', '');
 
     const { data: matches, error: matchErr } = await query;
     if (matchErr)
@@ -311,10 +321,14 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     const contactIds = [...new Set((matches ?? []).map((m) => m.contact_id))];
     if (contactIds.length === 0) return [];
 
-    const { data, error } = await supabase
+    let contactsQuery = supabase
       .from('contacts')
       .select('*')
       .in('id', contactIds);
+    if (projectId) {
+      contactsQuery = contactsQuery.eq('project_id', projectId);
+    }
+    const { data, error } = await contactsQuery;
     if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
     return data ?? [];
   }
@@ -481,6 +495,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
               recipients: apiRecipients,
               template_name: payload.template.name,
               template_language: payload.template.language ?? 'en_US',
+              projectId: activeProjectId,
             }),
           });
 

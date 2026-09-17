@@ -113,11 +113,11 @@ export function isRecipientNotAllowedError(message: string): boolean {
  */
 export function formatDisplayPhone(phone?: string | null): string {
   if (!phone) return '';
-  // Strip JID suffix if present
-  let clean = phone.replace(/@(s\.whatsapp\.net|c\.us|g\.us).*$/i, '').trim();
+  // Strip JID suffix if present (e.g. 919876543210@s.whatsapp.net -> 919876543210)
+  const clean = phone.replace(/@(s\.whatsapp\.net|c\.us|g\.us).*$/i, '').trim();
 
-  // If already formatted with spaces or dashes and starts with +, return cleaned
-  if (clean.startsWith('+') && /\s|-/.test(clean)) {
+  // If already starts with +, preserve the full exact digits without masking or altering
+  if (clean.startsWith('+')) {
     return clean;
   }
 
@@ -125,23 +125,7 @@ export function formatDisplayPhone(phone?: string | null): string {
   const digits = clean.replace(/\D/g, '');
   if (!digits) return clean;
 
-  // Format common lengths
-  if (digits.length === 10) {
-    // Local 10-digit number
-    return `+${digits.slice(0, 5)} ${digits.slice(5)}`;
-  } else if (digits.length === 11 && digits.startsWith('1')) {
-    // US/Canada: +1 (XXX) XXX-XXXX
-    return `+1 ${digits.slice(1, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
-  } else if (digits.length === 12 && digits.startsWith('91')) {
-    // India: +91 XXXXX XXXXX
-    return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
-  } else if (digits.length >= 11 && digits.length <= 15) {
-    // Generic international: +CC XXXX XXXXX
-    const ccLen = digits.length > 12 ? 3 : 2;
-    return `+${digits.slice(0, ccLen)} ${digits.slice(ccLen, ccLen + 4)} ${digits.slice(ccLen + 4)}`;
-  }
-
-  return clean.startsWith('+') ? clean : `+${digits}`;
+  return `+${digits}`;
 }
 
 export interface ContactDisplayInfo {

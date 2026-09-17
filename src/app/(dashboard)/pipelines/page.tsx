@@ -50,7 +50,8 @@ export default function PipelinesPage() {
   const supabase = createClient();
   const canEditSettings = useCan("edit-settings");
   const canCreateDeals = useCan("send-messages");
-  const { accountId, activeProjectId } = useAuth();
+  const { user, accountId, activeProjectId, canManageMembers, isSuperAdmin } = useAuth();
+  const isProjectAdmin = canManageMembers || isSuperAdmin;
 
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>("");
@@ -77,20 +78,35 @@ export default function PipelinesPage() {
 
   const filteredDeals = useMemo(() => {
     return deals.filter((deal) => {
+      // 1. Role-based visibility check:
+      // Non-admin agents only see deals assigned to them or created by them
+      if (!isProjectAdmin && user) {
+        const isAssignedToMe = deal.assigned_to === user.id || deal.user_id === user.id;
+        if (!isAssignedToMe) return false;
+      }
+
+      // 2. Search filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
-        const matchTitle = deal.title.toLowerCase().includes(q);
+        const matchTitle = deal.title?.toLowerCase().includes(q);
         const matchContact =
           deal.contact?.name?.toLowerCase().includes(q) ||
           deal.contact?.phone?.toLowerCase().includes(q);
         if (!matchTitle && !matchContact) return false;
       }
-      if (selectedAssignee !== "all") {
-        if (deal.assigned_to !== selectedAssignee) return false;
+
+      // 3. Assignee filter (for admins)
+      if (isProjectAdmin && selectedAssignee !== "all") {
+        if (selectedAssignee === "unassigned") {
+          if (deal.assigned_to) return false;
+        } else if (deal.assigned_to !== selectedAssignee) {
+          return false;
+        }
       }
+
       return true;
     });
-  }, [deals, searchQuery, selectedAssignee]);
+  }, [deals, searchQuery, selectedAssignee, isProjectAdmin, user]);
 
   // Dialog / sheet state
   const [newPipelineOpen, setNewPipelineOpen] = useState(false);
@@ -142,14 +158,128 @@ export default function PipelinesPage() {
 
   const loadDeals = useCallback(
     async (pipelineId: string) => {
-      const { data } = await supabase
+      // 1. Fetch conversations for this project/account to get contact assignment map
+      let convQuery = supabase
+        .from("conversations")
+        .select("contact_id, assigned_agent_id");
+      if (activeProjectId) {
+        convQuery = convQuery.eq("project_id", activeProjectId);
+      } else if (accountId) {
+        convQuery = convQuery.eq("account_id", accountId);
+      }
+      const { data: convs } = await convQuery;
+      const contactAssigneeMap = new Map<string, string>();
+      const agentAssignedContactIds = new Set<string>();
+
+      (convs ?? []).forEach((c: any) => {
+        if (c.contact_id && c.assigned_agent_id) {
+          contactAssigneeMap.set(c.contact_id, c.assigned_agent_id);
+          if (user && c.assigned_agent_id === user.id) {
+            agentAssignedContactIds.add(c.contact_id);
+          }
+        }
+      });
+
+      // 2. Fetch current deals for this pipeline
+      const { data: dealsData } = await supabase
         .from("deals")
         .select("*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)")
         .eq("pipeline_id", pipelineId)
         .order("created_at", { ascending: false });
-      return (data ?? []) as Deal[];
+
+      let currentDeals = (dealsData ?? []) as Deal[];
+
+      // 3. Fetch contacts for this project (or account) to ensure assigned contacts are listed as leads
+      let contactsQuery = supabase
+        .from("contacts")
+        .select("id, name, phone, account_id, user_id, project_id");
+      if (activeProjectId) {
+        contactsQuery = contactsQuery.eq("project_id", activeProjectId);
+      } else if (accountId) {
+        contactsQuery = contactsQuery.eq("account_id", accountId);
+      }
+      const { data: projectContacts } = await contactsQuery;
+
+      if (projectContacts && projectContacts.length > 0) {
+        // Find the first stage (Lead stage, lowest position)
+        const { data: stageList } = await supabase
+          .from("pipeline_stages")
+          .select("id, position")
+          .eq("pipeline_id", pipelineId)
+          .order("position", { ascending: true })
+          .limit(1);
+
+        const firstStageId = stageList?.[0]?.id;
+
+        if (firstStageId) {
+          const existingContactIds = new Set(
+            currentDeals.map((d) => d.contact_id).filter(Boolean)
+          );
+
+          // For admins, sync all missing contacts. For agents, only sync contacts assigned to them.
+          const missingContacts = projectContacts.filter((c) => {
+            if (existingContactIds.has(c.id)) return false;
+            if (!isProjectAdmin && user) {
+              return agentAssignedContactIds.has(c.id) || c.user_id === user.id;
+            }
+            return true;
+          });
+
+          if (missingContacts.length > 0) {
+            const toInsert = missingContacts.map((c) => ({
+              user_id: c.user_id || user?.id,
+              account_id: c.account_id || accountId,
+              project_id: c.project_id || activeProjectId || null,
+              pipeline_id: pipelineId,
+              stage_id: firstStageId,
+              contact_id: c.id,
+              assigned_to: contactAssigneeMap.get(c.id) || (!isProjectAdmin && user ? user.id : null),
+              title: c.name || c.phone || "New Lead",
+              value: 0,
+              currency: "INR",
+              status: "open",
+            }));
+
+            const { error: insertErr } = await supabase.from("deals").insert(toInsert);
+            if (!insertErr) {
+              const { data: refetchedDeals } = await supabase
+                .from("deals")
+                .select("*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)")
+                .eq("pipeline_id", pipelineId)
+                .order("created_at", { ascending: false });
+              currentDeals = (refetchedDeals ?? []) as Deal[];
+            }
+          }
+        }
+      }
+
+      // 4. Backfill any deals whose assigned_to is null but contact is assigned in conversations
+      const dealsToBackfill = currentDeals.filter(
+        (d) => !d.assigned_to && d.contact_id && contactAssigneeMap.has(d.contact_id)
+      );
+      if (dealsToBackfill.length > 0) {
+        for (const d of dealsToBackfill) {
+          const newAssignee = contactAssigneeMap.get(d.contact_id!);
+          if (newAssignee) {
+            d.assigned_to = newAssignee;
+            void supabase.from("deals").update({ assigned_to: newAssignee }).eq("id", d.id);
+          }
+        }
+      }
+
+      // 5. If non-admin agent, filter strictly to deals assigned to them
+      if (!isProjectAdmin && user) {
+        currentDeals = currentDeals.filter(
+          (d) =>
+            d.assigned_to === user.id ||
+            d.user_id === user.id ||
+            (d.contact_id && agentAssignedContactIds.has(d.contact_id))
+        );
+      }
+
+      return currentDeals;
     },
-    [supabase],
+    [supabase, activeProjectId, accountId, user?.id, isProjectAdmin],
   );
 
   const seedDefaultPipeline = useCallback(async (): Promise<Pipeline | null> => {
@@ -432,26 +562,34 @@ export default function PipelinesPage() {
                 />
               </div>
 
-              {/* Assignee Filter */}
-              {assignees.length > 0 && (
+              {/* Assignee Filter for Admins, or badge for Agents */}
+              {isProjectAdmin ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-border bg-card text-xs text-muted-foreground hover:text-foreground transition-colors">
                     <UserCheck className="h-3.5 w-3.5" />
                     <span>
                       {selectedAssignee === "all"
                         ? "All Assignees"
+                        : selectedAssignee === "unassigned"
+                        ? "Unassigned"
                         : assignees.find((a) => a.id === selectedAssignee)?.name || "Assignee"}
                     </span>
                     <ChevronDown className="h-3 w-3" />
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-44 border-border bg-popover text-popover-foreground">
+                  <DropdownMenuContent align="start" className="w-48 border-border bg-popover text-popover-foreground">
                     <DropdownMenuItem
                       onClick={() => setSelectedAssignee("all")}
                       className="text-xs cursor-pointer"
                     >
                       All Assignees
                     </DropdownMenuItem>
-                    <DropdownMenuSeparator className="bg-border" />
+                    <DropdownMenuItem
+                      onClick={() => setSelectedAssignee("unassigned")}
+                      className="text-xs cursor-pointer"
+                    >
+                      Unassigned
+                    </DropdownMenuItem>
+                    {assignees.length > 0 && <DropdownMenuSeparator className="bg-border" />}
                     {assignees.map((a) => (
                       <DropdownMenuItem
                         key={a.id}
@@ -463,9 +601,14 @@ export default function PipelinesPage() {
                     ))}
                   </DropdownMenuContent>
                 </DropdownMenu>
+              ) : (
+                <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-border bg-card text-xs text-muted-foreground font-medium">
+                  <UserCheck className="h-3.5 w-3.5 text-primary" />
+                  <span>My Assigned Leads</span>
+                </div>
               )}
 
-              {(searchQuery || selectedAssignee !== "all") && (
+              {(searchQuery || (isProjectAdmin && selectedAssignee !== "all")) && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -481,7 +624,13 @@ export default function PipelinesPage() {
             </div>
 
             <div className="text-xs text-muted-foreground font-medium">
-              {filteredDeals.length} of {deals.length} {deals.length === 1 ? "deal" : "deals"}
+              {isProjectAdmin
+                ? searchQuery || selectedAssignee !== "all"
+                  ? `${filteredDeals.length} of ${deals.length} deals`
+                  : `${deals.length} ${deals.length === 1 ? "deal" : "deals"}`
+                : searchQuery
+                ? `${filteredDeals.length} of ${deals.length} deals`
+                : `${filteredDeals.length} assigned ${filteredDeals.length === 1 ? "lead" : "leads"}`}
             </div>
           </div>
 

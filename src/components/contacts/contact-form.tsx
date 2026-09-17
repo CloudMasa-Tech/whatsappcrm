@@ -4,8 +4,9 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { addContactTag, deleteContactTag } from '@/lib/contacts/tag-api';
+import { ensureContactDeal } from '@/lib/deals/auto-lead';
 import { toast } from 'sonner';
-import type { Contact, Tag, ContactTag } from '@/types';
+import type { Contact, Tag, ContactTag, CustomField } from '@/types';
 import {
   findExistingContact,
   isExactMatch,
@@ -24,7 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, AlertTriangle } from 'lucide-react';
+import { Loader2, AlertTriangle, Sparkles } from 'lucide-react';
 import { Instagram } from '@/components/icons/instagram';
 import { useTranslations } from 'next-intl';
 
@@ -72,6 +73,10 @@ export function ContactForm({
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [loadingTags, setLoadingTags] = useState(false);
 
+  const [customFields, setCustomFields] = useState<CustomField[]>([]);
+  const [customValues, setCustomValues] = useState<Record<string, string>>({});
+  const [loadingCustomFields, setLoadingCustomFields] = useState(false);
+
   useEffect(() => {
     if (open) {
       setName(contact?.name ?? '');
@@ -81,9 +86,40 @@ export function ContactForm({
       setInstagramUsername(contact?.instagram_username ?? '');
       setSelectedTagIds(contactTags.map((ct) => ct.tag_id));
       setDupMatch(null);
+      setCustomValues({});
       fetchTags();
+      fetchCustomFieldsAndValues();
     }
   }, [open, contact]);
+
+  async function fetchCustomFieldsAndValues() {
+    setLoadingCustomFields(true);
+    try {
+      let q = supabase.from('custom_fields').select('*').order('field_name');
+      if (activeProjectId) {
+        q = q.eq('project_id', activeProjectId);
+      }
+      const { data: fields } = await q;
+      setCustomFields((fields as CustomField[]) ?? []);
+
+      if (contact?.id) {
+        const { data: values } = await supabase
+          .from('contact_custom_values')
+          .select('*')
+          .eq('contact_id', contact.id);
+
+        if (values) {
+          const map: Record<string, string> = {};
+          values.forEach((v) => {
+            map[v.custom_field_id] = v.value ?? '';
+          });
+          setCustomValues(map);
+        }
+      }
+    } finally {
+      setLoadingCustomFields(false);
+    }
+  }
 
   // Look up an existing contact with this number (new contacts only).
   // Runs on blur so we don't query on every keystroke.
@@ -184,6 +220,30 @@ export function ContactForm({
           .single();
         if (error) throw error;
         contactId = data.id;
+
+        // Auto-create conversation so newly added contact immediately shows in Inbox
+        if (contactId && activeProjectId) {
+          const { data: existingConv } = await supabase
+            .from('conversations')
+            .select('id')
+            .eq('project_id', activeProjectId)
+            .eq('contact_id', contactId)
+            .maybeSingle();
+
+          if (!existingConv) {
+            await supabase.from('conversations').insert({
+              user_id: user.id,
+              account_id: accountId,
+              project_id: activeProjectId,
+              contact_id: contactId,
+              channel: cleanIg && !phone.trim() ? 'instagram' : 'whatsapp',
+              status: 'open',
+              last_message_text: null,
+              last_message_at: new Date().toISOString(),
+              unread_count: 0,
+            });
+          }
+        }
       }
 
       // Sync tags
@@ -198,6 +258,37 @@ export function ContactForm({
         }
         for (const tagId of toAdd) {
           await addContactTag(contactId, tagId);
+        }
+
+        // Sync custom field values
+        await supabase
+          .from('contact_custom_values')
+          .delete()
+          .eq('contact_id', contactId);
+
+        const customEntries = Object.entries(customValues).filter(
+          ([, val]) => val && val.trim().length > 0
+        );
+        if (customEntries.length > 0) {
+          const toInsert = customEntries.map(([fId, val]) => ({
+            contact_id: contactId,
+            custom_field_id: fId,
+            value: val.trim(),
+          }));
+          await supabase.from('contact_custom_values').insert(toInsert);
+        }
+
+        // Auto-create deal/lead in pipeline for newly created contact
+        if (!isEdit && contactId) {
+          await ensureContactDeal(supabase, {
+            contactId,
+            projectId: activeProjectId,
+            accountId,
+            userId: user.id,
+            name: name.trim() || null,
+            phone: phone.trim(),
+            title: name.trim() || phone.trim() || 'New Lead',
+          });
         }
       }
 
@@ -230,7 +321,7 @@ export function ContactForm({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-popover border-border text-popover-foreground sm:max-w-md">
+      <DialogContent className="bg-popover border-border text-popover-foreground sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-popover-foreground">
             {isEdit ? t('editTitle') : t('addTitle')}
@@ -346,6 +437,35 @@ export function ContactForm({
               />
             </div>
           </div>
+
+          {/* Custom Fields Section */}
+          {customFields.length > 0 && (
+            <div className="space-y-3 rounded-lg border border-border/70 bg-card/30 p-3">
+              <Label className="text-muted-foreground flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider">
+                <Sparkles className="h-3.5 w-3.5 text-primary" /> Custom Fields
+              </Label>
+              <div className="space-y-2.5">
+                {customFields.map((field) => (
+                  <div key={field.id} className="space-y-1">
+                    <label className="text-xs text-muted-foreground block font-medium">
+                      {field.field_name}
+                    </label>
+                    <Input
+                      value={customValues[field.id] ?? ''}
+                      onChange={(e) =>
+                        setCustomValues((prev) => ({
+                          ...prev,
+                          [field.id]: e.target.value,
+                        }))
+                      }
+                      placeholder={`Enter ${field.field_name}...`}
+                      className="h-8 text-xs bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label className="text-muted-foreground">{t('tagsLabel')}</Label>

@@ -75,6 +75,18 @@ export async function POST(request: Request) {
       );
     }
 
+    // Sync deal assignment if this conversation is associated with a contact
+    if (conv.contact_id) {
+      try {
+        await admin
+          .from("deals")
+          .update({ assigned_to: newAgentId })
+          .eq("contact_id", conv.contact_id);
+      } catch (dealAssignErr) {
+        console.warn("[POST /api/inbox/assign] sync deal error:", dealAssignErr);
+      }
+    }
+
     // 3. If assigned to a teammate (and not self-assigned), create notification
     if (newAgentId && newAgentId !== ctx.userId) {
       // Resolve contact display name

@@ -101,13 +101,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Resolve the caller's account_id — whatsapp_config + the
-    // message_templates row are account-scoped post-multi-user.
-    // Resolve the caller's account AND active project. Post-042 the
-    // project is the tenancy key on every domain row, and this route
-    // writes through the service-role client, so RLS will not catch a
-    // missing or wrong scope.
-    const { accountId, projectId } = await getCurrentProject();
+    let payload: TemplatePayload & { projectId?: string; project_id?: string }
+    try {
+      payload = (await request.json()) as TemplatePayload & { projectId?: string; project_id?: string }
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 })
+    }
+
+    const { accountId, projectId: sessionProjectId } = await getCurrentProject();
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
@@ -115,11 +116,12 @@ export async function POST(request: Request) {
       )
     }
 
-    let payload: TemplatePayload
-    try {
-      payload = (await request.json()) as TemplatePayload
-    } catch {
-      return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 })
+    const projectId = payload.projectId || payload.project_id || sessionProjectId;
+    if (!projectId) {
+      return NextResponse.json(
+        { error: 'No active project selected.' },
+        { status: 400 },
+      )
     }
 
     if (payload.category === 'Authentication') {

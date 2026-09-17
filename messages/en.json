@@ -777,8 +777,8 @@
         "uploadCsv": "Upload CSV File",
         "csvFormatDesc": "Must contain a 'phone' column (E.164 format). 'name' column is optional.",
         "csvContactsFound": "{count} valid contact(s) found in CSV.",
-        "errorLoadTags": "Failed to load tags",
-        "errorLoadFields": "Failed to load custom fields",
+        "errorLoadTags": "No tags found",
+        "errorLoadFields": "No custom fields found in this project. Create custom fields in Settings > Custom Fields to filter by custom attributes.",
         "errorCsvParse": "Could not parse CSV file.",
         "errorCsvMissingPhone": "CSV must have a 'phone' column."
       },

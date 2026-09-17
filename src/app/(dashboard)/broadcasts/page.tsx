@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/table';
 import { Radio, Plus, Loader2 } from 'lucide-react';
 import { useCan } from '@/hooks/use-can';
+import { useAuth } from '@/hooks/use-auth';
 import { GatedButton } from '@/components/ui/gated-button';
 import { getBroadcastStatus } from '@/lib/broadcast-status';
 import { useTranslations } from 'next-intl';
@@ -61,6 +62,7 @@ export default function BroadcastsPage() {
   const router = useRouter();
   const t = useTranslations('Broadcasts.page');
   const tStatus = useTranslations('Broadcasts.status');
+  const { activeProjectId } = useAuth();
   const canCreate = useCan('send-messages');
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,10 +74,16 @@ export default function BroadcastsPage() {
   async function fetchBroadcasts() {
     try {
       const supabase = createClient();
-      const { data, error: fetchError } = await supabase
+      let query = supabase
         .from('broadcasts')
         .select('*')
         .order('created_at', { ascending: false });
+
+      if (activeProjectId) {
+        query = query.eq('project_id', activeProjectId);
+      }
+
+      const { data, error: fetchError } = await query;
 
       if (fetchError) throw fetchError;
       setBroadcasts(data ?? []);
@@ -88,7 +96,7 @@ export default function BroadcastsPage() {
 
   useEffect(() => {
     fetchBroadcasts();
-  }, []);
+  }, [activeProjectId]);
 
   const anySending = useMemo(
     () => broadcasts.some((b) => b.status === 'sending'),

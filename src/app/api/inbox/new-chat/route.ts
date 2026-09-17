@@ -41,7 +41,7 @@ export async function POST(request: Request) {
       const { data: existingContact } = await ctx.supabase
         .from("contacts")
         .select("id, name, instagram_username, channel")
-        .eq("account_id", ctx.accountId)
+        .eq("project_id", ctx.projectId)
         .eq("instagram_username", cleanUsername)
         .maybeSingle();
 
@@ -149,7 +149,7 @@ export async function POST(request: Request) {
     const { data: existingContact } = await ctx.supabase
       .from("contacts")
       .select("id")
-      .eq("account_id", ctx.accountId)
+      .eq("project_id", ctx.projectId)
       .eq("phone", cleanPhone)
       .maybeSingle();
 

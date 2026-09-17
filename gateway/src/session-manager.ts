@@ -74,6 +74,12 @@ interface Session {
    * the keys the scan just produced. Every reopen path awaits this.
    */
   credsWrites: Promise<void>;
+  /** Map WhatsApp privacy LID (e.g. 14096099442766@lid) to real phone number (+919876543210). */
+  lidToPhone: Map<string, string>;
+  /** Map real phone number (+919876543210) to saved contact name from address book. */
+  phoneToName: Map<string, string>;
+  /** Map LID to saved contact name from address book. */
+  lidToName: Map<string, string>;
 }
 
 const sessions = new Map<string, Session>();
@@ -316,6 +322,81 @@ function extractMessage(message: WAMessage): ExtractedMessage | null {
   return { kind: "unknown", text: null, mimeType: null, filename: null, caption: null };
 }
 
+function extractRealPhoneNumber(jidStr: string | null | undefined): string | null {
+  if (!jidStr) return null;
+  const raw = jidStr.trim();
+  if (raw.endsWith('@lid') || raw.endsWith('@g.us') || raw === 'status@broadcast' || (raw.includes(':') && raw.includes('@lid'))) {
+    return null;
+  }
+  const normalized = jidNormalizedUser(raw);
+  if (!normalized || normalized.endsWith('@lid') || normalized.endsWith('@g.us') || normalized === 'status@broadcast') {
+    return null;
+  }
+  if (!normalized.endsWith('@s.whatsapp.net') && !normalized.endsWith('@c.us')) {
+    return null;
+  }
+  const digits = normalized.split('@')[0].replace(/\D/g, '');
+  // Standard E.164 phone numbers have 7-15 digits (typically 10-13 digits)
+  if (!digits || digits.length < 7 || digits.length > 15) {
+    return null;
+  }
+  return `+${digits}`;
+}
+
+/**
+ * Register contact metadata from Baileys to maintain LID<->Phone and Phone<->Name mappings.
+ * Prioritizes the saved contact name (`c.name` from address book) over pushName/notify.
+ */
+function registerContact(
+  session: Session,
+  c: any,
+): { phone: string; name: string | null } | null {
+  if (!c) return null;
+  const rawId = typeof c.id === "string" ? c.id.trim() : "";
+  const rawLid = typeof c.lid === "string" ? c.lid.trim() : rawId.endsWith("@lid") ? rawId : null;
+
+  const rawPn = typeof c.phoneNumber === "string" ? c.phoneNumber.trim() : null;
+  const pnJid = rawPn ? (rawPn.includes("@") ? rawPn : `${rawPn}@s.whatsapp.net`) : null;
+  const phoneJid =
+    pnJid ||
+    (!rawId.endsWith("@lid") && !rawId.endsWith("@g.us") && rawId !== "status@broadcast" ? rawId : null);
+
+  let phone = extractRealPhoneNumber(phoneJid);
+  if (!phone && rawLid) {
+    phone = session.lidToPhone.get(rawLid) || session.lidToPhone.get(jidNormalizedUser(rawLid)) || null;
+  }
+
+  // Address book saved name: c.name is the real name saved in device contacts!
+  const rawName = (c.name || c.verifiedName || c.notify || null) as string | null;
+  const savedName = rawName && typeof rawName === "string" && rawName.trim() ? rawName.trim() : null;
+
+  if (rawLid && phone) {
+    session.lidToPhone.set(rawLid, phone);
+    const norm = jidNormalizedUser(rawLid);
+    if (norm) session.lidToPhone.set(norm, phone);
+  }
+
+  if (phone && savedName) {
+    session.phoneToName.set(phone, savedName);
+  }
+
+  if (rawLid && savedName) {
+    session.lidToName.set(rawLid, savedName);
+    const norm = jidNormalizedUser(rawLid);
+    if (norm) session.lidToName.set(norm, savedName);
+  }
+
+  if (phone) {
+    const finalName =
+      savedName ||
+      session.phoneToName.get(phone) ||
+      (rawLid ? session.lidToName.get(rawLid) : null) ||
+      null;
+    return { phone, name: finalName };
+  }
+  return null;
+}
+
 async function handleInbound(
   session: Session,
   message: WAMessage,
@@ -324,15 +405,58 @@ async function handleInbound(
   // Groups and broadcasts are out of scope — the CRM models 1:1
   // customer conversations, and a group would produce contacts that
   // are not really contacts.
-  const remoteJid = message.key.remoteJid ?? "";
+  let remoteJid = message.key.remoteJid ?? "";
   if (!remoteJid || remoteJid.endsWith("@g.us") || remoteJid === "status@broadcast") {
     return;
+  }
+
+  // If remoteJid or alt keys contain real phone number, resolve it
+  let phone = extractRealPhoneNumber(remoteJid);
+  if (!phone) {
+    const alt =
+      (message.key as any).remoteJidAlt ||
+      (message.key as any).participantPn ||
+      (message.key as any).participant ||
+      (message as any).participant;
+    if (alt) {
+      phone = extractRealPhoneNumber(alt);
+    }
+  }
+  if (!phone && remoteJid.endsWith("@lid")) {
+    phone =
+      session.lidToPhone.get(remoteJid) ||
+      session.lidToPhone.get(jidNormalizedUser(remoteJid)) ||
+      null;
+  }
+
+  if (!phone) {
+    logger.warn(
+      { remoteJid, projectId: session.projectId },
+      "ignoring inbound message with non-phone or unresolved masked LID JID",
+    );
+    return;
+  }
+
+  // If remoteJid is @lid and we know the real phone, record it
+  if (remoteJid.endsWith("@lid") && phone) {
+    session.lidToPhone.set(remoteJid, phone);
+    const norm = jidNormalizedUser(remoteJid);
+    if (norm) session.lidToPhone.set(norm, phone);
+  }
+
+  // Resolve sender name: prefer saved contact name from address book, then pushName
+  const resolvedName =
+    session.phoneToName.get(phone) ||
+    (remoteJid ? session.lidToName.get(remoteJid) : null) ||
+    (message.pushName && message.pushName.trim() ? message.pushName.trim() : null);
+
+  if (resolvedName && !session.phoneToName.has(phone)) {
+    session.phoneToName.set(phone, resolvedName);
   }
 
   const extracted = extractMessage(message);
   if (!extracted) return;
 
-  const phone = `+${jidNormalizedUser(remoteJid).split("@")[0]}`;
   const fromMe = Boolean(message.key.fromMe);
 
   // Customer reactions: send as a dedicated reaction event so the
@@ -377,7 +501,7 @@ async function handleInbound(
       externalId: message.key.id ?? "",
       kind: extracted.kind,
       text: extracted.text,
-      senderName: message.pushName ?? null,
+      senderName: resolvedName ?? null,
       timestamp,
       fromMe,
       isHistory,
@@ -434,6 +558,8 @@ const SOCKET_EVENTS = [
   "messages.update",
   "contacts.upsert",
   "contacts.update",
+  "chats.upsert",
+  "chats.update",
 ] as const;
 
 function teardownSocket(socket: WASocket | null): void {
@@ -444,6 +570,11 @@ function teardownSocket(socket: WASocket | null): void {
     } catch {
       // Nothing registered for this event — fine.
     }
+  }
+  try {
+    (socket as any).ws?.close();
+  } catch {
+    // Already closed.
   }
   try {
     socket.end(undefined);
@@ -503,10 +634,11 @@ async function openSocket(session: Session): Promise<void> {
     version,
     auth: state,
     logger: baileysLogger,
-    markOnlineOnConnect: true,
-    syncFullHistory: false,
+    fireInitQueries: false,
+    markOnlineOnConnect: false,
+    syncFullHistory: true,
     browser: Browsers.ubuntu("Chrome"),
-    keepAliveIntervalMs: 25_000,
+    keepAliveIntervalMs: 30_000,
     connectTimeoutMs: 60_000,
     defaultQueryTimeoutMs: 60_000,
     retryRequestDelayMs: 500,
@@ -569,6 +701,12 @@ async function openSocket(session: Session): Promise<void> {
           : null;
       if (jid) {
         session.phoneNumber = `+${jid.split("@")[0]}`;
+      }
+      const userLid = (socket.user as any)?.lid || (state.creds?.me as any)?.lid || null;
+      if (userLid && session.phoneNumber) {
+        session.lidToPhone.set(userLid, session.phoneNumber);
+        const norm = jidNormalizedUser(userLid);
+        if (norm) session.lidToPhone.set(norm, session.phoneNumber);
       }
 
       await upsertSessionRow(session.projectId, session.accountId, {
@@ -645,13 +783,35 @@ async function openSocket(session: Session): Promise<void> {
 
       // Transient drop (network hiccup, WhatsApp server migration, 440 conflict, timeout).
       // Keep credentials intact and reconnect indefinitely in the background.
+      teardownSocket(socket);
       session.reconnectAttempts += 1;
       const delay = isConnectionReplaced
-        ? 5_000
+        ? 10_000
         : Math.min(
             config.reconnect.baseMs * 1.5 ** Math.min(session.reconnectAttempts, 8),
             30_000,
           );
+
+      // If WhatsApp repeatedly reports connection replaced (440), the session credentials
+      // have been superseded on the phone/server. Terminate loop and ask for re-scan.
+      if (isConnectionReplaced && session.reconnectAttempts >= 3) {
+        session.status = "logged_out";
+        sessions.delete(session.projectId);
+        await clearAuthState(session.projectId).catch(() => {});
+        await upsertSessionRow(session.projectId, session.accountId, {
+          status: "logged_out",
+          qr_code: null,
+          qr_expires_at: null,
+          phone_number: null,
+          last_disconnected_at: new Date().toISOString(),
+          last_error: "Connection was replaced by another session. Please scan the QR code again.",
+        });
+        logger.warn(
+          { projectId: session.projectId },
+          "session replaced repeatedly by WhatsApp; cleared stale keys and set to logged_out",
+        );
+        return;
+      }
 
       session.status = "connecting";
       await upsertSessionRow(session.projectId, session.accountId, {
@@ -680,15 +840,14 @@ async function openSocket(session: Session): Promise<void> {
     );
 
     const contactBatch: Array<{ phone: string; name?: string | null }> = [];
+    const seenPhones = new Set<string>();
 
     if (Array.isArray(contacts)) {
       for (const c of contacts) {
-        const jid = c.id ?? "";
-        if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") continue;
-        const phone = `+${jidNormalizedUser(jid).split("@")[0]}`;
-        const name = (c as any).name || (c as any).notify || (c as any).verifiedName || null;
-        if (name && name.trim() && !name.startsWith("+")) {
-          contactBatch.push({ phone, name: name.trim() });
+        const item = registerContact(session, c);
+        if (item && !seenPhones.has(item.phone)) {
+          seenPhones.add(item.phone);
+          contactBatch.push(item);
         }
       }
     }
@@ -696,13 +855,23 @@ async function openSocket(session: Session): Promise<void> {
     if (Array.isArray(chats)) {
       for (const chat of chats) {
         const remoteJid = chat.id ?? "";
-        if (!remoteJid || remoteJid.endsWith("@g.us") || remoteJid === "status@broadcast") {
-          continue;
+        let phone = extractRealPhoneNumber(remoteJid);
+        if (!phone && remoteJid.endsWith("@lid")) {
+          phone =
+            session.lidToPhone.get(remoteJid) ||
+            session.lidToPhone.get(jidNormalizedUser(remoteJid)) ||
+            null;
         }
-        const phone = `+${jidNormalizedUser(remoteJid).split("@")[0]}`;
-        const name = chat.name ?? null;
-        if (name && name.trim() && !name.startsWith("+")) {
-          contactBatch.push({ phone, name: name.trim() });
+        if (!phone) continue;
+        const name = (chat.name || (chat as any).verifiedName || null) as string | null;
+        const trimmedName =
+          name && name.trim() ? name.trim() : session.phoneToName.get(phone) || null;
+        if (trimmedName) {
+          session.phoneToName.set(phone, trimmedName);
+        }
+        if (!seenPhones.has(phone)) {
+          seenPhones.add(phone);
+          contactBatch.push({ phone, name: trimmedName });
         }
       }
     }
@@ -736,12 +905,9 @@ async function openSocket(session: Session): Promise<void> {
   socket.ev.on("contacts.upsert", async (contacts) => {
     const contactBatch: Array<{ phone: string; name?: string | null }> = [];
     for (const c of contacts) {
-      const jid = c.id ?? "";
-      if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") continue;
-      const phone = `+${jidNormalizedUser(jid).split("@")[0]}`;
-      const name = (c as any).name || (c as any).notify || (c as any).verifiedName || null;
-      if (name && name.trim() && !name.startsWith("+")) {
-        contactBatch.push({ phone, name: name.trim() });
+      const item = registerContact(session, c);
+      if (item) {
+        contactBatch.push(item);
       }
     }
     if (contactBatch.length > 0) {
@@ -760,12 +926,9 @@ async function openSocket(session: Session): Promise<void> {
   socket.ev.on("contacts.update", async (updates) => {
     const contactBatch: Array<{ phone: string; name?: string | null }> = [];
     for (const c of updates) {
-      const jid = c.id ?? "";
-      if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") continue;
-      const phone = `+${jidNormalizedUser(jid).split("@")[0]}`;
-      const name = (c as any).name || (c as any).notify || (c as any).verifiedName || null;
-      if (name && name.trim() && !name.startsWith("+")) {
-        contactBatch.push({ phone, name: name.trim() });
+      const item = registerContact(session, c);
+      if (item) {
+        contactBatch.push(item);
       }
     }
     if (contactBatch.length > 0) {
@@ -777,6 +940,80 @@ async function openSocket(session: Session): Promise<void> {
         },
       }).catch((err) => {
         logger.warn({ err, projectId: session.projectId }, "contacts.update sync failed");
+      });
+    }
+  });
+
+  socket.ev.on("chats.upsert", async (chats) => {
+    const contactBatch: Array<{ phone: string; name?: string | null }> = [];
+    const seenPhones = new Set<string>();
+    for (const chat of chats) {
+      const remoteJid = chat.id ?? "";
+      let phone = extractRealPhoneNumber(remoteJid);
+      if (!phone && remoteJid.endsWith("@lid")) {
+        phone =
+          session.lidToPhone.get(remoteJid) ||
+          session.lidToPhone.get(jidNormalizedUser(remoteJid)) ||
+          null;
+      }
+      if (!phone) continue;
+      const name = (chat.name || (chat as any).verifiedName || null) as string | null;
+      const trimmedName =
+        name && name.trim() ? name.trim() : session.phoneToName.get(phone) || null;
+      if (trimmedName) {
+        session.phoneToName.set(phone, trimmedName);
+      }
+      if (!seenPhones.has(phone)) {
+        seenPhones.add(phone);
+        contactBatch.push({ phone, name: trimmedName });
+      }
+    }
+    if (contactBatch.length > 0) {
+      await sendEventToCrm({
+        type: "contacts",
+        payload: {
+          projectId: session.projectId,
+          contacts: contactBatch,
+        },
+      }).catch((err) => {
+        logger.warn({ err, projectId: session.projectId }, "chats.upsert sync failed");
+      });
+    }
+  });
+
+  socket.ev.on("chats.update", async (updates) => {
+    const contactBatch: Array<{ phone: string; name?: string | null }> = [];
+    const seenPhones = new Set<string>();
+    for (const chat of updates) {
+      const remoteJid = chat.id ?? "";
+      let phone = extractRealPhoneNumber(remoteJid);
+      if (!phone && remoteJid.endsWith("@lid")) {
+        phone =
+          session.lidToPhone.get(remoteJid) ||
+          session.lidToPhone.get(jidNormalizedUser(remoteJid)) ||
+          null;
+      }
+      if (!phone) continue;
+      const name = (chat.name || (chat as any).verifiedName || null) as string | null;
+      const trimmedName =
+        name && name.trim() ? name.trim() : session.phoneToName.get(phone) || null;
+      if (trimmedName) {
+        session.phoneToName.set(phone, trimmedName);
+      }
+      if (!seenPhones.has(phone)) {
+        seenPhones.add(phone);
+        contactBatch.push({ phone, name: trimmedName });
+      }
+    }
+    if (contactBatch.length > 0) {
+      await sendEventToCrm({
+        type: "contacts",
+        payload: {
+          projectId: session.projectId,
+          contacts: contactBatch,
+        },
+      }).catch((err) => {
+        logger.warn({ err, projectId: session.projectId }, "chats.update sync failed");
       });
     }
   });
@@ -832,12 +1069,31 @@ export async function connectSession(projectId: string): Promise<{
   phoneNumber: string | null;
 }> {
   const existing = sessions.get(projectId);
-  if (existing && (existing.status === "connected" || existing.status === "qr_pending")) {
-    return {
-      projectId,
-      status: existing.status,
-      phoneNumber: existing.phoneNumber,
-    };
+  if (existing) {
+    if (existing.status === "connected" || existing.status === "qr_pending" || (existing.status === "connecting" && (existing.socket || existing.reconnectTimer))) {
+      return {
+        projectId,
+        status: existing.status,
+        phoneNumber: existing.phoneNumber,
+      };
+    }
+    // If disconnected or recovering, reuse existing Session instance
+    existing.closing = false;
+    existing.status = "connecting";
+    if (existing.reconnectTimer) {
+      clearTimeout(existing.reconnectTimer);
+      existing.reconnectTimer = null;
+    }
+    teardownSocket(existing.socket);
+    existing.socket = null;
+    try {
+      await openSocket(existing);
+    } catch (err) {
+      existing.status = "error";
+      const message = err instanceof Error ? err.message : String(err);
+      throw new SessionError("connect_failed", message, 502);
+    }
+    return { projectId, status: existing.status, phoneNumber: existing.phoneNumber };
   }
 
   const project = await loadProject(projectId);
@@ -865,6 +1121,9 @@ export async function connectSession(projectId: string): Promise<{
     reconnectTimer: null,
     closing: false,
     credsWrites: Promise.resolve(),
+    lidToPhone: new Map(),
+    phoneToName: new Map(),
+    lidToName: new Map(),
   };
   sessions.set(projectId, session);
 
@@ -967,7 +1226,7 @@ export async function sendMessage(
 ): Promise<{ externalId: string }> {
   logger.info({ projectId: params.projectId, sessionsKnown: Array.from(sessions.keys()) }, "[sendMessage] start");
   let session = sessions.get(params.projectId);
-  if (!session || !session.socket || session.status !== "connected") {
+  if (!session || (!session.socket && session.status !== "connecting")) {
     logger.info({ projectId: params.projectId, currentStatus: session?.status }, "[sendMessage] attempting connectSession");
     try {
       await connectSession(params.projectId);
@@ -1165,7 +1424,7 @@ export function startHeartbeat(): NodeJS.Timeout {
         for (const row of activeRows) {
           const pid = row.project_id as string;
           const existing = sessions.get(pid);
-          if (!existing || (!existing.socket && existing.status !== "qr_pending" && !existing.closing)) {
+          if (!existing) {
             logger.info({ projectId: pid }, "auto-healing session connection");
             void connectSession(pid).catch((err) => {
               logger.warn({ err, projectId: pid }, "auto-heal connectSession failed");
@@ -1198,6 +1457,45 @@ export async function shutdownAll(): Promise<void> {
       .eq("project_id", session.projectId);
   }
   sessions.clear();
+}
+
+export async function syncSessionContacts(
+  projectId: string,
+): Promise<{ synced: number }> {
+  const session = sessions.get(projectId);
+  if (!session || !session.socket) {
+    throw new SessionError("not_connected", "No active WhatsApp session for this project", 400);
+  }
+
+  const contactBatch: Array<{ phone: string; name?: string | null }> = [];
+  const seenPhones = new Set<string>();
+
+  for (const [phone, name] of session.phoneToName.entries()) {
+    if (!seenPhones.has(phone)) {
+      seenPhones.add(phone);
+      contactBatch.push({ phone, name });
+    }
+  }
+
+  for (const [lid, phone] of session.lidToPhone.entries()) {
+    if (phone && !seenPhones.has(phone)) {
+      seenPhones.add(phone);
+      const name = session.phoneToName.get(phone) || session.lidToName.get(lid) || null;
+      contactBatch.push({ phone, name });
+    }
+  }
+
+  if (contactBatch.length > 0) {
+    await sendEventToCrm({
+      type: "contacts",
+      payload: {
+        projectId,
+        contacts: contactBatch,
+      },
+    });
+  }
+
+  return { synced: contactBatch.length };
 }
 
 export function liveSessionCount(): number {

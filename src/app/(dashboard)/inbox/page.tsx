@@ -125,6 +125,13 @@ function InboxPageInner() {
     knownConvIdsRef.current = next;
   }, [conversations]);
 
+  // Reset active conversation when active project changes
+  useEffect(() => {
+    setActiveConversation(null);
+    setActiveContact(null);
+    setMessages([]);
+  }, [activeProjectId]);
+
   // Pull the conversation row with its `contact` joined and merge it
   // into state. Needed because Supabase Realtime payloads only carry the
   // row's own columns — a brand-new conversation arrives without a
@@ -157,6 +164,10 @@ function InboxPageInner() {
       if (!data) return;
       const fetched = normalizeConversation(data);
 
+      if (activeProjectId && fetched.project_id && fetched.project_id !== activeProjectId) {
+        return;
+      }
+
       // If user is an agent, allow conversations assigned to them or unassigned
       if (!isProjectAdmin && user && fetched.assigned_agent_id && fetched.assigned_agent_id !== user.id) {
         return;
@@ -181,7 +192,7 @@ function InboxPageInner() {
     } finally {
       hydratingConvIdsRef.current.delete(convId);
     }
-  }, [isProjectAdmin, user]);
+  }, [isProjectAdmin, user, activeProjectId]);
 
   // Handle realtime message events
   const handleMessageEvent = useCallback(
@@ -198,40 +209,44 @@ function InboxPageInner() {
             // Avoid duplicates
             if (prev.some((m) => m.id === newMsg.id)) return prev;
             // Replace optimistic message if it exists
-            const withoutOptimistic = prev.filter(
-              (m) => !m.id.startsWith("temp-")
+            const tempIndex = prev.findIndex(
+              (m) =>
+                m.id.startsWith("temp-") &&
+                m.content_text === newMsg.content_text &&
+                m.sender_type === newMsg.sender_type
             );
-            return [...withoutOptimistic, newMsg];
+            if (tempIndex !== -1) {
+              const updated = [...prev];
+              updated[tempIndex] = newMsg;
+              return updated;
+            }
+            return [...prev, newMsg];
           });
         }
 
-        // Update conversation list preview. We need to know *synchronously*
-        // whether the conv is already in state to decide between patching
-        // the preview and triggering a hydrate — see the comment on
-        // knownConvIdsRef for why a closure flag inside the updater would
-        // always read false here.
+        // Update conversation list item or hydrate if not known
         if (knownConvIdsRef.current.has(newMsg.conversation_id)) {
           setConversations((prev) =>
             prev.map((c) =>
               c.id === newMsg.conversation_id
                 ? {
                     ...c,
-                    last_message_text: newMsg.content_text ?? "",
+                    last_message_text: newMsg.content_text,
                     last_message_at: newMsg.created_at,
                     unread_count:
-                      activeConversation?.id === newMsg.conversation_id
+                      activeConversation?.id === c.id
                         ? 0
-                        : c.unread_count + 1,
+                        : newMsg.sender_type === "customer"
+                          ? c.unread_count + 1
+                          : c.unread_count,
                   }
-                : c,
-            ),
+                : c
+            )
           );
         } else {
-          // First time we're seeing this conv: the conv-INSERT event
-          // hasn't landed yet, or was missed. Hydrate from the DB so
-          // the row surfaces with its `contact` joined; the conv-UPDATE
-          // event the webhook emits right after the message INSERT will
-          // converge state when it arrives.
+          // Brand-new conversation received its first message before
+          // the conversation INSERT event (or the conv-INSERT was missed)
+          // — pull the full row so it shows in the list with its contact.
           hydrateConversation(newMsg.conversation_id);
         }
       }
@@ -254,6 +269,10 @@ function InboxPageInner() {
       old: Partial<Conversation>;
     }) => {
       const conv = event.new;
+
+      if (activeProjectId && conv.project_id && conv.project_id !== activeProjectId) {
+        return;
+      }
 
       if (event.eventType === "INSERT") {
         // If user is an agent, only add if assigned to them
@@ -322,7 +341,7 @@ function InboxPageInner() {
         }
       }
     },
-    [activeConversation, hydrateConversation, isProjectAdmin, user, router]
+    [activeConversation, hydrateConversation, isProjectAdmin, user, router, activeProjectId]
   );
 
   // Subscribe to realtime. The `isConnected` flag below feeds the

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
 import { MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Loader2, FileText, ArrowRight } from 'lucide-react';
@@ -22,6 +23,7 @@ interface Step1Props {
 
 export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack }: Step1Props) {
   const t = useTranslations('Broadcasts.wizard');
+  const { activeProjectId } = useAuth();
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -33,11 +35,17 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
         // Only APPROVED templates can be sent via Meta — anything else
         // would 400 at broadcast time. Hide them rather than letting
         // the user pick a template that will fail.
-        const { data, error: fetchError } = await supabase
+        let query = supabase
           .from('message_templates')
           .select('*')
           .eq('status', 'APPROVED')
           .order('created_at', { ascending: false });
+
+        if (activeProjectId) {
+          query = query.eq('project_id', activeProjectId);
+        }
+
+        const { data, error: fetchError } = await query;
 
         if (fetchError) throw fetchError;
         setTemplates(data ?? []);
@@ -49,7 +57,7 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
     }
 
     fetchTemplates();
-  }, []);
+  }, [activeProjectId, t]);
 
   if (loading) {
     return (

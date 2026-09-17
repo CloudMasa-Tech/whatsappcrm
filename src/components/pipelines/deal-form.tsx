@@ -56,7 +56,8 @@ export function DealForm({
 }: DealFormProps) {
   const t = useTranslations("Pipelines.form");
   const supabase = createClient();
-  const { accountId, activeProjectId, defaultCurrency } = useAuth();
+  const { user, accountId, activeProjectId, defaultCurrency, canManageMembers, isSuperAdmin } = useAuth();
+  const isProjectAdmin = canManageMembers || isSuperAdmin;
 
   const [title, setTitle] = useState("");
   const [value, setValue] = useState("");
@@ -101,11 +102,11 @@ export function DealForm({
       setCurrency(defaultCurrency);
       setContactId("");
       setStageId(defaultStageId || stages[0]?.id || "");
-      setAssignedTo("");
+      setAssignedTo(!isProjectAdmin && user ? user.id : "");
       setExpectedCloseDate("");
       setNotes("");
     }
-  }, [open, deal, defaultStageId, stages, defaultCurrency]);
+  }, [open, deal, defaultStageId, stages, defaultCurrency, isProjectAdmin, user]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // Load supporting data once the sheet is open
@@ -227,6 +228,22 @@ export function DealForm({
         toast.error(t("toastFailedCreate"));
         setSaving(false);
         return;
+      }
+    }
+
+    // Sync conversation assignment if contact and assignee are specified
+    if (contactId && assignedTo) {
+      try {
+        let convQuery = supabase
+          .from("conversations")
+          .update({ assigned_agent_id: assignedTo })
+          .eq("contact_id", contactId);
+        if (activeProjectId) {
+          convQuery = convQuery.eq("project_id", activeProjectId);
+        }
+        await convQuery;
+      } catch (convSyncErr) {
+        console.warn("[deal-form] conversation assign sync notice:", convSyncErr);
       }
     }
 
