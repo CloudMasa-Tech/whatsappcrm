@@ -398,40 +398,47 @@ export default function ContactsPage() {
           {canEditSettings && (
             <Button
               variant="outline"
+              size="sm"
               onClick={() => setCustomFieldsOpen(true)}
-              className="border-border text-muted-foreground hover:bg-muted"
+              className="border-border text-muted-foreground hover:bg-muted h-9 px-2.5 sm:px-3"
+              title={t('customFieldsBtn')}
             >
-              <SlidersHorizontal className="size-4" />
-              {t('customFieldsBtn')}
+              <SlidersHorizontal className="size-4 sm:mr-1.5" />
+              <span className="hidden sm:inline">{t('customFieldsBtn')}</span>
             </Button>
           )}
           <Button
             variant="outline"
+            size="sm"
             onClick={handleSyncWhatsApp}
             disabled={syncing}
-            className="border-border text-muted-foreground hover:bg-muted"
+            className="border-border text-muted-foreground hover:bg-muted h-9 px-2.5 sm:px-3"
+            title="Sync WhatsApp"
           >
-            <RefreshCw className={`size-4 ${syncing ? 'animate-spin' : ''}`} />
-            {syncing ? 'Syncing...' : 'Sync WhatsApp'}
+            <RefreshCw className={`size-4 ${syncing ? 'animate-spin' : ''} sm:mr-1.5`} />
+            <span className="hidden sm:inline">{syncing ? 'Syncing...' : 'Sync WhatsApp'}</span>
           </Button>
           <GatedButton
             variant="outline"
+            size="sm"
             canAct={canEdit}
             gateReason="add or import contacts"
             onClick={() => setImportOpen(true)}
-            className="border-border text-muted-foreground hover:bg-muted"
+            className="border-border text-muted-foreground hover:bg-muted h-9 px-2.5 sm:px-3"
+            title={t('importBtn')}
           >
-            <Upload className="size-4" />
-            {t('importBtn')}
+            <Upload className="size-4 sm:mr-1.5" />
+            <span className="hidden sm:inline">{t('importBtn')}</span>
           </GatedButton>
           <GatedButton
+            size="sm"
             canAct={canEdit}
             gateReason="add or import contacts"
             onClick={openAddForm}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground h-9 px-3 sm:px-4"
           >
-            <Plus className="size-4" />
-            {t('addContactBtn')}
+            <Plus className="size-4 mr-1 sm:mr-1.5" />
+            <span>{t('addContactBtn')}</span>
           </GatedButton>
         </div>
       </div>
@@ -439,7 +446,7 @@ export default function ContactsPage() {
       {/* Search + tag filter */}
       <div className="space-y-2">
         <div className="flex flex-col sm:flex-row gap-2">
-          <div className="relative w-full max-w-sm">
+          <div className="relative w-full sm:max-w-sm">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
             <Input
               value={search}
@@ -450,7 +457,7 @@ export default function ContactsPage() {
                 setPage(0);
               }}
               placeholder={t('searchPlaceholder')}
-              className="pl-8 bg-card border-border text-foreground placeholder:text-muted-foreground"
+              className="pl-8 bg-card border-border text-foreground placeholder:text-muted-foreground text-base sm:text-sm"
             />
           </div>
 
@@ -459,14 +466,14 @@ export default function ContactsPage() {
               render={
                 <Button
                   variant="outline"
-                  className="border-border text-muted-foreground hover:bg-muted shrink-0"
+                  className="border-border text-muted-foreground hover:bg-muted shrink-0 h-9"
                 />
               }
             >
-              <Filter className="size-4" />
-              {t('filterByTags')}
+              <Filter className="size-4 mr-1.5" />
+              <span>{t('filterByTags')}</span>
               {selectedTagIds.length > 0 && (
-                <span className="ml-1 inline-flex items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">
+                <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">
                   {selectedTagIds.length}
                 </span>
               )}

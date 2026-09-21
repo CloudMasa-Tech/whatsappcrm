@@ -13,7 +13,8 @@ An enterprise-grade, multi-tenant Omnichannel Customer Relationship Management (
 
 ## 📖 Key Documentation
 
-- 📘 **[Full Enterprise Architecture & Product Manual](PRODUCT_DOCUMENTATION.md)** — Complete in-depth guide covering multi-tenancy, encryption, smart contact cleanup, project-specific email gateways, and database schemas.
+- 📘 **[Enterprise Architecture & Technical Flow](PRODUCT_DOCUMENTATION.md)** — Complete in-depth guide covering multi-tenancy, encryption, technical sequence flows, smart contact cleanup, project-specific email gateways, and database schemas.
+- 📖 **[Comprehensive User & Operations Manual](USER_MANUAL.md)** — Step-by-step operational manual covering daily workflows for Agents, Project Admins, and Super Admins.
 - 🚀 **[Production Deployment Guide](DEPLOYMENT.md)** — Step-by-step instructions for Nginx reverse proxy, SSL certificates, PM2, and Docker Compose.
 - 🛠️ **[Public REST API Guide](docs/public-api.md)** — Full specification for external CRM integrations, webhooks, and programmatic messaging.
 - 🤖 **[Automation Engine Setup](docs/automation-setup.md)** — Guide for visual node canvas automations and AI bots.

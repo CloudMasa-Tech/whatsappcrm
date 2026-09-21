@@ -23,6 +23,7 @@ import {
   Search,
   Copy,
   CheckCircle2,
+  FileText,
 } from 'lucide-react';
 import { STARTER_MESSAGE_TEMPLATES, type StarterMessageTemplate } from '@/lib/whatsapp/starter-templates';
 import { createClient } from '@/lib/supabase/client';
@@ -149,7 +150,7 @@ const MEDIA_HEADER_TYPES: MessageTemplate['header_type'][] = [
 ];
 
 function isMediaHeaderType(
-  type: MessageTemplate['header_type'] | undefined
+  type: HeaderFormat | MessageTemplate['header_type'] | string | undefined
 ): type is 'image' | 'video' | 'document' {
   return (
     type === 'image' || type === 'video' || type === 'document'
@@ -157,7 +158,7 @@ function isMediaHeaderType(
 }
 
 function mediaHeaderAccept(
-  type: 'image' | 'video' | 'document' | MessageTemplate['header_type'] | undefined
+  type: HeaderFormat | 'image' | 'video' | 'document' | MessageTemplate['header_type'] | string | undefined
 ): string {
   switch (type) {
     case 'image':
@@ -165,7 +166,7 @@ function mediaHeaderAccept(
     case 'video':
       return 'video/mp4,video/3gpp';
     case 'document':
-      return 'application/pdf';
+      return '.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/csv';
     default:
       return '';
   }
@@ -634,22 +635,47 @@ export function TemplateManager() {
   const headerNeedsMedia =
     form.header_format !== 'none' && form.header_format !== 'text';
 
-  async function handleHeaderImageFile(file: File) {
-    if (!['image/jpeg', 'image/png'].includes(file.type)) {
-      toast.error(t('toastInvalidImage'));
-      return;
+  async function handleHeaderMediaFile(file: File) {
+    const kind = form.header_format;
+    if (!isMediaHeaderType(kind)) return;
+
+    if (kind === 'image') {
+      if (!['image/jpeg', 'image/png'].includes(file.type)) {
+        toast.error(t('toastInvalidImage'));
+        return;
+      }
+      if (file.size > MEDIA_MAX_BYTES_BY_KIND.image) {
+        toast.error(
+          t('toastImageTooLarge', { size: (file.size / 1024 / 1024).toFixed(1) })
+        );
+        return;
+      }
+    } else if (kind === 'video') {
+      if (!['video/mp4', 'video/3gpp'].includes(file.type) && !/\.(mp4|3gp|3gpp)$/i.test(file.name)) {
+        toast.error('Video must be MP4 or 3GPP format.');
+        return;
+      }
+      if (file.size > MEDIA_MAX_BYTES_BY_KIND.video) {
+        toast.error(
+          `Video is ${(file.size / 1024 / 1024).toFixed(1)} MB — maximum is 16 MB.`
+        );
+        return;
+      }
+    } else if (kind === 'document') {
+      if (file.size > MEDIA_MAX_BYTES_BY_KIND.document) {
+        toast.error(
+          `Document is ${(file.size / 1024 / 1024).toFixed(1)} MB — maximum is 16 MB.`
+        );
+        return;
+      }
     }
-    if (file.size > MEDIA_MAX_BYTES_BY_KIND.image) {
-      toast.error(
-        t('toastImageTooLarge', { size: (file.size / 1024 / 1024).toFixed(1) })
-      );
-      return;
-    }
+
     setUploadingHeader(true);
     try {
       const { publicUrl } = await uploadAccountMedia('chat-media', file);
       setForm((f) => ({ ...f, header_media_url: publicUrl }));
-      toast.success(t('toastUploadSuccess'));
+      const label = kind === 'image' ? 'Image' : kind === 'video' ? 'Video' : 'Document';
+      toast.success(`${label} uploaded successfully!`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('toastUploadFailed'));
     } finally {
@@ -1357,56 +1383,107 @@ export function TemplateManager() {
 
               {headerNeedsMedia && (
                 <div className="mt-2 space-y-2">
-                  {form.header_format === 'image' && (
-                    <div className="flex items-center gap-2">
-                      <input
-                        ref={headerFileRef}
-                        type="file"
-                        accept="image/jpeg,image/png"
-                        className="hidden"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) void handleHeaderImageFile(f);
-                          e.target.value = '';
-                        }}
-                      />
-                      <Button
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      ref={headerFileRef}
+                      type="file"
+                      accept={mediaHeaderAccept(form.header_format)}
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void handleHeaderMediaFile(f);
+                        e.target.value = '';
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={uploadingHeader}
+                      onClick={() => headerFileRef.current?.click()}
+                      className="gap-1.5"
+                    >
+                      {uploadingHeader ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Upload className="h-3.5 w-3.5" />
+                      )}
+                      {form.header_format === 'image'
+                        ? t('uploadImage')
+                        : form.header_format === 'video'
+                          ? 'Upload Video'
+                          : 'Upload Document'}
+                    </Button>
+                    <span className="text-muted-foreground text-[11px]">
+                      {form.header_format === 'image'
+                        ? t('uploadHint')
+                        : form.header_format === 'video'
+                          ? 'MP4 or 3GP up to 16 MB'
+                          : 'PDF, Word, Excel up to 16 MB'}
+                    </span>
+                  </div>
+
+                  <div className="relative">
+                    <Input
+                      placeholder={t('mediaUrlPlaceholder', {
+                        format: form.header_format,
+                      })}
+                      value={form.header_media_url}
+                      onChange={(e) =>
+                        setForm({ ...form, header_media_url: e.target.value })
+                      }
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground pr-8"
+                    />
+                    {form.header_media_url && (
+                      <button
                         type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={uploadingHeader}
-                        onClick={() => headerFileRef.current?.click()}
+                        onClick={() => setForm({ ...form, header_media_url: '' })}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        title="Clear media URL"
                       >
-                        {uploadingHeader ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Upload className="h-3.5 w-3.5" />
-                        )}
-                        {t('uploadImage')}
-                      </Button>
-                      <span className="text-muted-foreground text-[11px]">
-                        {t('uploadHint')}
-                      </span>
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {form.header_media_url && (
+                    <div className="rounded-md border border-border bg-card p-2.5">
+                      {form.header_format === 'image' && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={form.header_media_url}
+                          alt="Header sample preview"
+                          className="max-h-32 rounded-md object-contain"
+                        />
+                      )}
+                      {form.header_format === 'video' && (
+                        <video
+                          src={form.header_media_url}
+                          controls
+                          className="max-h-36 rounded-md w-full max-w-xs"
+                        />
+                      )}
+                      {form.header_format === 'document' && (
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2 truncate">
+                            <FileText className="h-4 w-4 text-primary shrink-0" />
+                            <span className="truncate font-medium text-foreground">
+                              {decodeURIComponent(form.header_media_url.split('/').pop()?.replace(/^\d+-/, '') || 'Attached Document')}
+                            </span>
+                          </div>
+                          <a
+                            href={form.header_media_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-primary hover:underline shrink-0 ml-2 inline-flex items-center gap-1 text-[11px] font-medium"
+                          >
+                            <ExternalLink className="h-3 w-3" /> View
+                          </a>
+                        </div>
+                      )}
                     </div>
                   )}
-                  <Input
-                    placeholder={t('mediaUrlPlaceholder', {
-                      format: form.header_format,
-                    })}
-                    value={form.header_media_url}
-                    onChange={(e) =>
-                      setForm({ ...form, header_media_url: e.target.value })
-                    }
-                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-                  />
-                  {form.header_format === 'image' && form.header_media_url && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={form.header_media_url}
-                      alt="Header sample"
-                      className="border-border max-h-28 rounded-md border object-contain"
-                    />
-                  )}
+
                   <p className="text-muted-foreground text-[11px] leading-relaxed">
                     {form.header_format === 'image'
                       ? t('imageHint')

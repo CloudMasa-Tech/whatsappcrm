@@ -935,7 +935,7 @@ export function MessageComposer({
             rows={1}
             title={readOnly ? t("readOnlyTitle") : undefined}
             className={cn(
-              "flex-1 resize-none rounded-xl border px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors",
+              "flex-1 resize-none rounded-xl border px-4 py-2.5 text-base sm:text-sm text-foreground placeholder-muted-foreground outline-none transition-colors",
               composerMode === "note"
                 ? "border-amber-500/40 bg-amber-500/5 focus:border-amber-500/70"
                 : "border-border bg-muted focus:border-primary/50",
@@ -973,7 +973,7 @@ export function MessageComposer({
           `items-end` buttons below the textarea. Indented to line up
           under the textarea left edge. */}
       {!draft && !recording && (
-        <p className="mt-1 pl-[5.5rem] text-[10px] text-muted-foreground">
+        <p className="mt-1 pl-2 sm:pl-[5.5rem] text-[10px] text-muted-foreground">
           {t("draftHint")}
         </p>
       )}

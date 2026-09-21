@@ -495,9 +495,48 @@ export default function AdminTemplatesPage() {
                           </p>
                         )}
                         {template.header_media_url && (
-                          <div className="mb-2.5 flex items-center gap-2 rounded bg-muted/60 p-2 text-xs text-muted-foreground">
-                            <FileText className="h-4 w-4 text-primary" />
-                            <span className="truncate">{template.header_media_url}</span>
+                          <div className="mb-3 rounded-lg border border-border/80 bg-muted/50 p-2.5 text-xs text-muted-foreground">
+                            {template.header_type === "image" ? (
+                              <div className="space-y-1.5">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={template.header_media_url}
+                                  alt="Template Header Media"
+                                  className="max-h-40 rounded-md border border-border/70 object-contain bg-background"
+                                />
+                                <span className="block truncate text-[10px] text-muted-foreground">
+                                  {template.header_media_url}
+                                </span>
+                              </div>
+                            ) : template.header_type === "video" ? (
+                              <div className="space-y-1.5">
+                                <video
+                                  src={template.header_media_url}
+                                  controls
+                                  className="max-h-40 w-full max-w-sm rounded-md border border-border/70 bg-black/40"
+                                />
+                                <span className="block truncate text-[10px] text-muted-foreground">
+                                  {template.header_media_url}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 truncate">
+                                  <FileText className="h-4 w-4 text-primary shrink-0" />
+                                  <span className="truncate font-medium text-foreground">
+                                    {decodeURIComponent(template.header_media_url.split('/').pop()?.replace(/^\d+-/, '') || template.header_media_url)}
+                                  </span>
+                                </div>
+                                <a
+                                  href={template.header_media_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                                >
+                                  <ExternalLink className="h-3 w-3" /> View
+                                </a>
+                              </div>
+                            )}
                           </div>
                         )}
 

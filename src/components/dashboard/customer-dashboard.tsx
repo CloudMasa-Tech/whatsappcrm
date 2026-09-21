@@ -439,7 +439,7 @@ export function CustomerDashboard() {
 
   if (!activeProjectId) {
     return (
-      <div className="space-y-5 p-6 max-w-7xl mx-auto">
+      <div className="space-y-5 max-w-7xl mx-auto">
         <Card className="border-amber-500/30 bg-amber-500/5">
           <CardContent className="flex items-center gap-3 p-6">
             <AlertTriangle className="h-6 w-6 text-amber-500" />
@@ -454,7 +454,7 @@ export function CustomerDashboard() {
   }
 
   return (
-    <div className="space-y-6 p-4 sm:p-6 max-w-7xl mx-auto">
+    <div className="space-y-6 max-w-7xl mx-auto">
       {/* 360° Project Header Banner */}
       <div className="flex flex-col gap-4 rounded-xl border border-primary/20 bg-gradient-to-r from-card via-card to-primary/5 p-5 sm:p-6 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

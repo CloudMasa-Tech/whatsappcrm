@@ -159,7 +159,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
           onClick={signOut}
           title={t("menuSignOut")}
           aria-label={t("menuSignOut")}
-          className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus:outline-none"
+          className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus:outline-none"
         >
           <LogOut className="size-4" />
         </button>

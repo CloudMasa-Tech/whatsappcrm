@@ -15,6 +15,7 @@ import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
 import { ChannelStatusBanner } from "@/components/inbox/channel-status-banner";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -74,6 +75,7 @@ function InboxPageInner() {
    * below reconciles to the stored value right after mount instead.
    */
   const [contactPanelOpen, setContactPanelOpen] = useState(true);
+  const [mobileContactOpen, setMobileContactOpen] = useState(false);
   useEffect(() => {
     try {
       const stored = localStorage.getItem(CONTACT_PANEL_STORAGE_KEY);
@@ -664,18 +666,26 @@ function InboxPageInner() {
             onRefresh={handleManualRefresh}
             contactPanelOpen={contactPanelOpen}
             onToggleContactPanel={handleToggleContactPanel}
+            onOpenMobileContact={() => setMobileContactOpen(true)}
           />
         </div>
 
         {/* Right panel: Contact sidebar — desktop only, and only when the
             agent hasn't collapsed it via the thread-header toggle (#258).
-            On mobile it's always hidden (the `lg:block` below), so the
-            toggle — which is itself desktop-only — never affects it. */}
+            On mobile it's hidden from the flex row and rendered inside
+            the mobile Sheet below. */}
         {contactPanelOpen && (
           <div className="hidden lg:block">
             <ContactSidebar contact={activeContact} />
           </div>
         )}
+
+        {/* Mobile slide-over Sheet for Contact Details */}
+        <Sheet open={mobileContactOpen} onOpenChange={setMobileContactOpen}>
+          <SheetContent side="right" className="p-0 sm:max-w-md w-full">
+            <ContactSidebar contact={activeContact} />
+          </SheetContent>
+        </Sheet>
       </div>
     </div>
   );

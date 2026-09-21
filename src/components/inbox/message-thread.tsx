@@ -26,6 +26,7 @@ import {
   MessageSquare,
   ChevronDown,
   UserPlus,
+  User,
   Check,
   Clock,
   AlarmClock,
@@ -146,6 +147,8 @@ interface MessageThreadProps {
    */
   contactPanelOpen?: boolean;
   onToggleContactPanel?: () => void;
+  /** Mobile sheet trigger for contact details. */
+  onOpenMobileContact?: () => void;
 }
 
 function formatDateSeparator(dateStr: string, t: ReturnType<typeof useTranslations>): string {
@@ -221,6 +224,7 @@ export function MessageThread({
   onRefresh,
   contactPanelOpen,
   onToggleContactPanel,
+  onOpenMobileContact,
 }: MessageThreadProps) {
   const t = useTranslations("Inbox.messageThread");
   const tTimer = useTranslations("Inbox.sessionTimer");
@@ -1274,39 +1278,48 @@ export function MessageThread({
               <ArrowLeft className="h-5 w-5" />
             </button>
           )}
-          {/* Avatar with Channel Overlay */}
-          <div className="relative flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
-            {initials}
-            {conversation.channel === "instagram" || contact.channel === "instagram" ? (
-              <div
-                className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 text-white shadow-sm ring-1 ring-background"
-                title="Instagram Direct"
-              >
-                <Instagram className="h-2 w-2" />
-              </div>
-            ) : (
-              <div
-                className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm ring-1 ring-background"
-                title="WhatsApp"
-              >
-                <MessageCircle className="h-2 w-2" />
-              </div>
+          {/* Avatar with Channel Overlay and Contact Title (tappable on mobile to open contact details) */}
+          <div
+            onClick={onOpenMobileContact}
+            className={cn(
+              "flex min-w-0 items-center gap-2 sm:gap-3",
+              onOpenMobileContact && "cursor-pointer lg:cursor-default",
             )}
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <h2 className="truncate text-sm font-semibold text-foreground">{displayTitle}</h2>
+            title={onOpenMobileContact ? "View contact details" : undefined}
+          >
+            <div className="relative flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
+              {initials}
               {conversation.channel === "instagram" || contact.channel === "instagram" ? (
-                <Badge className="bg-pink-500/10 text-pink-600 border-pink-500/20 text-[10px] py-0 px-1.5">
-                  <Instagram className="h-2.5 w-2.5 mr-1" /> Instagram
-                </Badge>
-              ) : null}
+                <div
+                  className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 text-white shadow-sm ring-1 ring-background"
+                  title="Instagram Direct"
+                >
+                  <Instagram className="h-2 w-2" />
+                </div>
+              ) : (
+                <div
+                  className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm ring-1 ring-background"
+                  title="WhatsApp"
+                >
+                  <MessageCircle className="h-2 w-2" />
+                </div>
+              )}
             </div>
-            {displaySubtitle && (
-              <p className="truncate text-xs text-muted-foreground font-mono">
-                {displaySubtitle}
-              </p>
-            )}
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h2 className="truncate text-sm font-semibold text-foreground">{displayTitle}</h2>
+                {conversation.channel === "instagram" || contact.channel === "instagram" ? (
+                  <Badge className="bg-pink-500/10 text-pink-600 border-pink-500/20 text-[10px] py-0 px-1.5">
+                    <Instagram className="h-2.5 w-2.5 mr-1" /> Instagram
+                  </Badge>
+                ) : null}
+              </div>
+              {displaySubtitle && (
+                <p className="truncate text-xs text-muted-foreground font-mono">
+                  {displaySubtitle}
+                </p>
+              )}
+            </div>
           </div>
           {/* Session timer badge — WhatsApp 24-hour customer service window */}
           {sessionInfo.remaining && (
@@ -1326,7 +1339,20 @@ export function MessageThread({
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Mobile contact-panel toggle — opens sheet on mobile */}
+          {onOpenMobileContact && (
+            <button
+              type="button"
+              onClick={onOpenMobileContact}
+              aria-label={t("showContact")}
+              title={t("showContact")}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
+            >
+              <User className="h-4 w-4" />
+            </button>
+          )}
+
           {/* Contact-panel toggle — desktop only. The contact sidebar
               eats a chunk of horizontal width that crowds the thread on
               smaller laptops; this lets agents reclaim it when they just
@@ -1342,7 +1368,7 @@ export function MessageThread({
               title={contactPanelOpen ? t("hideContact") : t("showContact")}
               aria-pressed={contactPanelOpen}
               className={cn(
-                "hidden h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground lg:inline-flex",
+                "hidden h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground lg:inline-flex",
                 contactPanelOpen ? "text-primary" : "text-muted-foreground",
               )}
             >
@@ -1367,7 +1393,7 @@ export function MessageThread({
               aria-label={t("refreshConversation")}
               title={t("refresh")}
               className={cn(
-                "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-60",
+                "inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-60",
               )}
             >
               <RefreshCw
@@ -1379,7 +1405,7 @@ export function MessageThread({
           {/* Status dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger className={cn(
-                  "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                  "inline-flex items-center justify-center h-8 gap-1 px-2.5 text-xs rounded-md hover:bg-muted transition-colors",
                   currentStatus?.color ?? "text-muted-foreground"
                 )}>
                 {currentStatus ? t(`status${currentStatus.label}`) : t("status")}
@@ -1406,7 +1432,7 @@ export function MessageThread({
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
-                  "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                  "inline-flex items-center justify-center h-8 gap-1 px-2.5 text-xs rounded-md hover:bg-muted transition-colors",
                   assignedAgentId ? "text-primary" : "text-muted-foreground"
                 )}
               >

@@ -32,6 +32,7 @@ import {
 import { Instagram } from "@/components/icons/instagram";
 import { WhatsApp } from "@/components/icons/whatsapp";
 import { Facebook } from "@/components/icons/facebook";
+import { ProjectSwitcher } from "@/components/projects/project-switcher";
 import type { AccountRole } from "@/lib/auth/roles";
 
 // Per-role chip metadata used in the sidebar's account strip + the
@@ -225,6 +226,14 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           </button>
         </div>
 
+        {/* Mobile Project Switcher — visible only on mobile drawer */}
+        <div className="border-b border-border bg-muted/20 px-3 py-2.5 lg:hidden">
+          <p className="mb-1 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+            Active Project
+          </p>
+          <ProjectSwitcher />
+        </div>
+
         {/* Main navigation */}
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="flex flex-col gap-1">
@@ -260,6 +269,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                 <li key={item.href}>
                   <Link
                     href={item.href}
+                    onClick={onClose}
                     className={cn(
                       // Taller on mobile so fingers can hit the row reliably (≥44px).
                       "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2",
@@ -320,6 +330,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                   <li key={item.href}>
                     <Link
                       href={item.href}
+                      onClick={onClose}
                       className={cn(
                         "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2",
                         isActive

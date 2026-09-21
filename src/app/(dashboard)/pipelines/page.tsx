@@ -551,14 +551,14 @@ export default function PipelinesPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[240px]">
               {/* Search input */}
-              <div className="relative w-full max-w-xs">
+              <div className="relative w-full sm:max-w-xs">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
                   type="text"
                   placeholder="Search deals or contacts..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 h-9 bg-card border-border text-xs"
+                  className="pl-9 h-9 bg-card border-border text-base sm:text-xs"
                 />
               </div>
 
