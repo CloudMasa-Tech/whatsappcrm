@@ -24,6 +24,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
+  LifeBuoy,
   Users,
   FolderKanban,
   Settings,
@@ -41,6 +42,7 @@ const adminNavItems = [
   { href: "/admin/projects", labelKey: "projects", icon: FolderKanban },
   { href: "/admin/customers", labelKey: "customers", icon: Users },
   { href: "/admin/templates", labelKey: "templates", icon: FileText },
+  { href: "/admin/tickets", labelKey: "tickets", icon: LifeBuoy },
   { href: "/admin/settings", labelKey: "settings", icon: Settings },
 ];
 

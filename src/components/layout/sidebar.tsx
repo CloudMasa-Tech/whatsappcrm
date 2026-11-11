@@ -15,6 +15,7 @@ import {
   FileText,
   GitBranch,
   LayoutDashboard,
+  LifeBuoy,
   LogOut,
   Mail,
   MessageSquare,
@@ -32,6 +33,7 @@ import {
 import { Instagram } from "@/components/icons/instagram";
 import { WhatsApp } from "@/components/icons/whatsapp";
 import { Facebook } from "@/components/icons/facebook";
+import { LinkedIn } from "@/components/icons/linkedin";
 import { ProjectSwitcher } from "@/components/projects/project-switcher";
 import type { AccountRole } from "@/lib/auth/roles";
 
@@ -106,6 +108,7 @@ const navItems: NavItem[] = [
   { href: "/whatsapp", labelKey: "whatsapp", icon: WhatsApp, roles: ["admin"] },
   { href: "/instagram", labelKey: "instagram", icon: Instagram, roles: ["admin", "agent"] },
   { href: "/facebook", labelKey: "facebook", icon: Facebook, roles: ["admin", "agent"] },
+  { href: "/linkedin", labelKey: "linkedin", icon: LinkedIn, roles: ["admin", "agent"] },
   { href: "/email-campaigns", labelKey: "campaigns", icon: Mail, roles: ["admin", "agent"] },
   { href: "/contacts", labelKey: "contacts", icon: Users, roles: ["admin", "agent"] },
   { href: "/broadcasts", labelKey: "broadcasts", icon: Radio, roles: ["admin", "agent"] },
@@ -114,6 +117,7 @@ const navItems: NavItem[] = [
   { href: "/automations", labelKey: "automations", icon: Zap, roles: ["admin"] },
   { href: "/flows", labelKey: "flows", icon: Workflow, beta: true, roles: ["admin"] },
   { href: "/agents", labelKey: "aiAgents", icon: Bot, roles: ["admin"] },
+  { href: "/tickets", labelKey: "tickets", icon: LifeBuoy },
   { href: "/notifications", labelKey: "notifications", icon: Bell },
 ];
 

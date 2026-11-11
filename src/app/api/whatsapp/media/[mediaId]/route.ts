@@ -3,6 +3,7 @@ import { getCurrentProject } from '@/lib/auth/project'
 import { createClient } from '@/lib/supabase/server'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { ephemeralMediaCache } from '@/lib/media/ephemeral-cache'
 
 export async function GET(
   request: Request,
@@ -62,22 +63,31 @@ export async function GET(
       )
     }
 
-    const accessToken = decrypt(config.access_token)
+    const cacheKey = ephemeralMediaCache.keyFor(
+      'wa-cloud',
+      `${projectId}:${mediaId}`,
+    )
 
-    // Get the download URL from Meta
-    const mediaInfo = await getMediaUrl({ mediaId, accessToken })
-
-    // Download the binary data
-    const { buffer, contentType } = await downloadMedia({
-      downloadUrl: mediaInfo.url,
-      accessToken,
+    const media = await ephemeralMediaCache.getOrLoad(cacheKey, async () => {
+      const accessToken = decrypt(config.access_token)
+      const mediaInfo = await getMediaUrl({ mediaId, accessToken })
+      const { buffer, contentType } = await downloadMedia({
+        downloadUrl: mediaInfo.url,
+        accessToken,
+      })
+      return {
+        buffer: Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer),
+        contentType:
+          contentType || mediaInfo.mimeType || 'application/octet-stream',
+      }
     })
 
-    return new Response(new Uint8Array(buffer), {
+    return new Response(new Uint8Array(media.buffer), {
       status: 200,
       headers: {
-        'Content-Type': contentType || mediaInfo.mimeType || 'application/octet-stream',
-        'Cache-Control': 'public, max-age=86400',
+        'Content-Type': media.contentType,
+        'Cache-Control': 'private, max-age=604800, immutable',
+        'X-Content-Type-Options': 'nosniff',
       },
     })
   } catch (error) {

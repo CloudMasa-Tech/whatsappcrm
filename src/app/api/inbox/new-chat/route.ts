@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentProject } from "@/lib/auth/project";
-import { sendInstagramMessage } from "@/lib/instagram/send-message";
+import { sendInstagramMessage, InstagramSendError } from "@/lib/instagram/send-message";
+import { normalizeHandle } from "@/lib/instagram/direct-client";
 import { sendMessageToConversation } from "@/lib/whatsapp/send-message";
 import { normalizePhone } from "@/lib/whatsapp/phone-utils";
 
@@ -33,16 +34,22 @@ export async function POST(request: Request) {
     // INSTAGRAM CHANNEL
     // ==========================================
     if (channel === "instagram") {
-      const cleanUsername = recipient.trim().replace(/^@/, "");
+      const cleanUsername = normalizeHandle(recipient);
+      if (!cleanUsername || !/^[a-zA-Z0-9._]{1,30}$/.test(cleanUsername)) {
+        return NextResponse.json(
+          { error: "Please enter a valid Instagram @username (letters, numbers, dots, underscores)." },
+          { status: 400 },
+        );
+      }
 
-      // 1. Find or create Contact
+      // 1. Find or create Contact (case-insensitive username check)
       let contactId: string | null = null;
 
       const { data: existingContact } = await ctx.supabase
         .from("contacts")
-        .select("id, name, instagram_username, channel")
+        .select("id, name, instagram_id, instagram_username, channel")
         .eq("project_id", ctx.projectId)
-        .eq("instagram_username", cleanUsername)
+        .ilike("instagram_username", cleanUsername)
         .maybeSingle();
 
       if (existingContact) {
@@ -55,7 +62,7 @@ export async function POST(request: Request) {
             account_id: ctx.accountId,
             project_id: ctx.projectId,
             name: name?.trim() || `@${cleanUsername}`,
-            phone: `ig_${cleanUsername}`,
+            phone: `ig:${cleanUsername}`,
             instagram_username: cleanUsername,
             channel: "instagram",
           })
@@ -63,16 +70,28 @@ export async function POST(request: Request) {
           .single();
 
         if (contactErr) {
-          console.error("[new-chat] contact insert error:", contactErr);
-          return NextResponse.json(
-            { error: "Failed to create contact: " + contactErr.message },
-            { status: 500 },
-          );
+          if (contactErr.code === "23505") {
+            const { data: raced } = await ctx.supabase
+              .from("contacts")
+              .select("id")
+              .eq("project_id", ctx.projectId)
+              .ilike("instagram_username", cleanUsername)
+              .maybeSingle();
+            contactId = raced?.id ?? null;
+          }
+          if (!contactId) {
+            console.error("[new-chat] contact insert error:", contactErr);
+            return NextResponse.json(
+              { error: "Failed to create contact: " + contactErr.message },
+              { status: 500 },
+            );
+          }
+        } else {
+          contactId = newContact.id;
         }
-        contactId = newContact.id;
       }
 
-      // 2. Find or create Conversation
+      // 2. Find or create Instagram Conversation
       let conversationId: string | null = null;
 
       const { data: existingConv } = await ctx.supabase
@@ -103,34 +122,67 @@ export async function POST(request: Request) {
           .single();
 
         if (convErr) {
-          console.error("[new-chat] conv insert error:", convErr);
-          return NextResponse.json(
-            { error: "Failed to create conversation: " + convErr.message },
-            { status: 500 },
-          );
+          if (convErr.code === "23505") {
+            const { data: raced } = await ctx.supabase
+              .from("conversations")
+              .select("id")
+              .eq("project_id", ctx.projectId)
+              .eq("contact_id", contactId)
+              .eq("channel", "instagram")
+              .maybeSingle();
+            conversationId = raced?.id ?? null;
+          }
+          if (!conversationId) {
+            console.error("[new-chat] conv insert error:", convErr);
+            return NextResponse.json(
+              { error: "Failed to create conversation: " + convErr.message },
+              { status: 500 },
+            );
+          }
+        } else {
+          conversationId = newConv.id;
         }
-        conversationId = newConv.id;
       }
 
-      // 3. Send outbound Instagram Direct Message
+      // 3. Send outbound Instagram Direct Message and surface real errors
       try {
-        await sendInstagramMessage(ctx.supabase, {
+        const sendRes = await sendInstagramMessage(ctx.supabase, {
           conversationId: conversationId!,
           projectId: ctx.projectId,
           accountId: ctx.accountId,
           userId: ctx.userId,
           contentText: message.trim(),
         });
-      } catch (sendErr: unknown) {
-        console.warn("[new-chat] Instagram send warning:", sendErr);
-      }
 
-      return NextResponse.json({
-        success: true,
-        conversationId,
-        channel: "instagram",
-        recipient: cleanUsername,
-      });
+        return NextResponse.json({
+          success: true,
+          conversationId,
+          messageId: sendRes.messageId,
+          channel: "instagram",
+          recipient: cleanUsername,
+        });
+      } catch (sendErr: unknown) {
+        if (sendErr instanceof InstagramSendError) {
+          return NextResponse.json(
+            {
+              error: sendErr.message,
+              code: sendErr.code,
+              conversationId,
+            },
+            { status: sendErr.status },
+          );
+        }
+        return NextResponse.json(
+          {
+            error:
+              sendErr instanceof Error
+                ? sendErr.message
+                : "Failed to send Instagram Direct Message",
+            conversationId,
+          },
+          { status: 502 },
+        );
+      }
     }
 
     // ==========================================

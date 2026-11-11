@@ -1,13 +1,15 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { requireProjectRole } from "@/lib/auth/project";
 import { toErrorResponse } from "@/lib/auth/account";
+import { decrypt } from "@/lib/whatsapp/encryption";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { fetchDirectProfile } from "@/lib/instagram/direct-client";
+import { fetchDirectProfile, type DirectSessionPayload } from "@/lib/instagram/direct-client";
 import { verifyMetaCredentials } from "@/lib/instagram/meta-client";
+import type { InstagramTokenType } from "@/lib/instagram/types";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   try {
     const ctx = await requireProjectRole("agent");
 
@@ -25,59 +27,92 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    let updatedUsername = config.username;
     let updatedName = config.name || config.username;
     let updatedProfilePic = config.profile_picture_url || "";
-    let followersCount: number | null = null;
-    let followingCount: number | null = null;
-    let postsCount: number | null = null;
-    let biography: string | null = null;
-    let isVerified = false;
+    let followersCount: number | null = config.followers_count ?? null;
+    let followingCount: number | null = config.following_count ?? null;
+    let postsCount: number | null = config.media_count ?? null;
+    let biography: string | null = config.biography ?? null;
+    let website: string | null = config.website ?? null;
+    let isVerified = Boolean(config.is_verified);
+    let grantedScopes: string[] = config.granted_scopes ?? [];
 
     if (config.connection_method === "cloud_api" && config.access_token) {
-      try {
-        const metaProfile = await verifyMetaCredentials(
-          config.access_token,
-          config.instagram_business_id || undefined,
-        );
-        updatedName = metaProfile.name || metaProfile.username || updatedName;
-        updatedProfilePic = metaProfile.profilePictureUrl || updatedProfilePic;
-      } catch (err) {
-        console.warn("[Instagram Sync] Meta sync warning:", err);
+      const decryptedToken = decrypt(config.access_token);
+      const metaProfile = await verifyMetaCredentials(
+        decryptedToken,
+        config.instagram_business_id || undefined,
+        (config.token_type as InstagramTokenType | undefined) ?? null,
+        config.page_id || undefined,
+      );
+      updatedUsername = metaProfile.username || updatedUsername;
+      updatedName = metaProfile.name || metaProfile.username || updatedName;
+      updatedProfilePic = metaProfile.profilePictureUrl || updatedProfilePic;
+      followersCount = metaProfile.followersCount ?? followersCount;
+      followingCount = metaProfile.followingCount ?? followingCount;
+      postsCount = metaProfile.mediaCount ?? postsCount;
+      biography = metaProfile.biography ?? biography;
+      website = metaProfile.website ?? website;
+      if (metaProfile.grantedScopes?.length) {
+        grantedScopes = metaProfile.grantedScopes;
       }
     } else {
-      // Direct connection
-      const profile = await fetchDirectProfile(undefined, config.username || undefined);
+      let session: DirectSessionPayload | undefined;
+      if (config.session_data) {
+        try {
+          session = JSON.parse(decrypt(config.session_data)) as DirectSessionPayload;
+        } catch {
+          // Fallback to handle lookup
+        }
+      }
+      const profile = await fetchDirectProfile(session, config.username || undefined);
+      if (profile.username) updatedUsername = profile.username;
       if (profile.name) updatedName = profile.name;
       if (profile.profilePictureUrl) updatedProfilePic = profile.profilePictureUrl;
-      followersCount = profile.followersCount ?? null;
-      followingCount = profile.followingCount ?? null;
-      postsCount = profile.postsCount ?? null;
-      biography = profile.biography ?? null;
+      followersCount = profile.followersCount ?? followersCount;
+      followingCount = profile.followingCount ?? followingCount;
+      postsCount = profile.postsCount ?? postsCount;
+      biography = profile.biography ?? biography;
       isVerified = !!profile.isVerified;
     }
 
-    // Save refreshed details to DB
+    const nowIso = new Date().toISOString();
     await supabaseAdmin()
       .from("instagram_config")
       .update({
+        username: updatedUsername,
         name: updatedName,
         profile_picture_url: updatedProfilePic || null,
-        updated_at: new Date().toISOString(),
+        biography,
+        website,
+        followers_count: followersCount,
+        following_count: followingCount,
+        media_count: postsCount,
+        is_verified: isVerified,
+        granted_scopes: grantedScopes,
+        last_synced_at: nowIso,
+        updated_at: nowIso,
       })
       .eq("id", config.id);
 
     return NextResponse.json({
       success: true,
-      username: config.username,
+      username: updatedUsername,
       name: updatedName,
       profile_picture_url: updatedProfilePic,
       followers_count: followersCount,
       following_count: followingCount,
       posts_count: postsCount,
-      biography: biography,
+      biography,
+      website,
       is_verified: isVerified,
+      granted_scopes: grantedScopes,
     });
   } catch (err: unknown) {
-    return toErrorResponse(err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Failed to sync Instagram profile" },
+      { status: 400 },
+    );
   }
 }

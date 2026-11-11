@@ -22,6 +22,7 @@ import { verifyBearerToken, verifySignatureHeader } from "./security.js";
 import {
   connectSession,
   disconnectSession,
+  fetchMediaForSession,
   getSessionStatus,
   liveSessionCount,
   restoreSessions,
@@ -159,6 +160,45 @@ app.delete("/v1/sessions/:projectId", async (c) => {
   try {
     await disconnectSession(check.projectId);
     return c.json({ success: true });
+  } catch (err) {
+    const { body, status } = handleError(err);
+    return c.json(body, status as 400);
+  }
+});
+
+// ------------------------------------------------------------
+// On-demand media fetch (backed by ephemeral gateway cache)
+// ------------------------------------------------------------
+
+app.post("/v1/sessions/:projectId/media", async (c) => {
+  const rawBody = c.get("rawBody" as never) as unknown as string;
+  const pathProjectId = c.req.param("projectId");
+  const check = projectIdFromRequest(pathProjectId, rawBody);
+  if (!check.ok) return c.json({ error: check.error, code: "project_mismatch" }, 400);
+
+  let params: Record<string, unknown>;
+  try {
+    params = JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    return c.json({ error: "Body is not valid JSON", code: "bad_request" }, 400);
+  }
+
+  const ref = typeof params.ref === "string" ? params.ref.trim() : "";
+  if (!ref) {
+    return c.json({ error: "`ref` is required", code: "bad_request" }, 400);
+  }
+
+  try {
+    const media = await fetchMediaForSession(check.projectId, ref);
+    const headers = new Headers({
+      "content-type": media.mimeType || "application/octet-stream",
+      "cache-control": "private, max-age=604800, immutable",
+    });
+    if (media.filename) {
+      const safeName = media.filename.replace(/["\\\r\n]/g, "_");
+      headers.set("x-media-filename", safeName);
+    }
+    return new Response(new Uint8Array(media.buffer), { status: 200, headers });
   } catch (err) {
     const { body, status } = handleError(err);
     return c.json(body, status as 400);

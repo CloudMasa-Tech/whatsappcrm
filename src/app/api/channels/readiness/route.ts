@@ -112,7 +112,28 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.json({ instagram, email, facebook });
+    // ---- LinkedIn --------------------------------------------------
+    let linkedin: ChannelReadiness = { state: 'not_configured' };
+    {
+      let query = db
+        .from('linkedin_config')
+        .select('status, last_error, display_name')
+        .eq('account_id', ctx.accountId)
+        .limit(1);
+      if (projectId) query = query.eq('project_id', projectId);
+
+      const { data, error } = await query.maybeSingle();
+
+      if (!error && data) {
+        if (data.status === 'connected') {
+          linkedin = { state: 'ready', detail: data.display_name ?? null };
+        } else if (data.status === 'error') {
+          linkedin = { state: 'error', detail: data.last_error ?? null };
+        }
+      }
+    }
+
+    return NextResponse.json({ instagram, email, facebook, linkedin });
   } catch (err) {
     return toErrorResponse(err);
   }

@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server';
 
 import { getCurrentAccount, toErrorResponse } from '@/lib/auth/account';
+import { loadProjectEmailContacts } from '@/lib/email/campaign-recipients';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
 export async function GET(
@@ -18,8 +19,9 @@ export async function GET(
   try {
     const ctx = await getCurrentAccount();
     const { id } = await params;
+    const db = supabaseAdmin();
 
-    const { data: campaign, error } = await ctx.supabase
+    const { data: campaign, error } = await db
       .from('email_campaigns')
       .select('*')
       .eq('id', id)
@@ -30,15 +32,22 @@ export async function GET(
       return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
     }
 
-    const { data: recipients } = await ctx.supabase
-      .from('email_campaign_recipients')
-      .select(
-        'id, email, name, status, sent_at, open_count, first_opened_at, click_count, first_clicked_at, replied_at, conversation_id, contact_id, error_message',
-      )
-      .eq('campaign_id', id)
-      .order('created_at', { ascending: true });
+    const [{ data: recipients }, availableContacts] = await Promise.all([
+      db
+        .from('email_campaign_recipients')
+        .select(
+          'id, email, name, status, sent_at, open_count, first_opened_at, click_count, first_clicked_at, replied_at, conversation_id, contact_id, error_message',
+        )
+        .eq('campaign_id', id)
+        .order('created_at', { ascending: true }),
+      loadProjectEmailContacts(db, ctx.accountId, campaign.project_id ?? null),
+    ]);
 
-    return NextResponse.json({ campaign, recipients: recipients ?? [] });
+    return NextResponse.json({
+      campaign,
+      recipients: recipients ?? [],
+      availableContacts,
+    });
   } catch (err) {
     return toErrorResponse(err);
   }

@@ -82,17 +82,31 @@ export async function PATCH(
       );
     }
 
-    // Protect the SuperAdmin-created default admin
+    // Protect cross-tenant tampering, super_admins, and SuperAdmin-created default admins
     const { data: targetProfile } = await supabaseAdmin()
       .from("profiles")
-      .select("user_id, role, account_role, beta_features")
+      .select("user_id, account_id, platform_role, role, account_role, beta_features")
       .eq("user_id", userId)
       .maybeSingle();
 
+    if (!targetProfile) {
+      return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    }
+
+    if (ctx.platformRole !== "super_admin" && targetProfile.account_id !== ctx.accountId) {
+      return NextResponse.json({ error: "Member not found in your account" }, { status: 404 });
+    }
+
+    if (targetProfile.platform_role === "super_admin" || targetProfile.account_role === "owner") {
+      return NextResponse.json(
+        { error: "Owner and Super Administrator roles cannot be modified here." },
+        { status: 400 },
+      );
+    }
+
     if (
-      targetProfile &&
-      ((targetProfile.beta_features ?? []).includes("default_admin") ||
-        (targetProfile as any).is_default_admin)
+      (targetProfile.beta_features ?? []).includes("default_admin") ||
+      (targetProfile as any).is_default_admin
     ) {
       return NextResponse.json(
         {
@@ -103,7 +117,6 @@ export async function PATCH(
       );
     }
 
-    // Update profiles and project_members
     const { error: profileErr } = await supabaseAdmin()
       .from("profiles")
       .update({ role, account_role: role })
@@ -116,11 +129,6 @@ export async function PATCH(
         { status: 500 },
       );
     }
-
-    await supabaseAdmin()
-      .from("project_members")
-      .update({ role })
-      .eq("user_id", userId);
 
     return NextResponse.json({ ok: true, role });
   } catch (err) {

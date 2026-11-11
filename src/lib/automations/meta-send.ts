@@ -5,6 +5,7 @@ import {
   engineSendInteractiveList,
 } from '@/lib/flows/meta-send'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { engineSendToInstagram } from '@/lib/instagram/engine-send'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -114,6 +115,26 @@ type SendInput =
 
 async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  const { data: convChannelRow } = await db
+    .from('conversations')
+    .select('channel')
+    .eq('id', input.conversationId)
+    .maybeSingle()
+
+  if (convChannelRow?.channel === 'instagram') {
+    const { externalMessageId } = await engineSendToInstagram({
+      projectId: input.projectId,
+      conversationId: input.conversationId,
+      contactId: input.contactId,
+      kind: input.kind === 'template' ? 'text' : 'text',
+      text:
+        input.kind === 'template'
+          ? `Template: ${input.templateName}${input.params?.length ? ` (${input.params.join(', ')})` : ''}`
+          : input.text,
+    })
+    return { whatsapp_message_id: externalMessageId }
+  }
 
   // Scope the contact + connection lookups by project_id. The engine
   // uses the service-role client (bypassing RLS); without this filter,

@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentProject } from "@/lib/auth/project";
+import { requireProjectRole } from "@/lib/auth/project";
 import { toErrorResponse } from "@/lib/auth/account";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { buildMediaPath } from "@/lib/storage/upload-media";
+import { buildProjectMediaPath } from "@/lib/storage/upload-media";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
-    const ctx = await getCurrentProject();
+    const ctx = await requireProjectRole("agent");
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
 
@@ -16,7 +16,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
-    // Limit to 50 MB
     if (file.size > 50 * 1024 * 1024) {
       return NextResponse.json(
         { error: "File size exceeds maximum allowed limit of 50 MB." },
@@ -25,20 +24,20 @@ export async function POST(request: NextRequest) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const path = buildMediaPath(ctx.accountId, file.name);
+    const path = buildProjectMediaPath(ctx.accountId, ctx.projectId, file.name);
 
-    // Try chat-media bucket first, fallback to flow-media
+    // Use chat-media bucket first, fallback to flow-media
     let bucket = "chat-media";
     let uploadRes = await supabaseAdmin().storage.from(bucket).upload(path, buffer, {
       contentType: file.type || "application/octet-stream",
-      upsert: true,
+      upsert: false,
     });
 
     if (uploadRes.error) {
       bucket = "flow-media";
       uploadRes = await supabaseAdmin().storage.from(bucket).upload(path, buffer, {
         contentType: file.type || "application/octet-stream",
-        upsert: true,
+        upsert: false,
       });
     }
 
@@ -55,6 +54,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       url: publicUrlData.publicUrl,
+      path,
       fileName: file.name,
       fileSize: file.size,
       fileType: file.type,

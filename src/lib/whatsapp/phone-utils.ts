@@ -116,14 +116,19 @@ export function formatDisplayPhone(phone?: string | null): string {
   // Strip JID suffix if present (e.g. 919876543210@s.whatsapp.net -> 919876543210)
   const clean = phone.replace(/@(s\.whatsapp\.net|c\.us|g\.us).*$/i, '').trim();
 
-  // If already starts with +, preserve the full exact digits without masking or altering
-  if (clean.startsWith('+')) {
-    return clean;
-  }
-
   // Extract digits
   const digits = clean.replace(/\D/g, '');
   if (!digits) return clean;
+
+  // Format standard US 11-digit (+1 XXX XXX XXXX)
+  if (digits.length === 11 && digits.startsWith('1')) {
+    return `+1 ${digits.slice(1, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
+  }
+
+  // Format standard Indian 12-digit (+91 XXXXX XXXXX)
+  if (digits.length === 12 && digits.startsWith('91')) {
+    return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
+  }
 
   return `+${digits}`;
 }

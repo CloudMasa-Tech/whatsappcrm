@@ -360,7 +360,7 @@ export function QrPairing({
         return;
       }
       toast.success(
-        `WhatsApp sync complete: ${data.synced ?? 0} contacts queued/synced`
+        `Synced ${data.synced ?? 0} contacts to CRM Contacts directory`,
       );
     } catch {
       toast.error("Could not reach the server to sync contacts");
@@ -459,7 +459,7 @@ export function QrPairing({
               size="sm"
               onClick={handleSyncContacts}
               disabled={busy || cleaning || syncingContacts || status !== "connected"}
-              title="Sync WhatsApp contacts and active chats into CRM"
+              title="Sync WhatsApp contacts into CRM Contacts directory"
             >
               {syncingContacts ? (
                 <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />

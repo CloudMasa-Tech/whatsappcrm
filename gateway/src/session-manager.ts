@@ -7,7 +7,7 @@
 //   1. Sessions live in a Map keyed by project_id, and no function
 //      here iterates or returns another project's socket.
 //   2. Every Supabase read and write names its project_id.
-//   3. Media uploads go to that project's own storage prefix.
+//   3. Inbound media descriptors are sealed per-project and cached ephemerally on demand.
 //
 // Lifecycle, and why each state exists:
 //
@@ -40,6 +40,12 @@ import { clearAuthState, useSupabaseAuthState } from "./auth-state.js";
 import { config } from "./config.js";
 import { sendEventToCrm } from "./crm.js";
 import { baileysLogger, logger } from "./logger.js";
+import {
+  buildQrMediaProxyUrl,
+  mediaCache,
+  reconstructWaMessage,
+  unsealMediaDescriptor,
+} from "./media-cache.js";
 import { loadProject, supabase } from "./supabase.js";
 
 export type SessionStatus =
@@ -167,76 +173,61 @@ async function promotePrimaryChannelToQr(projectId: string): Promise<void> {
 }
 
 // ------------------------------------------------------------
-// Media
+// Media (Ephemeral Cache + On-Demand Fetch, Zero Storage Upload)
 // ------------------------------------------------------------
 
-const MEDIA_EXTENSIONS: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "video/mp4": "mp4",
-  "video/3gpp": "3gp",
-  "audio/ogg": "ogg",
-  "audio/mpeg": "mp3",
-  "audio/mp4": "m4a",
-  "audio/amr": "amr",
-  "application/pdf": "pdf",
-};
-
 /**
- * Download media off WhatsApp and re-host it in the project's own
- * storage prefix, returning the public URL.
- *
- * The prefix is `account-<id>/project-<id>/…`, which is what the
- * storage policies in migration 044 check — media from one project can
- * never land in another's folder.
+ * Decrypt and fetch inbound WhatsApp QR media on demand using the
+ * sealed descriptor URL and the gateway's two-tier ephemeral cache.
  */
-async function storeMedia(
-  session: Session,
-  message: WAMessage,
-  mimeType: string,
-  filename: string | null,
-): Promise<string | null> {
-  try {
+export async function fetchMediaForSession(
+  projectId: string,
+  sealedRef: string,
+): Promise<{ buffer: Buffer; mimeType: string; filename: string | null }> {
+  const desc = unsealMediaDescriptor(sealedRef);
+  if (!desc) {
+    throw new SessionError(
+      "invalid_media_ref",
+      "Invalid or malformed WhatsApp media reference.",
+      400,
+    );
+  }
+  if (desc.p !== projectId) {
+    throw new SessionError(
+      "forbidden",
+      "Media reference does not belong to this project.",
+      403,
+    );
+  }
+
+  const cacheKey = mediaCache.cacheKey(desc);
+  return mediaCache.getOrLoad(cacheKey, async () => {
+    const session = sessions.get(projectId);
+    const waMessage = reconstructWaMessage(desc);
     const buffer = (await downloadMediaMessage(
-      message,
+      waMessage,
       "buffer",
       {},
-      { logger: baileysLogger, reuploadRequest: session.socket!.updateMediaMessage },
+      {
+        logger: baileysLogger,
+        reuploadRequest:
+          session?.socket?.updateMediaMessage ?? (async () => waMessage),
+      },
     )) as Buffer;
 
+    if (!buffer || buffer.length === 0) {
+      throw new SessionError("media_unavailable", "Media payload was empty.", 404);
+    }
     if (buffer.length > config.maxMediaBytes) {
-      logger.warn(
-        { projectId: session.projectId, bytes: buffer.length },
-        "inbound media exceeds the size cap; dropping the attachment",
-      );
-      return null;
+      throw new SessionError("media_too_large", "Media exceeds size limit.", 413);
     }
 
-    const ext =
-      MEDIA_EXTENSIONS[mimeType] ??
-      (filename?.includes(".") ? filename.split(".").pop()! : "bin");
-    const safeBase = (filename ?? "media")
-      .replace(/[^a-zA-Z0-9._-]/g, "-")
-      .replace(/\.[^.]*$/, "")
-      .slice(0, 60);
-    const path = `account-${session.accountId}/project-${session.projectId}/${Date.now()}-${safeBase}.${ext}`;
-
-    const { error } = await supabase.storage
-      .from(config.mediaBucket)
-      .upload(path, buffer, { contentType: mimeType, upsert: false });
-
-    if (error) {
-      logger.error({ err: error, projectId: session.projectId }, "media upload failed");
-      return null;
-    }
-
-    const { data } = supabase.storage.from(config.mediaBucket).getPublicUrl(path);
-    return data.publicUrl;
-  } catch (err) {
-    logger.error({ err, projectId: session.projectId }, "media download failed");
-    return null;
-  }
+    return {
+      buffer,
+      mimeType: desc.mt || "application/octet-stream",
+      filename: desc.fn ?? null,
+    };
+  });
 }
 
 // ------------------------------------------------------------
@@ -402,6 +393,8 @@ async function handleInbound(
   message: WAMessage,
   isHistory = false,
 ): Promise<void> {
+  // Never import historical WhatsApp phone chats into the CRM database.
+  if (isHistory) return;
   // Groups and broadcasts are out of scope — the CRM models 1:1
   // customer conversations, and a group would produce contacts that
   // are not really contacts.
@@ -479,11 +472,16 @@ async function handleInbound(
 
   let mediaUrl: string | null = null;
   if (extracted.mimeType && ["image", "video", "audio", "document", "sticker"].includes(extracted.kind)) {
-    mediaUrl = await storeMedia(session, message, extracted.mimeType, extracted.filename);
+    mediaUrl = buildQrMediaProxyUrl(
+      session.projectId,
+      message,
+      extracted.mimeType,
+      extracted.filename,
+    );
     if (!mediaUrl) {
       logger.warn(
         { projectId: session.projectId, kind: extracted.kind },
-        "media unavailable; forwarding the message without its attachment",
+        "media descriptor unavailable; forwarding the message without its attachment",
       );
     }
   }
@@ -636,7 +634,7 @@ async function openSocket(session: Session): Promise<void> {
     logger: baileysLogger,
     fireInitQueries: false,
     markOnlineOnConnect: false,
-    syncFullHistory: true,
+    syncFullHistory: false,
     browser: Browsers.ubuntu("Chrome"),
     keepAliveIntervalMs: 30_000,
     connectTimeoutMs: 60_000,
@@ -876,29 +874,19 @@ async function openSocket(session: Session): Promise<void> {
       }
     }
 
+    // Passively enrich existing CRM contact names in DB while keeping phone
+    // directory mappings in gateway RAM; never import historical phone chats.
     if (contactBatch.length > 0) {
       await sendEventToCrm({
         type: "contacts",
         payload: {
           projectId: session.projectId,
+          manual: false,
           contacts: contactBatch,
         },
       }).catch((err) => {
         logger.warn({ err, projectId: session.projectId }, "contacts sync failed");
       });
-    }
-
-    if (Array.isArray(messages)) {
-      for (const message of messages) {
-        try {
-          await handleInbound(session, message, true);
-        } catch (err) {
-          logger.error(
-            { err, projectId: session.projectId },
-            "history message handling failed",
-          );
-        }
-      }
     }
   });
 
@@ -915,6 +903,7 @@ async function openSocket(session: Session): Promise<void> {
         type: "contacts",
         payload: {
           projectId: session.projectId,
+          manual: false,
           contacts: contactBatch,
         },
       }).catch((err) => {
@@ -936,6 +925,7 @@ async function openSocket(session: Session): Promise<void> {
         type: "contacts",
         payload: {
           projectId: session.projectId,
+          manual: false,
           contacts: contactBatch,
         },
       }).catch((err) => {
@@ -973,6 +963,7 @@ async function openSocket(session: Session): Promise<void> {
         type: "contacts",
         payload: {
           projectId: session.projectId,
+          manual: false,
           contacts: contactBatch,
         },
       }).catch((err) => {
@@ -1010,6 +1001,7 @@ async function openSocket(session: Session): Promise<void> {
         type: "contacts",
         payload: {
           projectId: session.projectId,
+          manual: false,
           contacts: contactBatch,
         },
       }).catch((err) => {
@@ -1019,10 +1011,11 @@ async function openSocket(session: Session): Promise<void> {
   });
 
   socket.ev.on("messages.upsert", async ({ messages, type }) => {
-    const isHistory = type === "append";
+    // Only ingest live CRM messages; ignore historical phone sync ('append').
+    if (type !== "notify") return;
     for (const message of messages) {
       try {
-        await handleInbound(session, message, isHistory);
+        await handleInbound(session, message, false);
       } catch (err) {
         logger.error({ err, projectId: session.projectId }, "inbound handling failed");
       }
@@ -1490,6 +1483,7 @@ export async function syncSessionContacts(
       type: "contacts",
       payload: {
         projectId,
+        manual: true,
         contacts: contactBatch,
       },
     });

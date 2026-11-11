@@ -165,9 +165,39 @@ export async function cleanupSyncedWhatsAppContacts(
     }
   }
 
-  // 8. Batch delete un-used contacts in chunks of 100
+  // 8. Batch delete un-used contacts + any orphaned inbound chat-media in chunks of 100
   const DELETE_CHUNK_SIZE = 100;
   let deletedCount = 0;
+  const toDeleteSet = new Set(toDeleteIds);
+  const projectConvIdsToDelete = allConvs
+    .filter((c) => toDeleteSet.has(c.contact_id))
+    .map((c) => c.id);
+
+  for (let i = 0; i < projectConvIdsToDelete.length; i += DELETE_CHUNK_SIZE) {
+    const convChunk = projectConvIdsToDelete.slice(i, i + DELETE_CHUNK_SIZE);
+    try {
+      const { data: mediaMsgs } = await db
+        .from('messages')
+        .select('media_url')
+        .eq('project_id', projectId)
+        .in('conversation_id', convChunk)
+        .not('media_url', 'is', null);
+
+      const storagePaths = (mediaMsgs ?? [])
+        .map((m: { media_url: string | null }) => {
+          const rawUrl = m.media_url ?? '';
+          const match = rawUrl.match(/\/storage\/v1\/object\/public\/chat-media\/([^?]+)/);
+          return match ? decodeURIComponent(match[1]) : null;
+        })
+        .filter((p: string | null): p is string => Boolean(p && p.includes(`/project-${projectId}/`)));
+
+      if (storagePaths.length > 0) {
+        await db.storage.from('chat-media').remove(storagePaths);
+      }
+    } catch {
+      // Best-effort orphaned Storage cleanup
+    }
+  }
 
   for (let i = 0; i < toDeleteIds.length; i += DELETE_CHUNK_SIZE) {
     const chunk = toDeleteIds.slice(i, i + DELETE_CHUNK_SIZE);

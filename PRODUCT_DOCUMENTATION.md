@@ -29,6 +29,7 @@
    - [5.8 AI Knowledge Base & RAG Engine (`pgvector`)](#58-ai-knowledge-base--rag-engine-pgvector)
    - [5.9 Multi-Channel Broadcast Campaigns & Jitter Rate Limiting](#59-multi-channel-broadcast-campaigns--jitter-rate-limiting)
    - [5.10 Mobile Compatibility Suite & Responsive Architecture](#510-mobile-compatibility-suite--responsive-architecture)
+   - [5.11 Support Ticketing System & Super Admin Escalation (info@cloudmasa.com)](#511-support-ticketing-system--super-admin-escalation-infocloudmasacom)
 6. [Super Admin Platform Governance & Telemetry](#6-super-admin-platform-governance--telemetry)
 7. [Security, Cryptography & Compliance](#7-security-cryptography--compliance)
 8. [Database Schema Dictionary](#8-database-schema-dictionary)
@@ -625,6 +626,46 @@ sequenceDiagram
 
 ---
 
+### 5.11 Support Ticketing System & Super Admin Escalation (info@cloudmasa.com)
+
+The platform provides a mission-critical **Enterprise Support Ticketing System** designed for high-touch customer support, error reporting, and technical escalations:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Agent / Project Admin
+    participant UI as CRM Help Desk (/tickets)
+    participant API as Next.js Tickets API (/api/tickets)
+    participant DB as PostgreSQL (tickets & replies)
+    participant Mail as System SMTP (Nodemailer)
+    actor SA as Super Admin (info@cloudmasa.com)
+    participant AdminUI as Super Admin Console (/admin/tickets)
+
+    User->>UI: Submit Ticket (Subject, Category, Priority, Files)
+    UI->>API: POST /api/tickets
+    API->>DB: INSERT into tickets (ticket_number: 'TCK-2026-XXXX', status: 'open')
+    API->>Mail: sendTicketCreatedSuperAdminEmail(ticket, project, account)
+    Mail-->>SA: 🚨 Urgent Notification Delivered to info@cloudmasa.com
+    API->>Mail: sendTicketConfirmationSubmitterEmail(ticket)
+    Mail-->>User: Confirmation Email with Ticket Reference #
+    
+    SA->>AdminUI: Click Email Action Link (/admin/tickets?ticketId=...)
+    AdminUI->>DB: Fetch Ticket & Thread Replies
+    SA->>AdminUI: Change Status to 'Resolved' & Add Resolution Notes
+    AdminUI->>API: PATCH /api/tickets/[id]
+    API->>DB: UPDATE tickets SET status='resolved', resolution_notes=...
+    API->>Mail: sendTicketStatusUpdateEmail(ticket, 'resolved', notes)
+    Mail-->>User: Resolution Notification Delivered
+```
+
+#### Key Capabilities:
+1. **Direct Super Admin Ingestion**: Every ticket created instantly dispatches an alert email to **`info@cloudmasa.com`** containing priority indicators, submitter details, project/account names, formatted problem description, and direct console deep-link.
+2. **Submitter Confirmation & Lifecycle Updates**: Submitters receive automated email confirmations and status updates whenever the ticket is investigated or resolved.
+3. **Omnichannel Inbox Escalation**: In the Unified Inbox contact sidebar, agents can click **"Escalate / Support Ticket"** to pre-fill a ticket directly from an active customer conversation.
+4. **Super Admin Management Console (`/admin/tickets`)**: Super Admins can triage tickets across all client accounts, update priorities/statuses (`open`, `in_progress`, `resolved`, `closed`), and post private internal notes or public client replies.
+
+---
+
 ## 6. Super Admin Platform Governance & Telemetry
 
 Super Administrators hold global oversight accessible via the `/admin` portal:
@@ -682,6 +723,8 @@ Super Administrators hold global oversight accessible via the `/admin` portal:
 | `email_campaign_recipients` | `id` (UUID) | `campaign_id`, `contact_id`, `opened_at`, `clicked_at` | Granular tracking logs for email campaigns |
 | `qr_sessions` | `id` (UUID) | `project_id`, `creds_enc`, `keys_enc`, `status` | Encrypted Baileys WhatsApp Web credentials |
 | `document_chunks` | `id` (UUID) | `project_id`, `content`, `embedding` (vector(1536)) | pgvector knowledge embeddings for AI RAG |
+| `tickets` | `id` (UUID) | `ticket_number` (UNIQUE), `project_id`, `account_id`, `created_by`, `status`, `priority` | Support tickets with email alerts to info@cloudmasa.com |
+| `ticket_replies` | `id` (UUID) | `ticket_id` (FK), `user_id`, `message`, `is_internal` | Support ticket reply messages and admin notes |
 
 ---
 

@@ -1,13 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
   CheckCircle2,
-  AlertCircle,
   KeyRound,
   Shield,
   Copy,
@@ -15,14 +14,14 @@ import {
   RefreshCw,
   Unlink,
   ExternalLink,
-  Lock,
-  Building2,
   Sparkles,
-  Database,
-  Send,
+  Eye,
+  EyeOff,
+  AlertCircle,
 } from "lucide-react";
 import { FacebookBrandIcon } from "@/components/icons/facebook";
 import { toast } from "sonner";
+import { sanitizeAccessToken } from "@/lib/instagram/meta-client";
 
 interface FacebookConfigProps {
   canDisconnect?: boolean;
@@ -38,7 +37,14 @@ interface FacebookStatus {
   connected_at?: string | null;
 }
 
+const emptySubscribe = () => () => {};
+
 export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
+  const browserOrigin = useSyncExternalStore(
+    emptySubscribe,
+    () => (typeof window !== "undefined" ? window.location.origin : ""),
+    () => "",
+  );
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [tableMissing, setTableMissing] = useState(false);
@@ -48,43 +54,50 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
 
   // Form inputs
   const [accessToken, setAccessToken] = useState("");
+  const [showAccessToken, setShowAccessToken] = useState(false);
   const [pageId, setPageId] = useState("");
   const [verifyToken, setVerifyToken] = useState("");
+  const [appSecret, setAppSecret] = useState("");
+  const [showAppSecret, setShowAppSecret] = useState(false);
 
   // Copy states
   const [copiedWebhook, setCopiedWebhook] = useState(false);
   const [copiedToken, setCopiedToken] = useState(false);
 
-  const fetchConfig = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch("/api/facebook/config");
-      const data = await res.json();
-      if (data.config) {
-        setConfig(data.config);
-      }
-      if (data.table_missing) {
-        setTableMissing(true);
-      } else {
-        setTableMissing(false);
-      }
-      if (data.webhook_url) setWebhookUrl(data.webhook_url);
-      if (data.default_verify_token) setDefaultVerifyToken(data.default_verify_token);
-    } catch {
-      toast.error("Failed to load Facebook connection status.");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [reloadKey, setReloadKey] = useState(0);
+  const fetchConfig = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
-    fetchConfig();
-  }, []);
+    let ignore = false;
+
+    async function load() {
+      try {
+        setLoading(true);
+        const res = await fetch("/api/facebook/config");
+        const data = await res.json();
+        if (ignore) return;
+        if (data.config) setConfig(data.config);
+        setTableMissing(Boolean(data.table_missing));
+        if (data.webhook_url) setWebhookUrl(data.webhook_url);
+        if (data.default_verify_token) setDefaultVerifyToken(data.default_verify_token);
+      } catch {
+        if (!ignore) toast.error("Failed to load Facebook connection status.");
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }
+
+    void load();
+    return () => {
+      ignore = true;
+    };
+  }, [reloadKey]);
 
   const handleConnectPage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!accessToken.trim()) {
-      toast.error("Please enter your Facebook Page Access Token.");
+    const cleaned = sanitizeAccessToken(accessToken);
+    if (!cleaned) {
+      toast.error("Please enter your Facebook Page or User Access Token.");
       return;
     }
 
@@ -94,21 +107,26 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          access_token: accessToken.trim(),
+          access_token: cleaned,
           page_id: pageId.trim() || undefined,
           verify_token: verifyToken.trim() || defaultVerifyToken,
+          app_secret: appSecret.trim() || undefined,
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok || data.error) {
+        if (data.table_missing) setTableMissing(true);
         throw new Error(data.error || "Failed to connect Facebook Page");
       }
 
-      toast.success(`Successfully connected Facebook Page: ${data.config?.page_name || "Connected"}`);
+      toast.success(
+        `Successfully connected Facebook Page: ${data.config?.page_name || data.profile?.name || "Connected"}`,
+      );
       setAccessToken("");
-      await fetchConfig();
+      setAppSecret("");
+      fetchConfig();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to connect Facebook Page.");
     } finally {
@@ -129,7 +147,7 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
       }
 
       toast.success("Facebook Page disconnected successfully.");
-      await fetchConfig();
+      fetchConfig();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to disconnect Facebook.");
     } finally {
@@ -159,45 +177,7 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
   }>>([]);
   const [discovering, setDiscovering] = useState(false);
   const [userToken, setUserToken] = useState("");
-
-  const handleDiscoverPages = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!userToken.trim()) {
-      toast.error("Please enter a Meta User/Page Access Token.");
-      return;
-    }
-
-    try {
-      setDiscovering(true);
-      const res = await fetch("/api/facebook/oauth", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "discover", token: userToken.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        throw new Error(data.error || "Failed to discover Facebook Pages");
-      }
-
-      if (!data.pages || data.pages.length === 0) {
-        toast.info("No Facebook Pages found under this account. Make sure you are an admin of at least one Facebook Page.");
-        setDiscoveredPages([]);
-        return;
-      }
-
-      setDiscoveredPages(data.pages);
-      toast.success(`Found ${data.pages.length} Facebook Page${data.pages.length > 1 ? "s" : ""}!`);
-
-      // If exactly 1 page found, automatically connect it
-      if (data.pages.length === 1) {
-        await handleConnectDiscoveredPage(data.pages[0]);
-      }
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to find Facebook Pages.");
-    } finally {
-      setDiscovering(false);
-    }
-  };
+  const [showUserToken, setShowUserToken] = useState(false);
 
   const handleConnectDiscoveredPage = async (page: {
     id: string;
@@ -216,22 +196,68 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
           page_name: page.name,
           access_token: page.accessToken,
           profile_picture_url: page.profilePictureUrl,
+          verify_token: verifyToken.trim() || defaultVerifyToken,
+          app_secret: appSecret.trim() || undefined,
         }),
       });
 
       const data = await res.json();
       if (!res.ok || data.error) {
+        if (data.table_missing) setTableMissing(true);
         throw new Error(data.error || "Failed to connect page");
       }
 
       toast.success(`Connected to "${page.name}" successfully!`);
       setUserToken("");
+      setAppSecret("");
       setDiscoveredPages([]);
-      await fetchConfig();
+      fetchConfig();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to connect Facebook Page.");
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleDiscoverPages = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleaned = sanitizeAccessToken(userToken);
+    if (!cleaned) {
+      toast.error("Please enter a Meta User or Page Access Token.");
+      return;
+    }
+
+    try {
+      setDiscovering(true);
+      const res = await fetch("/api/facebook/oauth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "discover", token: cleaned }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "Failed to discover Facebook Pages");
+      }
+
+      if (!data.pages || data.pages.length === 0) {
+        toast.info(
+          "No Facebook Pages found under this token. Ensure you selected your Page in Graph API Explorer and granted pages_show_list & pages_messaging permissions.",
+        );
+        setDiscoveredPages([]);
+        return;
+      }
+
+      setDiscoveredPages(data.pages);
+      toast.success(`Found ${data.pages.length} Facebook Page${data.pages.length > 1 ? "s" : ""}!`);
+
+      // If exactly 1 page found, automatically connect it
+      if (data.pages.length === 1) {
+        await handleConnectDiscoveredPage(data.pages[0]);
+      }
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to find Facebook Pages.");
+    } finally {
+      setDiscovering(false);
     }
   };
 
@@ -317,6 +343,16 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
         </div>
       )}
 
+      {tableMissing && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-200 flex items-start gap-2.5">
+          <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+          <span>
+            Database table <code className="font-mono">facebook_config</code> was not found. Apply{" "}
+            <code className="font-mono">supabase/migrations/058_facebook_config.sql</code> in Supabase SQL Editor.
+          </span>
+        </div>
+      )}
+
       {/* 1-Click Page Discovery & Connect (Option 2) */}
       {!isConnected && (
         <div className="rounded-xl border border-border bg-card p-5 shadow-sm space-y-5">
@@ -327,7 +363,7 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
                 1-Click Facebook Page Connect (Instant)
               </h4>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Generate a token in 1 click via Meta Graph API Explorer, then select your page.
+                Paste either a Facebook User Access Token or a direct Page Access Token from Meta Graph API Explorer.
               </p>
             </div>
             <Button
@@ -346,14 +382,24 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">Meta Access Token</Label>
               <div className="flex items-center gap-2">
-                <Input
-                  type="password"
-                  placeholder="Paste token (starts with EAAB... or EAAG...)"
-                  value={userToken}
-                  onChange={(e) => setUserToken(e.target.value)}
-                  className="font-mono text-xs h-9"
-                  required
-                />
+                <div className="relative flex-1">
+                  <Input
+                    type={showUserToken ? "text" : "password"}
+                    placeholder="Paste token (starts with EAAB... or EAAG...)"
+                    value={userToken}
+                    onChange={(e) => setUserToken(e.target.value)}
+                    className="font-mono text-xs h-9 pr-9"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowUserToken((v) => !v)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    aria-label={showUserToken ? "Hide token" : "Show token"}
+                  >
+                    {showUserToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
                 <Button
                   type="submit"
                   disabled={discovering || !userToken.trim()}
@@ -364,7 +410,7 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
                 </Button>
               </div>
               <p className="text-[11px] text-muted-foreground">
-                In Graph API Explorer, click <strong>Generate Access Token</strong> with <code>pages_messaging</code> permission, then paste it here.
+                In Graph API Explorer, select your Page and grant <code>pages_show_list</code>, <code>pages_read_engagement</code> &amp; <code>pages_messaging</code> permissions, then paste the token here.
               </p>
             </div>
           </form>
@@ -417,27 +463,37 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
           <div>
             <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
               <KeyRound className="h-4 w-4 text-blue-600" />
-              Manual Page Token Setup
+              Manual Page / Meta Token Setup
             </h4>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Or paste a specific Page Access Token directly.
+              Or paste a Page Access Token (or User Token with a linked Page) along with your optional App Secret.
             </p>
           </div>
 
           <form onSubmit={handleConnectPage} className="space-y-4">
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Page Access Token *</Label>
-              <Input
-                type="password"
-                placeholder="EAAG..."
-                value={accessToken}
-                onChange={(e) => setAccessToken(e.target.value)}
-                className="font-mono text-xs"
-                required
-              />
+              <Label className="text-xs font-medium">Page / Meta Access Token *</Label>
+              <div className="relative">
+                <Input
+                  type={showAccessToken ? "text" : "password"}
+                  placeholder="EAAG..."
+                  value={accessToken}
+                  onChange={(e) => setAccessToken(e.target.value)}
+                  className="font-mono text-xs pr-9"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowAccessToken((v) => !v)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label={showAccessToken ? "Hide access token" : "Show access token"}
+                >
+                  {showAccessToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium">Facebook Page ID (Optional)</Label>
                 <Input
@@ -447,6 +503,27 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
                   onChange={(e) => setPageId(e.target.value)}
                   className="font-mono text-xs"
                 />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Meta App Secret (Optional)</Label>
+                <div className="relative">
+                  <Input
+                    type={showAppSecret ? "text" : "password"}
+                    placeholder="Required for webhooks"
+                    value={appSecret}
+                    onChange={(e) => setAppSecret(e.target.value)}
+                    className="font-mono text-xs pr-9"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowAppSecret((v) => !v)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    aria-label={showAppSecret ? "Hide app secret" : "Show app secret"}
+                  >
+                    {showAppSecret ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-1.5">
@@ -481,7 +558,7 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
             Meta Webhook Configuration
           </h4>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Configure these parameters in your Meta App Dashboard under <strong>Messenger → Settings → Webhooks</strong>.
+            Configure these parameters in your Meta App Dashboard under <strong>Messenger → Settings → Webhooks</strong>. Webhooks also require a public HTTPS URL and your Meta App Secret.
           </p>
         </div>
 
@@ -491,14 +568,19 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
             <div className="flex items-center gap-2">
               <Input
                 readOnly
-                value={webhookUrl || "Loading webhook URL..."}
+                value={webhookUrl || (browserOrigin ? `${browserOrigin}/api/facebook/webhook` : "Loading webhook URL...")}
                 className="bg-muted/50 font-mono text-xs h-8"
               />
               <Button
                 variant="outline"
                 size="sm"
                 className="h-8 text-xs shrink-0"
-                onClick={() => copyToClipboard(webhookUrl, "webhook")}
+                onClick={() =>
+                  copyToClipboard(
+                    webhookUrl || (browserOrigin ? `${browserOrigin}/api/facebook/webhook` : ""),
+                    "webhook",
+                  )
+                }
               >
                 {copiedWebhook ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
               </Button>
@@ -510,14 +592,16 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
             <div className="flex items-center gap-2">
               <Input
                 readOnly
-                value={defaultVerifyToken || "Loading token..."}
+                value={verifyToken.trim() || defaultVerifyToken || "Loading token..."}
                 className="bg-muted/50 font-mono text-xs h-8"
               />
               <Button
                 variant="outline"
                 size="sm"
                 className="h-8 text-xs shrink-0"
-                onClick={() => copyToClipboard(defaultVerifyToken, "token")}
+                onClick={() =>
+                  copyToClipboard(verifyToken.trim() || defaultVerifyToken, "token")
+                }
               >
                 {copiedToken ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
               </Button>

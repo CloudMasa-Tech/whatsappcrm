@@ -56,6 +56,7 @@ import {
 } from "@/components/interactive/interactive-builder";
 import { validateInteractivePayload } from "@/lib/whatsapp/interactive";
 import type { InteractiveMessagePayload, QuickReply } from "@/types";
+import type { InboxChannel } from "@/lib/inbox/conversations";
 import { QuickReplyPicker } from "./quick-reply-picker";
 
 /** Media content types an agent can send from the composer. */
@@ -113,6 +114,7 @@ interface MediaDraft {
 
 interface MessageComposerProps {
   conversationId: string;
+  conversationChannel?: InboxChannel;
   sessionExpired: boolean;
   onSend: (text: string, replyToId?: string) => void;
   onSendMedia: (payload: SendMediaPayload) => void;
@@ -136,6 +138,7 @@ const OPUS_ENCODER_PATH = "/opus/encoderWorker.min.js";
 
 export function MessageComposer({
   conversationId,
+  conversationChannel = "whatsapp",
   sessionExpired,
   onSend,
   onSendMedia,
@@ -146,6 +149,7 @@ export function MessageComposer({
   onSendInternalNote,
 }: MessageComposerProps) {
   const t = useTranslations("Inbox.composer");
+  const isInstagramChannel = conversationChannel === "instagram";
 
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -841,10 +845,12 @@ export function MessageComposer({
                 <Video className="mr-2 h-4 w-4" />
                 {t("video")}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => documentInputRef.current?.click()}>
-                <FileText className="mr-2 h-4 w-4" />
-                {t("document")}
-              </DropdownMenuItem>
+              {!isInstagramChannel && (
+                <DropdownMenuItem onClick={() => documentInputRef.current?.click()}>
+                  <FileText className="mr-2 h-4 w-4" />
+                  {t("document")}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => void startRecording()}>
                 <Mic className="mr-2 h-4 w-4" />
                 {t("voiceNote")}
@@ -869,18 +875,22 @@ export function MessageComposer({
               <Plus className="h-4 w-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="border-border bg-popover">
-              <DropdownMenuItem onClick={() => openInteractiveBuilder()}>
-                <MessageSquareDashed className="mr-2 h-4 w-4" />
-                {t("interactiveMessage")}
-              </DropdownMenuItem>
+              {!isInstagramChannel && (
+                <DropdownMenuItem onClick={() => openInteractiveBuilder()}>
+                  <MessageSquareDashed className="mr-2 h-4 w-4" />
+                  {t("interactiveMessage")}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => setQuickReplyOpen(true)}>
                 <Zap className="mr-2 h-4 w-4" />
                 {t("quickReplies")}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={onOpenTemplates} className="sm:hidden">
-                <LayoutTemplate className="mr-2 h-4 w-4" />
-                {t("sendTemplate")}
-              </DropdownMenuItem>
+              {!isInstagramChannel && (
+                <DropdownMenuItem onClick={onOpenTemplates} className="sm:hidden">
+                  <LayoutTemplate className="mr-2 h-4 w-4" />
+                  {t("sendTemplate")}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={handleDraft} className="sm:hidden">
                 <Sparkles className="mr-2 h-4 w-4" />
                 {t("draftWithAI")}
@@ -888,17 +898,19 @@ export function MessageComposer({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <GatedButton
-            variant="ghost"
-            size="sm"
-            canAct={!readOnly}
-            gateReason="send messages"
-            title={readOnly ? undefined : t("sendTemplate")}
-            className="hidden sm:inline-flex h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground"
-            onClick={onOpenTemplates}
-          >
-            <LayoutTemplate className="h-4 w-4" />
-          </GatedButton>
+          {!isInstagramChannel && (
+            <GatedButton
+              variant="ghost"
+              size="sm"
+              canAct={!readOnly}
+              gateReason="send messages"
+              title={readOnly ? undefined : t("sendTemplate")}
+              className="hidden sm:inline-flex h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+              onClick={onOpenTemplates}
+            >
+              <LayoutTemplate className="h-4 w-4" />
+            </GatedButton>
+          )}
 
           <GatedButton
             variant="ghost"

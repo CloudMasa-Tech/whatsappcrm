@@ -22,6 +22,7 @@ import type {
   ConversationReminder,
 } from "@/types";
 import { fetchAccountMembers } from "@/lib/account/members";
+import { resolveChannel } from "@/lib/inbox/conversations";
 import {
   MessageSquare,
   ChevronDown,
@@ -277,10 +278,32 @@ export function MessageThread({
 
   const channelStatus = useChannelStatus(conversation?.project_id ?? null);
   const isQrChannel = channelStatus.channel === "qr";
+  const activeChannel = conversation ? resolveChannel(conversation) : "whatsapp";
+  const isInstagramChannel = activeChannel === "instagram";
+  const [igConnectionMethod, setIgConnectionMethod] = useState<"direct" | "cloud_api" | null>(null);
 
-  // 24-hour session timer (Meta Cloud API only — QR has no 24h window limit)
+  useEffect(() => {
+    if (!isInstagramChannel) {
+      setIgConnectionMethod(null);
+      return;
+    }
+    let cancelled = false;
+    fetch("/api/instagram/config", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.config?.connection_method) {
+          setIgConnectionMethod(data.config.connection_method);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isInstagramChannel, conversation?.project_id]);
+
+  // 24-hour session timer (Meta Cloud API only — WhatsApp QR & IG Direct have no 24h window limit)
   const sessionInfo = useMemo(() => {
-    if (isQrChannel) {
+    if (isQrChannel || (isInstagramChannel && igConnectionMethod === "direct")) {
       return { expired: false, remaining: "" };
     }
 
@@ -307,7 +330,7 @@ export function MessageThread({
         : tTimer("xmRemaining", { minutes: Math.floor(hoursLeft * 60) });
 
     return { expired, remaining };
-  }, [messages, tTimer, isQrChannel]);
+  }, [messages, tTimer, isQrChannel, isInstagramChannel, igConnectionMethod]);
 
   // Store latest callback in a ref so fetchMessages doesn't need to
   // depend on `onMessagesLoaded` — otherwise parent re-renders cause
@@ -1167,8 +1190,13 @@ export function MessageThread({
         ];
       });
 
+      const reactEndpoint =
+        resolveChannel(conversation) === "instagram"
+          ? "/api/instagram/react"
+          : "/api/whatsapp/react";
+
       try {
-        const res = await fetch("/api/whatsapp/react", {
+        const res = await fetch(reactEndpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message_id: messageId, emoji }),
@@ -1780,6 +1808,7 @@ export function MessageThread({
       {/* Composer */}
       <MessageComposer
         conversationId={conversation.id}
+        conversationChannel={activeChannel}
         sessionExpired={sessionInfo.expired}
         onSend={handleSend}
         onSendMedia={handleSendMedia}

@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import type { Contact, Deal, ContactNote, Tag } from "@/types";
+import Link from "next/link";
 import {
   Phone,
   Mail,
@@ -16,6 +17,7 @@ import {
   StickyNote,
   Plus,
   ExternalLink,
+  LifeBuoy,
 } from "lucide-react";
 import { Instagram } from "@/components/icons/instagram";
 import { Button } from "@/components/ui/button";
@@ -196,6 +198,15 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                 <span className="truncate">{contact.email}</span>
               </div>
             )}
+
+            <Link
+              href={`/tickets?subject=${encodeURIComponent("Issue with " + (contact.name || formattedPhone || "Customer"))}`}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-amber-500 hover:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 transition-colors"
+            >
+              <LifeBuoy className="h-3.5 w-3.5 shrink-0" />
+              <span className="flex-1 text-left">Escalate / Support Ticket</span>
+              <ExternalLink className="h-3 w-3" />
+            </Link>
           </div>
 
           {/* Divider */}

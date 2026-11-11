@@ -21,6 +21,7 @@
     "whatsapp": "WhatsApp",
     "instagram": "Instagram",
     "facebook": "Facebook",
+    "linkedin": "LinkedIn",
     "pipelines": "Pipelines",
     "broadcasts": "Broadcasts",
     "campaigns": "Email Campaigns",
@@ -29,6 +30,7 @@
     "automations": "Automations",
     "flows": "Flows",
     "aiAgents": "AI Agents",
+    "tickets": "Support Tickets",
     "admin": "Admin Panel",
     "settings": "Settings",
     "beta": "Beta",
@@ -92,6 +94,7 @@
     "whatsapp": "WhatsApp",
     "instagram": "Instagram",
     "facebook": "Facebook",
+    "linkedin": "LinkedIn",
     "pipelines": "Pipelines",
     "broadcasts": "Broadcasts",
     "automations": "Automations",
@@ -1819,6 +1822,7 @@
       "customers": "Customers",
       "projects": "Projects",
       "templates": "Template Approvals",
+      "tickets": "Support Tickets",
       "settings": "Settings"
     },
     "templates": {

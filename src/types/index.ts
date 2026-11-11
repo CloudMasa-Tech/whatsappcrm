@@ -118,9 +118,11 @@ export interface Contact {
   email?: string;
   company?: string;
   avatar_url?: string;
-  channel?: 'whatsapp' | 'instagram' | string;
+  channel?: 'whatsapp' | 'instagram' | 'facebook' | 'email' | 'linkedin' | string;
   instagram_id?: string;
   instagram_username?: string;
+  linkedin_urn?: string;
+  linkedin_url?: string;
   created_at: string;
   updated_at: string;
   /** Hydrated by queries that embed `contact_tags(tags(*))` (e.g. the

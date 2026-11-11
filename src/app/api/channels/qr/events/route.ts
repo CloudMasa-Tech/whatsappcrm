@@ -4,9 +4,7 @@ import { createClient } from '@supabase/supabase-js'
 import { verifySignatureHeader } from '@/lib/webhooks/sign'
 import { ingestInboundMessage } from '@/lib/inbound/ingest'
 import { cleanupSyncedWhatsAppContacts } from '@/lib/contacts/cleanup-synced'
-import { findExistingContact } from '@/lib/contacts/dedupe'
 import { resolveAuditUserId } from '@/lib/api/v1/contacts'
-import { ensureContactDeal } from '@/lib/deals/auto-lead'
 import type { InboundMessage, MessageKind } from '@/lib/channels/types'
 
 // ============================================================
@@ -84,9 +82,14 @@ export function parseInbound(raw: unknown): InboundMessage | null {
   let media: InboundMessage['media'] = null
   if (p.media && typeof p.media === 'object') {
     const m = p.media as Record<string, unknown>
-    // Only accept media we can actually render — an arbitrary URL from
-    // the wire becomes an <img src> in the inbox.
-    if (typeof m.url === 'string' && /^https?:\/\//i.test(m.url)) {
+    // Only accept safe HTTP(S) URLs or authenticated same-origin cached media proxies.
+    if (
+      typeof m.url === 'string' &&
+      (/^https?:\/\//i.test(m.url) ||
+        m.url.startsWith('/api/whatsapp/qr/media?ref=') ||
+        m.url.startsWith('/api/whatsapp/media/') ||
+        m.url.startsWith('/api/instagram/dm-media?ref='))
+    ) {
       media = {
         url: m.url,
         mimeType: typeof m.mimeType === 'string' ? m.mimeType : 'application/octet-stream',
@@ -180,14 +183,20 @@ async function applyReaction(raw: unknown): Promise<void> {
   }
 }
 
-/** Sync contact names arriving from WhatsApp address book / chat sync in bulk. */
+/**
+ * Sync contact names from WhatsApp address book without polluting Inbox
+ * conversations. Passive pairing events only enrich existing CRM contact names;
+ * explicit manual syncs import contacts into Contacts only (no Inbox threads).
+ */
 async function applyContactsBatch(raw: unknown): Promise<void> {
   if (!raw || typeof raw !== 'object') return
   const p = raw as {
     projectId?: string
+    manual?: boolean
     contacts?: Array<{ phone: string; name?: string | null }>
   }
   if (!isUuid(p.projectId) || !Array.isArray(p.contacts) || p.contacts.length === 0) return
+  const isManualSync = p.manual === true
 
   const { data: project } = await supabaseAdmin()
     .from('projects')
@@ -275,7 +284,7 @@ async function applyContactsBatch(raw: unknown): Promise<void> {
           existing.name = name
         }
       }
-    } else if (ownerUserId && !seenDigits.has(digits)) {
+    } else if (isManualSync && ownerUserId && !seenDigits.has(digits)) {
       seenDigits.add(digits)
       newContactsToInsert.push({
         account_id: accountId,
@@ -287,45 +296,11 @@ async function applyContactsBatch(raw: unknown): Promise<void> {
     }
   }
 
-  // 3. Bulk insert new contacts in chunks of 100
-  const insertedContacts: Array<{ id: string; phone: string; name: string | null }> = []
-  for (let i = 0; i < newContactsToInsert.length; i += 100) {
-    const chunk = newContactsToInsert.slice(i, i + 100)
-    const { data: inserted, error: insertError } = await supabaseAdmin()
-      .from('contacts')
-      .insert(chunk)
-      .select('id, phone, name')
-
-    if (!insertError && inserted) {
-      insertedContacts.push(...inserted)
-    }
-  }
-
-  // 4. Bulk insert open conversations for all new contacts
-  if (insertedContacts.length > 0 && ownerUserId) {
-    const convRows = insertedContacts.map((c) => ({
-      account_id: accountId,
-      project_id: p.projectId as string,
-      user_id: ownerUserId,
-      contact_id: c.id,
-      status: 'open' as const,
-    }))
-
-    for (let i = 0; i < convRows.length; i += 100) {
-      const chunk = convRows.slice(i, i + 100)
-      await supabaseAdmin().from('conversations').insert(chunk)
-    }
-
-    // Ensure deals asynchronously
-    for (const c of insertedContacts) {
-      void ensureContactDeal(supabaseAdmin(), {
-        contactId: c.id,
-        projectId: p.projectId,
-        accountId,
-        userId: ownerUserId,
-        name: c.name,
-        phone: c.phone,
-      })
+  // 3. Bulk insert new contacts into Contacts directory only on explicit manual sync
+  if (isManualSync && newContactsToInsert.length > 0) {
+    for (let i = 0; i < newContactsToInsert.length; i += 100) {
+      const chunk = newContactsToInsert.slice(i, i + 100)
+      await supabaseAdmin().from('contacts').insert(chunk)
     }
   }
 

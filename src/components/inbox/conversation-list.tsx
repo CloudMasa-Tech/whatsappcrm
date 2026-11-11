@@ -175,49 +175,7 @@ export function ConversationList({
         return;
       }
 
-      let conversationList = data ?? [];
-
-      // Auto-sync: If there are project contacts without a conversation row, create them
-      if (activeProjectId && user) {
-        try {
-          const { data: projectContacts } = await supabase
-            .from("contacts")
-            .select("id, name, phone, channel, created_at, account_id")
-            .eq("project_id", activeProjectId);
-
-          if (projectContacts && projectContacts.length > 0) {
-            const existingContactIds = new Set(conversationList.map((c: any) => c.contact_id));
-            const missing = projectContacts.filter((c) => !existingContactIds.has(c.id));
-
-            if (missing.length > 0 && !cancelled) {
-              const newConvRows = missing.map((c) => ({
-                user_id: user.id,
-                account_id: c.account_id,
-                project_id: activeProjectId,
-                contact_id: c.id,
-                channel: c.channel || (c.phone?.startsWith("ig_") ? "instagram" : "whatsapp"),
-                status: "open" as const,
-                unread_count: 0,
-                last_message_text: null,
-                last_message_at: c.created_at || new Date().toISOString(),
-              }));
-
-              const { data: createdConvs } = await supabase
-                .from("conversations")
-                .insert(newConvRows)
-                .select(CONVERSATION_SELECT);
-
-              if (createdConvs && createdConvs.length > 0) {
-                conversationList = [...conversationList, ...createdConvs];
-              }
-            }
-          }
-        } catch (syncErr) {
-          console.warn("[conversation-list] contact sync notice:", syncErr);
-        }
-      }
-
-      onConversationsLoadedRef.current(normalizeConversations(conversationList));
+      onConversationsLoadedRef.current(normalizeConversations(data ?? []));
       setLoading(false);
     })();
 

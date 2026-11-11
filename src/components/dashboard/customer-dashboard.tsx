@@ -194,8 +194,9 @@ export function CustomerDashboard() {
       const res = await fetch("/api/instagram/config", { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
-        setInstagramConnected(Boolean(data.connected));
-        setInstagramUsername(data.username ?? null);
+        const igStatus = data.config?.status === "connected" || Boolean(data.connected);
+        setInstagramConnected(igStatus);
+        setInstagramUsername(data.config?.username ?? data.username ?? null);
       }
     } catch {
       setInstagramConnected(false);
@@ -208,8 +209,9 @@ export function CustomerDashboard() {
       const res = await fetch("/api/facebook/config", { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
-        setFacebookConnected(Boolean(data.connected));
-        setFacebookPageName(data.page_name ?? null);
+        const fbStatus = data.config?.status === "connected" || Boolean(data.connected);
+        setFacebookConnected(fbStatus);
+        setFacebookPageName(data.config?.page_name ?? data.page_name ?? null);
       }
     } catch {
       setFacebookConnected(false);

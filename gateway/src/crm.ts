@@ -51,6 +51,7 @@ export interface ReactionEventPayload {
 
 export interface ContactsEventPayload {
   projectId: string;
+  manual?: boolean;
   contacts: Array<{
     phone: string;
     name?: string | null;

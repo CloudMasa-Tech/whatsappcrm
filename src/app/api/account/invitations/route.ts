@@ -131,7 +131,7 @@ function getBaseUrl(request: Request): string {
       "[POST /api/account/invitations] could not derive base URL from request; falling back to marketing domain",
     );
   }
-  return "https://crm.cloudmasa.com";
+  return "https://masacrm.cloudmasa.com";
 }
 
 const MAX_LABEL_LEN = 80;

@@ -64,6 +64,12 @@
     - [12.3 SSRF Protection on External Media](#123-ssrf-protection-on-external-media)
 13. [End-to-End Operational Walkthrough (The Complete Lifecycle)](#13-end-to-end-operational-walkthrough-the-complete-lifecycle)
 14. [Troubleshooting & Frequently Asked Questions (FAQ)](#14-troubleshooting--frequently-asked-questions-faq)
+15. [Support Ticketing System & Help Desk Operations](#15-support-ticketing-system--help-desk-operations)
+    - [15.1 Submitting a Support Ticket (Users & Project Admins)](#151-submitting-a-support-ticket-users--project-admins)
+    - [15.2 Real-Time Email Routing to Super Admin (`info@cloudmasa.com`)](#152-real-time-email-routing-to-super-admin-infocloudmasacom)
+    - [15.3 Quick-Escalation from Inbox Contact Sidebar](#153-quick-escalation-from-inbox-contact-sidebar)
+    - [15.4 Super Admin Resolution Console (`/admin/tickets`)](#154-super-admin-resolution-console-admintickets)
+    - [15.5 Two-Way Reply Threads & Status Updates](#155-two-way-reply-threads--status-updates)
 
 ---
 
@@ -528,4 +534,79 @@ Here is how the entire system functions together in a real-world enterprise scen
 
 ---
 
+## 15. Support Ticketing System & Help Desk Operations
+
+CloudMaSa CRM features an enterprise Support Ticketing system designed to bridge communication between project teams (Agents, Project Admins) and CloudMaSa Platform Super Admins. Every submitted ticket triggers immediate multi-party notification dispatch directly to the Super Admin inbox (`info@cloudmasa.com`).
+
+```
+┌─────────────────────────┐               ┌─────────────────────────────────┐
+│ Project Agent / Admin   │               │ CloudMaSa Super Admin           │
+│ Portal: /tickets        │               │ Console: /admin/tickets         │
+└────────────┬────────────┘               └────────────────┬────────────────┘
+             │                                             │
+             │ 1. Submits Ticket                           │
+             ▼                                             │
+┌─────────────────────────┐                                │
+│ Next.js API             ├─────── 2. Instant Email Alert  │
+│ /api/tickets            │        to info@cloudmasa.com ──┼──────┐
+└────────────┬────────────┘                                │      │
+             │                                             │      ▼
+             ▼                                             │ ┌───────────────┐
+┌─────────────────────────┐                                │ │ info@         │
+│ PostgreSQL / Supabase   │                                │ │ cloudmasa.com │
+│ tickets + replies       │                                │ └───────────────┘
+└────────────┬────────────┘                                │
+             │                                             │
+             │ 3. View / Reply                             │ 4. Resolve / Update
+             └─────────────────────────────────────────────┘
+```
+
+### 15.1 Submitting a Support Ticket (Users & Project Admins)
+1. In the main navigation sidebar, click **"Support Tickets"** (or navigate to `/tickets`).
+2. The Tickets dashboard displays metrics: **Total Tickets**, **Open / In Progress**, **Resolved**, and **Urgent Priority**.
+3. Click **"New Ticket"**:
+   - **Ticket Subject**: e.g., *"WhatsApp QR code disconnecting intermittently"*
+   - **Category**: Technical Issue, Bug Report, Feature Request, Billing & Subscription, General Inquiry, or WhatsApp Gateway.
+   - **Priority**: Low, Medium, High, or Urgent.
+   - **Description**: Detailed explanation of the observed issue, steps to reproduce, and impact.
+   - **Media Attachments**: Upload screenshots, screen recordings, log files, or PDF error logs directly.
+4. Click **"Submit Ticket"**.
+   - A sequential reference ID is assigned automatically (e.g. `TCK-00104`).
+   - The submitter instantly receives an on-screen confirmation and an automated email receipt.
+
+### 15.2 Real-Time Email Routing to Super Admin (`info@cloudmasa.com`)
+- The moment a ticket is created, the system triggers `sendTicketCreatedSuperAdminEmail()`:
+  - **Recipient**: `info@cloudmasa.com` (CloudMaSa Central Support Super Admin).
+  - **Subject Line**: `[SUPPORT TICKET: URGENT] TCK-00104 - <Subject>`
+  - **Body Payload**:
+    - Project / Account Name & Project ID.
+    - Submitter Full Name & Contact Email.
+    - Category & Priority badge.
+    - Full issue description and clickable attachment previews.
+    - Direct 1-Click Action Link: `https://<app-domain>/admin/tickets?ticketId=<ticket-uuid>` allowing the Super Admin to jump directly into the resolution drawer.
+
+### 15.3 Quick-Escalation from Inbox Contact Sidebar
+- When an agent is conversing with a customer in `/inbox` and identifies an underlying technical glitch or gateway issue:
+  - Expand the right-hand **Contact Details Sidebar**.
+  - Under the quick-action row, click **"Escalate / Support Ticket"**.
+  - The ticket submission modal pre-populates with the customer's phone number, conversation ID, and recent context, allowing 5-second technical escalation without losing customer focus.
+
+### 15.4 Super Admin Resolution Console (`/admin/tickets`)
+Super Admins access the centralized ticketing queue under the Super Admin portal (`/admin/tickets`):
+1. **Platform-Wide Queue**: Filter by Account / Project, Status (`open`, `in_progress`, `resolved`, `closed`), Priority (`low`, `medium`, `high`, `urgent`), and Category.
+2. **Deep-Link Auto-Focus**: Opening an email alert link automatically opens the ticket drawer with the complete history.
+3. **1-Click Status Transitions**:
+   - Change ticket status from `Open` to `In Progress`, `Resolved`, or `Closed`.
+   - Provide **Resolution Notes** explaining the fix or remediation applied.
+   - An automated status-update notification is dispatched to the submitter's email.
+
+### 15.5 Two-Way Reply Threads & Status Updates
+- Both the user and Super Admin can hold a conversational thread within the ticket:
+  - **Public Reply**: Visible to both parties with email notifications dispatched to the other party.
+  - **Internal Note** (Admin only): Marked in yellow/amber, visible only to Super Admins for internal diagnostics and audit records.
+- When an issue is resolved, the ticket moves to the **Resolved** tab and remains accessible for historical reference.
+
+---
+
 *Documentation maintained by CloudMaSa Engineering • CloudMaSa CRM (MaSa CRM).*
+

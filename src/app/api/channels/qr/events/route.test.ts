@@ -147,6 +147,44 @@ describe("parseInbound", () => {
     const parsedTime = Date.parse(result!.timestamp);
     expect(parsedTime).toBeGreaterThanOrEqual(before);
   });
+
+  it("accepts authenticated cached media proxy URLs and rejects unsafe schemes", () => {
+    const qrProxy = parseInbound({
+      projectId: validProjectId,
+      from: "+1234567890",
+      externalId: "msg-010",
+      kind: "image",
+      media: {
+        url: "/api/whatsapp/qr/media?ref=abc123",
+        mimeType: "image/jpeg",
+      },
+    });
+    expect(qrProxy?.media?.url).toBe("/api/whatsapp/qr/media?ref=abc123");
+
+    const unsafe = parseInbound({
+      projectId: validProjectId,
+      from: "+1234567890",
+      externalId: "msg-011",
+      kind: "image",
+      media: {
+        url: "javascript:alert(1)",
+        mimeType: "image/jpeg",
+      },
+    });
+    expect(unsafe?.media).toBeNull();
+
+    const arbitraryPath = parseInbound({
+      projectId: validProjectId,
+      from: "+1234567890",
+      externalId: "msg-012",
+      kind: "image",
+      media: {
+        url: "/api/admin/users",
+        mimeType: "image/jpeg",
+      },
+    });
+    expect(arbitraryPath?.media).toBeNull();
+  });
 });
 
 describe("Event type routing", () => {

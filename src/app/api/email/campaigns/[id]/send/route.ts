@@ -21,6 +21,11 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { sendEmail } from '@/lib/email/transport';
 import { applyMergeFields, prepareTrackedBody } from '@/lib/email/tracking';
 import {
+  ensureEmailHtml,
+  htmlToPlainText,
+  resolveSendMergeValues,
+} from '@/lib/email/campaign-helpers';
+import {
   appendEmailMessage,
   ensureContactForEmail,
   ensureEmailConversation,
@@ -71,12 +76,6 @@ export async function POST(
       { status: 409 },
     );
   }
-  if (campaign.status === 'sent') {
-    return NextResponse.json(
-      { error: 'This campaign has already been sent' },
-      { status: 409 },
-    );
-  }
 
   const { data: recipients, error: recipErr } = await db
     .from('email_campaign_recipients')
@@ -89,7 +88,7 @@ export async function POST(
   }
   if (!recipients || recipients.length === 0) {
     return NextResponse.json(
-      { error: 'This campaign has no pending recipients' },
+      { error: 'This campaign has no pending recipients. Add new emails first to send again.' },
       { status: 400 },
     );
   }
@@ -100,26 +99,29 @@ export async function POST(
   let failed = 0;
 
   for (const recipient of recipients) {
-    const mergeFields = {
-      name: recipient.name,
-      email: recipient.email,
-    };
+    const { subjectFields, bodyFields } = resolveSendMergeValues(recipient);
+    const trackingToken = recipient.tracking_token || '';
 
-    const subject = applyMergeFields(campaign.subject, mergeFields);
+    const subject = applyMergeFields(campaign.subject, subjectFields);
+    const renderedBodyHtml = applyMergeFields(
+      ensureEmailHtml(campaign.body_html),
+      bodyFields,
+    );
     const html = prepareTrackedBody({
-      html: applyMergeFields(campaign.body_html, mergeFields),
-      token: recipient.tracking_token,
-      trackOpens: campaign.track_opens !== false,
-      trackClicks: campaign.track_clicks !== false,
+      html: renderedBodyHtml,
+      token: trackingToken,
+      trackOpens: Boolean(trackingToken) && campaign.track_opens !== false,
+      trackClicks: Boolean(trackingToken) && campaign.track_clicks !== false,
     });
+    const textBody = campaign.body_text
+      ? applyMergeFields(campaign.body_text, bodyFields)
+      : htmlToPlainText(renderedBodyHtml);
 
     const result = await sendEmail({
       to: recipient.email,
       subject,
       html,
-      text: campaign.body_text
-        ? applyMergeFields(campaign.body_text, mergeFields)
-        : undefined,
+      text: textBody || undefined,
       fromName: campaign.from_name ?? undefined,
       fromEmail: campaign.from_email ?? undefined,
       replyTo: campaign.reply_to ?? undefined,
@@ -175,7 +177,7 @@ export async function POST(
             projectId: campaign.project_id,
             senderType: 'agent',
             subject,
-            bodyText: campaign.body_text || subject,
+            bodyText: textBody || subject,
             emailMessageId: result.messageId ?? null,
             // Outbound: the agent sent it, so nothing to mark unread.
             incrementUnread: false,
@@ -205,13 +207,19 @@ export async function POST(
     if (SEND_DELAY_MS > 0) await sleep(SEND_DELAY_MS);
   }
 
+  const totalSent = (campaign.sent_count ?? 0) + sent;
+  const totalFailed = (campaign.failed_count ?? 0) + failed;
+  const nextStatus =
+    totalSent > 0 ? 'sent' : failed === recipients.length ? 'failed' : 'sent';
+
   const { data: updated } = await db
     .from('email_campaigns')
     .update({
-      status: failed === recipients.length ? 'failed' : 'sent',
-      sent_count: (campaign.sent_count ?? 0) + sent,
-      failed_count: (campaign.failed_count ?? 0) + failed,
+      status: nextStatus,
+      sent_count: totalSent,
+      failed_count: totalFailed,
       sent_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     })
     .eq('id', id)
     .select('*')

@@ -15,7 +15,8 @@ import { NextResponse } from 'next/server';
 
 import { getCurrentProject, requireProjectRole } from '@/lib/auth/project';
 import { toErrorResponse } from '@/lib/auth/account';
-import { encrypt } from '@/lib/whatsapp/encryption';
+import { sanitizeAccessToken } from '@/lib/instagram/meta-client';
+import { saveFacebookPageConfig } from '@/lib/facebook/config-store';
 import { verifyFacebookPageToken } from '@/lib/facebook/meta-client';
 
 /** Columns safe to return to the browser — no token columns. */
@@ -83,7 +84,9 @@ export async function POST(request: Request) {
     }
 
     const accessToken =
-      typeof body.access_token === 'string' ? body.access_token.trim() : '';
+      typeof body.access_token === 'string'
+        ? sanitizeAccessToken(body.access_token)
+        : '';
     if (!accessToken) {
       return NextResponse.json(
         { error: 'A Facebook Page access token is required' },
@@ -110,32 +113,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const verifyToken =
-      (typeof body.verify_token === 'string' && body.verify_token.trim()) ||
-      `masacrm_fb_${ctx.projectId.slice(0, 8)}`;
-    const appSecret =
-      typeof body.app_secret === 'string' && body.app_secret.trim()
-        ? body.app_secret.trim()
-        : null;
-
-    const { error: upsertErr } = await ctx.supabase.from('facebook_config').upsert(
-      {
-        account_id: ctx.accountId,
-        project_id: ctx.projectId,
-        user_id: ctx.userId,
-        page_id: profile.id,
-        page_name: profile.name,
-        profile_picture_url: profile.profilePictureUrl,
-        access_token: encrypt(accessToken),
-        verify_token: encrypt(verifyToken),
-        app_secret: appSecret ? encrypt(appSecret) : null,
-        status: 'connected',
-        last_error: null,
-        connected_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'project_id' },
-    );
+    const { data: savedConfig, error: upsertErr } = await saveFacebookPageConfig({
+      ctx,
+      profile,
+      fallbackAccessToken: accessToken,
+      verifyToken: typeof body.verify_token === 'string' ? body.verify_token : null,
+      appSecret: typeof body.app_secret === 'string' ? body.app_secret : null,
+    });
 
     if (upsertErr) {
       if (
@@ -159,7 +143,16 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ success: true, profile });
+    return NextResponse.json({
+      success: true,
+      profile,
+      config: savedConfig ?? {
+        page_id: profile.id,
+        page_name: profile.name,
+        profile_picture_url: profile.profilePictureUrl,
+        status: 'connected',
+      },
+    });
   } catch (err) {
     return toErrorResponse(err);
   }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getCurrentAccount, requireRole, toErrorResponse } from "@/lib/auth/account";
 import { resolveProject } from "@/lib/auth/project";
+import { disconnectSession, isGatewayConfigured } from "@/lib/channels/gateway";
 import { supabaseAdmin } from "@/lib/flows/admin-client";
 
 // PATCH — rename, archive or restore a project.
@@ -136,21 +137,42 @@ export async function DELETE(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  // Refuse to delete the last project in an account
-  const { count, error: countError } = await admin
-    .from("projects")
-    .select("id", { count: "exact", head: true })
-    .eq("account_id", project.account_id);
+  // Check total projects on the platform and inside this project's account.
+  // Allow Super Admin to delete external/orphan accounts' sole project (like an
+  // unused "Default" workspace), while protecting the platform's last project
+  // and any Super Admin's home account from losing its only workspace.
+  const [{ count: totalCount, error: totalErr }, { count: accountProjectCount, error: countError }] =
+    await Promise.all([
+      admin.from("projects").select("id", { count: "exact", head: true }),
+      admin
+        .from("projects")
+        .select("id", { count: "exact", head: true })
+        .eq("account_id", project.account_id),
+    ]);
 
-  if (countError) {
-    console.error("[projects DELETE] count error:", countError);
+  if (totalErr || countError) {
+    console.error("[projects DELETE] count error:", totalErr || countError);
     return NextResponse.json({ error: "Failed to verify account projects" }, { status: 500 });
   }
-  if ((count ?? 0) <= 1) {
+  if ((totalCount ?? 0) <= 1) {
     return NextResponse.json(
-      { error: "Cannot delete the only project in an account. Create another first." },
+      { error: "Cannot delete the last remaining project on the platform. Create another first." },
       { status: 409 },
     );
+  }
+  if ((accountProjectCount ?? 0) <= 1) {
+    const { count: superAdminsOnAccount } = await admin
+      .from("profiles")
+      .select("user_id", { count: "exact", head: true })
+      .eq("account_id", project.account_id)
+      .eq("platform_role", "super_admin");
+
+    if (project.account_id === auth.accountId || (superAdminsOnAccount ?? 0) > 0) {
+      return NextResponse.json(
+        { error: "Cannot delete the only project in a Super Admin account. Create another first." },
+        { status: 409 },
+      );
+    }
   }
 
   try {
@@ -175,7 +197,7 @@ export async function DELETE(
     );
 
     // 2. Protect super administrators from being deleted
-    let superAdminUserIds = new Set<string>();
+    const superAdminUserIds = new Set<string>();
     superAdminUserIds.add(auth.userId);
 
     if (targetUserIds.length > 0) {
@@ -193,22 +215,44 @@ export async function DELETE(
 
     const usersToDelete = targetUserIds.filter((uid) => !superAdminUserIds.has(uid));
 
-    // 3. Delete each assigned user (Auth, Profile, Memberships, Customer records)
+    // 3. Remove memberships in this project and delete users who have no other project left
+    let deletedUsersCount = 0;
     for (const uid of usersToDelete) {
       try {
+        await admin
+          .from("project_members")
+          .delete()
+          .eq("project_id", id)
+          .eq("user_id", uid);
+
+        const { count: otherMemberships } = await admin
+          .from("project_members")
+          .select("project_id", { count: "exact", head: true })
+          .eq("user_id", uid);
+
+        if ((otherMemberships ?? 0) > 0) {
+          continue;
+        }
+
         await admin.from("onboarded_customers").delete().eq("user_id", uid);
-        await admin.from("project_members").delete().eq("user_id", uid);
         await admin.from("profiles").delete().eq("user_id", uid);
         const { error: authErr } = await admin.auth.admin.deleteUser(uid);
         if (authErr) {
           console.warn(`[projects DELETE] auth deleteUser warning for ${uid}:`, authErr.message);
         }
+        deletedUsersCount++;
       } catch (userErr) {
         console.error(`[projects DELETE] error deleting user ${uid}:`, userErr);
       }
     }
 
-    // 4. Delete/clean all child workspace data
+    // 4. Disconnect any live gateway QR socket & clean all child workspace data
+    if (isGatewayConfigured()) {
+      await disconnectSession(id).catch(() => {});
+    }
+
+    await admin.from("conversation_reminders").delete().eq("project_id", id);
+    await admin.from("support_tickets").delete().eq("project_id", id);
     await admin.from("messages").delete().eq("project_id", id);
     await admin.from("conversations").delete().eq("project_id", id);
     await admin.from("contact_notes").delete().eq("project_id", id);
@@ -217,7 +261,6 @@ export async function DELETE(
     await admin.from("pipelines").delete().eq("project_id", id);
     await admin.from("broadcast_recipients").delete().eq("project_id", id);
     await admin.from("broadcasts").delete().eq("project_id", id);
-    await admin.from("email_campaign_recipients").delete().eq("project_id", id);
     await admin.from("email_campaigns").delete().eq("project_id", id);
     await admin.from("email_configs").delete().eq("project_id", id);
     await admin.from("automation_logs").delete().eq("project_id", id);
@@ -227,8 +270,11 @@ export async function DELETE(
     await admin.from("flows").delete().eq("project_id", id);
     await admin.from("message_templates").delete().eq("project_id", id);
     await admin.from("whatsapp_config").delete().eq("project_id", id);
-    await admin.from("qr_sessions").delete().eq("project_id", id);
+    await admin.from("whatsapp_session_keys").delete().eq("project_id", id);
+    await admin.from("whatsapp_sessions").delete().eq("project_id", id);
+    await admin.from("facebook_config").delete().eq("project_id", id);
     await admin.from("instagram_config").delete().eq("project_id", id);
+    await admin.from("linkedin_config").delete().eq("project_id", id);
     await admin.from("ai_knowledge_chunks").delete().eq("project_id", id);
     await admin.from("ai_knowledge_documents").delete().eq("project_id", id);
     await admin.from("ai_configs").delete().eq("project_id", id);
@@ -249,10 +295,22 @@ export async function DELETE(
       return NextResponse.json({ error: "Failed to delete project: " + delErr.message }, { status: 500 });
     }
 
+    // 6. Clean up empty orphan account if this was its last project & no profiles remain
+    if ((accountProjectCount ?? 0) <= 1 && project.account_id !== auth.accountId) {
+      const { count: remainingProfiles } = await admin
+        .from("profiles")
+        .select("user_id", { count: "exact", head: true })
+        .eq("account_id", project.account_id);
+
+      if ((remainingProfiles ?? 0) === 0) {
+        await admin.from("accounts").delete().eq("id", project.account_id);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       deleted_id: id,
-      deleted_users_count: usersToDelete.length,
+      deleted_users_count: deletedUsersCount,
     });
   } catch (err: unknown) {
     console.error("[projects DELETE] exception:", err);

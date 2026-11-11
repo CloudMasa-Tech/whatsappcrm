@@ -9,6 +9,7 @@ import {
 } from '@/lib/whatsapp/meta-api'
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { engineSendToInstagram } from '@/lib/instagram/engine-send'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -69,6 +70,24 @@ export async function engineSendText(
   args: SendTextEngineArgs,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  const { data: convChannelRow } = await db
+    .from('conversations')
+    .select('channel')
+    .eq('id', args.conversationId)
+    .maybeSingle()
+
+  if (convChannelRow?.channel === 'instagram') {
+    const { externalMessageId } = await engineSendToInstagram({
+      projectId: args.projectId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      kind: 'text',
+      text: args.text,
+      aiGenerated: args.aiGenerated,
+    })
+    return { whatsapp_message_id: externalMessageId }
+  }
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
@@ -184,6 +203,24 @@ export async function engineSendMedia(
   args: SendMediaEngineArgs,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  const { data: convChannelRow } = await db
+    .from('conversations')
+    .select('channel')
+    .eq('id', args.conversationId)
+    .maybeSingle()
+
+  if (convChannelRow?.channel === 'instagram') {
+    const { externalMessageId } = await engineSendToInstagram({
+      projectId: args.projectId,
+      conversationId: args.conversationId,
+      contactId: args.contactId,
+      kind: args.kind,
+      text: args.caption,
+      mediaUrl: args.link,
+    })
+    return { whatsapp_message_id: externalMessageId }
+  }
 
   const { data: contact, error: contactErr } = await db
     .from('contacts')
@@ -341,6 +378,41 @@ async function sendInteractiveViaMeta(
   input: SendInput,
 ): Promise<{ whatsapp_message_id: string }> {
   const db = supabaseAdmin()
+
+  const { data: convChannelRow } = await db
+    .from('conversations')
+    .select('channel')
+    .eq('id', input.conversationId)
+    .maybeSingle()
+
+  if (convChannelRow?.channel === 'instagram') {
+    const interactivePayload: InteractiveMessagePayload =
+      input.kind === 'buttons'
+        ? {
+            kind: 'buttons',
+            body: input.bodyText,
+            header: input.headerText,
+            footer: input.footerText,
+            buttons: input.buttons,
+          }
+        : {
+            kind: 'list',
+            body: input.bodyText,
+            header: input.headerText,
+            footer: input.footerText,
+            button_label: input.buttonLabel,
+            sections: input.sections,
+          }
+    const { externalMessageId } = await engineSendToInstagram({
+      projectId: input.projectId,
+      conversationId: input.conversationId,
+      contactId: input.contactId,
+      kind: 'interactive',
+      text: input.bodyText,
+      interactivePayload,
+    })
+    return { whatsapp_message_id: externalMessageId }
+  }
 
   // Scope the contact + whatsapp_config lookups by account_id —
   // same defense-in-depth rationale as automations/meta-send.ts.

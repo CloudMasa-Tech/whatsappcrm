@@ -11,7 +11,7 @@ import {
   validateSendMessageParams,
   SendMessageError,
 } from '@/lib/whatsapp/send-message'
-import { sendInstagramMessage } from '@/lib/instagram/send-message'
+import { sendInstagramMessage, InstagramSendError } from '@/lib/instagram/send-message'
 
 // The dashboard's outbound-send endpoint. It owns auth, per-user rate
 // limiting, and the two ways the UI targets a thread — an existing
@@ -194,6 +194,9 @@ export async function POST(request: Request) {
           userId: user.id,
           contentText: content_text,
           mediaUrl: media_url,
+          mediaType: message_type,
+          filename,
+          replyToMessageId: reply_to_message_id,
         })
 
         return NextResponse.json({
@@ -202,6 +205,12 @@ export async function POST(request: Request) {
           instagram_message_id: result.externalMessageId,
         })
       } catch (err: unknown) {
+        if (err instanceof InstagramSendError) {
+          return NextResponse.json(
+            { error: err.message, code: err.code },
+            { status: err.status }
+          )
+        }
         return NextResponse.json(
           { error: err instanceof Error ? err.message : 'Failed to send Instagram message' },
           { status: 500 }

@@ -9,12 +9,16 @@ import { NextResponse } from 'next/server';
 
 import { getCurrentAccount, toErrorResponse, UnauthorizedError } from '@/lib/auth/account';
 import { getCurrentProject } from '@/lib/auth/project';
+import { parseRecipientInput } from '@/lib/email/campaign-helpers';
+import {
+  insertCampaignRecipients,
+  resolveAudienceRecipients,
+} from '@/lib/email/campaign-recipients';
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
 const MAX_NAME_LEN = 120;
 const MAX_SUBJECT_LEN = 200;
-const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
 export async function GET(request: Request) {
   try {
@@ -85,6 +89,7 @@ export async function POST(request: Request) {
     trackOpens?: unknown;
     trackClicks?: unknown;
     recipients?: unknown;
+    contactIds?: unknown;
   } | null;
 
   if (!body) {
@@ -215,68 +220,45 @@ export async function POST(request: Request) {
 
   // Resolve the audience now, so the draft shows a recipient count
   // before it is sent.
-  let audience: { email: string; name: string | null; contact_id: string | null }[] = [];
+  const hasExplicitRecipients =
+    (typeof body.recipients === 'string' && body.recipients.trim().length > 0) ||
+    (Array.isArray(body.recipients) && body.recipients.length > 0);
+  const parsedRecipients = hasExplicitRecipients
+    ? parseRecipientInput(body.recipients as string | string[])
+    : [];
+  const contactIds = Array.isArray(body.contactIds)
+    ? body.contactIds.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+    : [];
 
-  if (Array.isArray(body.recipients) && body.recipients.length > 0) {
-    audience = body.recipients
-      .filter((r): r is string => typeof r === 'string')
-      .map((r) => r.trim().toLowerCase())
-      .filter((r) => EMAIL_RE.test(r))
-      .map((email) => ({ email, name: null, contact_id: null }));
-  } else {
-    let contactQuery = db
-      .from('contacts')
-      .select('id, name, email')
-      .eq('account_id', ctx.accountId)
-      .not('email', 'is', null);
-
-    if (resolvedProjectId) contactQuery = contactQuery.eq('project_id', resolvedProjectId);
-
-    const { data: contacts } = await contactQuery;
-
-    audience = (contacts ?? [])
-      .filter((c) => typeof c.email === 'string' && EMAIL_RE.test(c.email))
-      .map((c) => ({
-        email: (c.email as string).toLowerCase(),
-        name: c.name ?? null,
-        contact_id: c.id,
-      }));
-  }
-
-  const seen = new Set<string>();
-  const unique = audience.filter((a) => {
-    if (seen.has(a.email)) return false;
-    seen.add(a.email);
-    return true;
+  const unique = await resolveAudienceRecipients(db, {
+    accountId: ctx.accountId,
+    projectId: resolvedProjectId,
+    parsedRecipients,
+    contactIds,
+    useAllContacts: !hasExplicitRecipients && contactIds.length === 0,
   });
 
+  let totalRecipients = 0;
   if (unique.length > 0) {
-    const { error: recipErr } = await db.from('email_campaign_recipients').insert(
-      unique.map((a) => ({
-        campaign_id: campaign.id,
-        contact_id: a.contact_id,
-        email: a.email,
-        name: a.name,
-        status: 'pending',
-      })),
-    );
+    const insertResult = await insertCampaignRecipients(db, {
+      campaignId: campaign.id,
+      candidates: unique,
+      allowResendExisting: false,
+    });
 
-    if (recipErr) {
-      console.error('[POST /api/email/campaigns] recipients insert error:', recipErr);
+    if (insertResult.error) {
+      console.error('[POST /api/email/campaigns] recipients insert error:', insertResult.error);
       return NextResponse.json(
         { error: 'Campaign created but the audience could not be saved' },
         { status: 500 },
       );
     }
 
-    await db
-      .from('email_campaigns')
-      .update({ total_recipients: unique.length })
-      .eq('id', campaign.id);
+    totalRecipients = insertResult.totalRecipients;
   }
 
   return NextResponse.json(
-    { campaign: { ...campaign, total_recipients: unique.length } },
+    { campaign: { ...campaign, total_recipients: totalRecipients } },
     { status: 201 },
   );
 }

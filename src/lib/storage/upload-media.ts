@@ -61,6 +61,26 @@ export function buildMediaPath(
   return `account-${accountId}/${now}-${safeBase}.${ext}`;
 }
 
+/**
+ * Project-scoped storage path matching migration 044 (`storage_path_project_id`):
+ *   account-<account_id>/project-<project_id>/<timestamp>-<basename>.<ext>
+ */
+export function buildProjectMediaPath(
+  accountId: string,
+  projectId: string,
+  fileName: string,
+  now: number = Date.now(),
+): string {
+  const hasExt = /\.[^.]+$/.test(fileName);
+  const ext = hasExt ? fileName.split(".").pop()!.toLowerCase() : "bin";
+  const safeBase =
+    fileName
+      .replace(/\.[^.]+$/, "")
+      .replace(/[^a-zA-Z0-9_-]+/g, "_")
+      .slice(0, 40) || "file";
+  return `account-${accountId}/project-${projectId}/${now}-${safeBase}.${ext}`;
+}
+
 export interface UploadAccountMediaResult {
   /** Public URL Meta can fetch at send time. */
   publicUrl: string;

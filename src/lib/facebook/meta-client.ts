@@ -1,10 +1,16 @@
 /**
  * Meta Graph API calls for the Facebook Page connection.
  *
- * Mirrors src/lib/instagram/meta-client.ts — Facebook Messenger and
- * Instagram DM are the same Messenger Platform, so the credential shape
- * and failure modes are identical.
+ * Mirrors src/lib/instagram/meta-client.ts — supports both direct Page
+ * Access Tokens and User Access Tokens (automatically resolving linked Pages
+ * and Page Access Tokens via /me/accounts) while rejecting raw User profiles
+ * so a personal User ID is never saved in place of a Page ID.
  */
+
+import {
+  sanitizeAccessToken,
+  validateMetaTokenShape,
+} from '@/lib/instagram/meta-client';
 
 const GRAPH_VERSION = 'v21.0';
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -13,69 +19,167 @@ export interface FacebookPageProfile {
   id: string;
   name: string;
   profilePictureUrl: string | null;
+  category?: string | null;
+  pageAccessToken?: string | null;
 }
 
 interface GraphError {
   error?: { message?: string; type?: string; code?: number };
 }
 
+interface GraphPageNode {
+  id?: string;
+  name?: string;
+  category?: string;
+  access_token?: string;
+  picture?: { data?: { url?: string } };
+  error?: GraphError['error'];
+}
+
+function validateFacebookTokenInput(rawToken: string): string {
+  const cleanToken = sanitizeAccessToken(rawToken);
+  try {
+    validateMetaTokenShape(cleanToken);
+  } catch (err) {
+    throw new Error(err instanceof Error ? err.message : 'Invalid Facebook Access Token.');
+  }
+  if (/^IG[A-Z0-9]/i.test(cleanToken)) {
+    throw new Error(
+      'You pasted an Instagram Login token (IGAA...). Facebook Messenger requires a Facebook User or Page Access Token (starts with EAA...).',
+    );
+  }
+  return cleanToken;
+}
+
 /**
- * Confirm a Page access token works and return the Page it belongs to.
- *
- * A **Page** access token is required, not a User token. Calling `/me`
- * with a User token returns the person, not the Page, and messaging
- * calls would later fail with a confusing permission error — so the
- * token's own identity is what gets read here.
- *
- * Throws with a human-readable message; the caller turns that into a
- * 400 so the operator sees what Meta actually said.
+ * Confirm a Page or User access token resolves to a real Facebook Page and
+ * return its Page ID, Page name, avatar, and Page Access Token.
  */
 export async function verifyFacebookPageToken(
   accessToken: string,
   pageId?: string,
 ): Promise<FacebookPageProfile> {
-  // Reading the token's identity avoids trusting a caller-supplied id.
-  const target = pageId?.trim() || 'me';
+  const cleanToken = validateFacebookTokenInput(accessToken);
+  const requestedPageId = pageId?.trim() || '';
+
+  // 1. Check /me/accounts first so a Facebook User Token (EAA...) automatically
+  //    resolves to the managed Page and its Page Access Token instead of reading
+  //    the personal User profile on /me.
+  let accountsSawUserNode = false;
+  try {
+    const accountsUrl =
+      `${GRAPH_BASE}/me/accounts` +
+      `?fields=id,name,category,access_token,picture{url}&access_token=${encodeURIComponent(cleanToken)}`;
+    const accRes = await fetch(accountsUrl, { cache: 'no-store' });
+    const accPayload = (await accRes.json().catch(() => ({}))) as GraphError & {
+      data?: GraphPageNode[];
+    };
+
+    if (accRes.ok && !accPayload.error) {
+      accountsSawUserNode = true;
+      const pages = (accPayload.data ?? []).filter((p) => p.id && p.name);
+
+      if (pages.length > 0) {
+        if (requestedPageId) {
+          const matched = pages.find((p) => p.id === requestedPageId);
+          if (!matched) {
+            const list = pages
+              .slice(0, 5)
+              .map((p) => `${p.name} (${p.id})`)
+              .join(', ');
+            throw new Error(
+              `Page ID ${requestedPageId} was not found under this token. Available Pages: ${list}.`,
+            );
+          }
+          return {
+            id: matched.id!,
+            name: matched.name!,
+            category: matched.category ?? null,
+            profilePictureUrl: matched.picture?.data?.url ?? null,
+            pageAccessToken: matched.access_token || cleanToken,
+          };
+        }
+
+        if (pages.length === 1) {
+          const only = pages[0];
+          return {
+            id: only.id!,
+            name: only.name!,
+            category: only.category ?? null,
+            profilePictureUrl: only.picture?.data?.url ?? null,
+            pageAccessToken: only.access_token || cleanToken,
+          };
+        }
+
+        const list = pages
+          .slice(0, 5)
+          .map((p) => `${p.name} (${p.id})`)
+          .join(', ');
+        throw new Error(
+          `Multiple Facebook Pages found (${list}). Enter the Facebook Page ID or use "1-Click Facebook Page Connect" above to choose one.`,
+        );
+      }
+
+      if (!requestedPageId) {
+        throw new Error(
+          'This Facebook User token returned 0 Pages. Ensure you selected at least one Facebook Page and granted pages_show_list + pages_messaging permissions, or paste a Page Access Token.',
+        );
+      }
+    } else if (accPayload.error && accPayload.error.code !== 100) {
+      throw new Error(
+        `Meta rejected the credentials: ${accPayload.error.message ?? `Graph API returned ${accRes.status}`}`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof Error && !/Failed to parse|fetch failed/i.test(err.message)) {
+      if (/Meta rejected|Page ID|Multiple Facebook Pages|0 Pages/i.test(err.message)) {
+        throw err;
+      }
+    } else if (err instanceof Error) {
+      throw new Error(`Could not reach the Meta Graph API: ${err.message}`);
+    }
+  }
+
+  // 2. Direct Page lookup (/me for a Page Access Token, or /{pageId} if specified).
+  //    Request `category` so a User node is rejected instead of saved as a Page.
+  const target = requestedPageId || 'me';
   const url =
     `${GRAPH_BASE}/${encodeURIComponent(target)}` +
-    `?fields=id,name,picture{url}&access_token=${encodeURIComponent(accessToken)}`;
+    `?fields=id,name,category,picture{url}&access_token=${encodeURIComponent(cleanToken)}`;
 
   let response: Response;
   try {
-    response = await fetch(url, {
-      // Never cache a credential check.
-      cache: 'no-store',
-    });
+    response = await fetch(url, { cache: 'no-store' });
   } catch (err) {
     throw new Error(
       `Could not reach the Meta Graph API: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
-  const payload = (await response.json().catch(() => ({}))) as GraphError & {
-    id?: string;
-    name?: string;
-    picture?: { data?: { url?: string } };
-  };
+  const payload = (await response.json().catch(() => ({}))) as GraphPageNode;
 
   if (!response.ok || payload.error) {
+    if (payload.error?.code === 100 && accountsSawUserNode) {
+      throw new Error(
+        'That token is a User token and cannot access the requested Facebook Page. Select the Page in Graph API Explorer and grant pages_show_list + pages_messaging.',
+      );
+    }
+    if (payload.error?.code === 100 && !requestedPageId) {
+      throw new Error(
+        'That token is a Facebook User token rather than a Page token. Grant pages_show_list permission or paste a Page Access Token.',
+      );
+    }
     const message = payload.error?.message ?? `Graph API returned ${response.status}`;
     throw new Error(`Meta rejected the credentials: ${message}`);
   }
 
-  if (!payload.id) {
-    throw new Error('Meta did not return a Page id for this token.');
-  }
-
-  // A User token answers /me with a person. Catch it here rather than
-  // letting the first send fail hours later.
-  if (!payload.name) {
+  if (!payload.id || !payload.name) {
     throw new Error(
-      'That token does not resolve to a Facebook Page. Use a Page access token, not a User token.',
+      'That token does not resolve to a Facebook Page. Use a Page Access Token or User Token with Page permissions.',
     );
   }
 
-  if (pageId?.trim() && payload.id !== pageId.trim()) {
+  if (requestedPageId && payload.id !== requestedPageId) {
     throw new Error(
       `Token belongs to Page ${payload.id}, which does not match the Page ID you entered.`,
     );
@@ -84,7 +188,9 @@ export async function verifyFacebookPageToken(
   return {
     id: payload.id,
     name: payload.name,
+    category: payload.category ?? null,
     profilePictureUrl: payload.picture?.data?.url ?? null,
+    pageAccessToken: cleanToken,
   };
 }
 
@@ -201,15 +307,24 @@ export interface FacebookDiscoveredPage {
 }
 
 /**
- * Fetch all Facebook Pages associated with a User Access Token.
+ * Fetch all Facebook Pages associated with a User Access Token, or fall back
+ * cleanly when the user pasted a Page Access Token directly.
  */
 export async function fetchUserFacebookPages(
   userAccessToken: string,
 ): Promise<FacebookDiscoveredPage[]> {
-  const cleanToken = userAccessToken.trim();
+  const cleanToken = validateFacebookTokenInput(userAccessToken);
   const url = `${GRAPH_BASE}/me/accounts?fields=id,name,category,access_token,picture{url}&access_token=${encodeURIComponent(cleanToken)}`;
 
-  const response = await fetch(url, { cache: 'no-store' });
+  let response: Response;
+  try {
+    response = await fetch(url, { cache: 'no-store' });
+  } catch (err) {
+    throw new Error(
+      `Could not reach the Meta Graph API: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   const payload = (await response.json().catch(() => ({}))) as {
     data?: Array<{
       id: string;
@@ -218,10 +333,25 @@ export async function fetchUserFacebookPages(
       access_token: string;
       picture?: { data?: { url?: string } };
     }>;
-    error?: { message?: string };
+    error?: { message?: string; code?: number };
   };
 
   if (!response.ok || payload.error) {
+    // If the user pasted a Page Access Token directly, /me/accounts throws #100
+    // ("Tried accessing nonexisting field (accounts) on node type (Page)").
+    if (payload.error?.code === 100) {
+      const page = await verifyFacebookPageToken(cleanToken);
+      return [
+        {
+          id: page.id,
+          name: page.name,
+          category: page.category ?? undefined,
+          accessToken: page.pageAccessToken || cleanToken,
+          profilePictureUrl: page.profilePictureUrl,
+        },
+      ];
+    }
+
     throw new Error(
       payload.error?.message ?? `Failed to fetch Facebook Pages (${response.status})`,
     );
@@ -232,7 +362,7 @@ export async function fetchUserFacebookPages(
     id: p.id,
     name: p.name,
     category: p.category,
-    accessToken: p.access_token,
+    accessToken: p.access_token || cleanToken,
     profilePictureUrl: p.picture?.data?.url ?? null,
   }));
 }

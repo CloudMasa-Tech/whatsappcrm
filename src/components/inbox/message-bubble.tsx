@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import { isCacheableProxyMediaUrl, resolveCachedMediaObjectUrl } from "@/lib/media/client-cache";
 import type { Message, MessageReaction } from "@/types";
 import {
   Clock,
@@ -56,42 +57,67 @@ function MediaUnavailable({ label, t }: { label: string, t: ReturnType<typeof us
   );
 }
 
-function MediaImage({ url, alt }: { url: string; alt: string }) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  const loadImage = useCallback(async () => {
-    if (!url) return;
-
-    // Proxy URLs need auth fetch to create blob URL
-    if (url.startsWith("/api/whatsapp/media/")) {
-      try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error("Failed to load media");
-        const blob = await res.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        setSrc(blobUrl);
-      } catch {
-        setError(true);
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      setSrc(url);
-      setLoading(false);
-    }
-  }, [url]);
+function useCachedMediaUrl(url: string | null | undefined) {
+  const isProxy = isCacheableProxyMediaUrl(url);
+  const [resolved, setResolved] = useState<{
+    forUrl: string;
+    src: string | null;
+    error: boolean;
+  } | null>(null);
+  const [manualErrorForUrl, setManualErrorForUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    loadImage();
+    if (!url || !isProxy) return;
+
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    resolveCachedMediaObjectUrl(url)
+      .then((res) => {
+        if (cancelled) {
+          if (res.startsWith("blob:")) URL.revokeObjectURL(res);
+          return;
+        }
+        if (res.startsWith("blob:")) objectUrl = res;
+        setResolved({ forUrl: url, src: res, error: false });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setResolved({ forUrl: url, src: null, error: true });
+        }
+      });
+
     return () => {
-      if (src?.startsWith("blob:")) {
-        URL.revokeObjectURL(src);
+      cancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadImage]);
+  }, [url, isProxy]);
+
+  if (!url) {
+    return { src: null, error: false, loading: false, markError: () => {} };
+  }
+  if (!isProxy) {
+    return {
+      src: url,
+      error: manualErrorForUrl === url,
+      loading: false,
+      markError: () => setManualErrorForUrl(url),
+    };
+  }
+
+  const matched = resolved?.forUrl === url ? resolved : null;
+  return {
+    src: matched?.src ?? null,
+    error: Boolean(matched?.error) || manualErrorForUrl === url,
+    loading: !matched,
+    markError: () => setManualErrorForUrl(url),
+  };
+}
+
+function MediaImage({ url, alt }: { url: string; alt: string }) {
+  const { src, error, loading, markError } = useCachedMediaUrl(url);
 
   if (error) {
     return (
@@ -101,7 +127,7 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
     );
   }
 
-  if (loading) {
+  if (loading || !src) {
     return (
       <div className="flex h-40 w-60 items-center justify-center rounded-lg bg-muted">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
@@ -111,12 +137,45 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
 
   return (
     <img
-      src={src ?? ""}
+      src={src}
       alt={alt}
       className="max-h-64 max-w-60 rounded-lg object-cover"
-      onError={() => setError(true)}
+      onError={markError}
     />
   );
+}
+
+function MediaVideo({ url, t }: { url: string; t: ReturnType<typeof useTranslations> }) {
+  const { src, error, loading, markError } = useCachedMediaUrl(url);
+  if (error) return <MediaUnavailable label={t("video")} t={t} />;
+  if (loading || !src) {
+    return (
+      <div className="flex h-36 w-60 items-center justify-center rounded-lg bg-muted">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    );
+  }
+  return (
+    <video
+      src={src}
+      controls
+      className="max-h-64 max-w-60 rounded-lg"
+      onError={markError}
+    />
+  );
+}
+
+function MediaAudio({ url, t }: { url: string; t: ReturnType<typeof useTranslations> }) {
+  const { src, error, loading, markError } = useCachedMediaUrl(url);
+  if (error) return <MediaUnavailable label={t("audio")} t={t} />;
+  if (loading || !src) {
+    return (
+      <div className="flex h-10 w-52 items-center justify-center rounded-lg bg-muted/60">
+        <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    );
+  }
+  return <audio src={src} controls className="max-w-60" onError={markError} />;
 }
 
 function MessageContent({ message, t }: { message: Message, t: ReturnType<typeof useTranslations> }) {
@@ -148,11 +207,7 @@ function MessageContent({ message, t }: { message: Message, t: ReturnType<typeof
       return (
         <div>
           {message.media_url ? (
-            <video
-              src={message.media_url}
-              controls
-              className="max-h-64 max-w-60 rounded-lg"
-            />
+            <MediaVideo url={message.media_url} t={t} />
           ) : (
             <MediaUnavailable label={t("video")} t={t} />
           )}
@@ -168,7 +223,7 @@ function MessageContent({ message, t }: { message: Message, t: ReturnType<typeof
       return (
         <div>
           {message.media_url ? (
-            <audio src={message.media_url} controls className="max-w-60" />
+            <MediaAudio url={message.media_url} t={t} />
           ) : (
             <MediaUnavailable label={t("audio")} t={t} />
           )}

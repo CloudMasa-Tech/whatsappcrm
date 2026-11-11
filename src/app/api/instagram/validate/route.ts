@@ -1,52 +1,47 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentProject } from "@/lib/auth/project";
+import { requireProjectRole } from "@/lib/auth/project";
 import { toErrorResponse } from "@/lib/auth/account";
+import { normalizeHandle } from "@/lib/instagram/direct-client";
 
 export const dynamic = "force-dynamic";
 
 const DEFAULT_USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 export async function POST(request: NextRequest) {
   try {
-    await getCurrentProject().catch(() => null);
+    await requireProjectRole("admin");
     const body = await request.json().catch(() => null);
-
     const rawUsername = body?.username?.trim() || "";
 
     if (!rawUsername) {
       return NextResponse.json({ error: "Username is required." }, { status: 400 });
     }
 
-    // Check if user entered an email address
     if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawUsername)) {
       return NextResponse.json(
         {
-          error: "It looks like you entered an email address. Please enter your Instagram username/handle (e.g. cloudmasa_innovation) instead.",
+          error:
+            "It looks like you entered an email address. Please enter your Instagram handle (e.g. cloudmasa_innovation) instead.",
           isEmail: true,
         },
         { status: 400 },
       );
     }
 
-    // Clean up handle from full URL or @ prefix
-    let cleanHandle = rawUsername
-      .replace(/^https?:\/\/(www\.)?instagram\.com\//i, "")
-      .replace(/\/.*$/, "")
-      .replace(/^@+/, "")
-      .trim();
+    const cleanHandle = normalizeHandle(rawUsername);
 
-    // Instagram usernames only allow letters, numbers, periods, and underscores, max 30 chars
     if (!/^[a-zA-Z0-9._]{1,30}$/.test(cleanHandle)) {
       return NextResponse.json(
         {
-          error: "Invalid Instagram username format. Usernames can only contain letters, numbers, periods, and underscores (max 30 characters).",
+          error:
+            "Invalid Instagram username format. Usernames can only contain letters, numbers, periods, and underscores (max 30 characters).",
         },
         { status: 400 },
       );
     }
 
-    // Fetch public profile info from Instagram
+    // 1. Check web_profile_info
     try {
       const res = await fetch(
         `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(cleanHandle)}`,
@@ -59,6 +54,13 @@ export async function POST(request: NextRequest) {
           cache: "no-store",
         },
       );
+
+      if (res.status === 404) {
+        return NextResponse.json(
+          { valid: false, error: `Instagram account @${cleanHandle} does not exist.` },
+          { status: 404 },
+        );
+      }
 
       if (res.ok) {
         const data = await res.json();
@@ -77,14 +79,14 @@ export async function POST(request: NextRequest) {
         }
       }
     } catch {
-      // Fallback
+      // Fall through to oEmbed check
     }
 
-    // If Instagram web API was rate-limited or blocked, attempt oEmbed validation
+    // 2. Fallback oEmbed verification
     try {
       const oembedRes = await fetch(
         `https://api.instagram.com/oembed/?url=https://www.instagram.com/${encodeURIComponent(cleanHandle)}/`,
-        { headers: { "User-Agent": DEFAULT_USER_AGENT } },
+        { headers: { "User-Agent": DEFAULT_USER_AGENT }, cache: "no-store" },
       );
       if (oembedRes.ok) {
         const oembedData = await oembedRes.json();
@@ -92,17 +94,18 @@ export async function POST(request: NextRequest) {
           valid: true,
           username: oembedData.author_name || cleanHandle,
           name: oembedData.author_name || cleanHandle,
-          profilePictureUrl: "",
+          profilePictureUrl: oembedData.thumbnail_url || "",
           isVerified: false,
         });
       }
     } catch {
-      // Fallback
+      // Rate-limited or unreachable
     }
 
-    // Return valid structured username
+    // Never falsely confirm account existence when Meta could not verify it
     return NextResponse.json({
-      valid: true,
+      valid: false,
+      unverified: true,
       username: cleanHandle,
       name: cleanHandle,
       profilePictureUrl: "",

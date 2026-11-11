@@ -4,7 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { sendOnboardingWelcomeEmail } from '@/lib/email/onboarding';
 
 function signInUrl(): string {
-  const site = (process.env.NEXT_PUBLIC_SITE_URL || 'https://crm.cloudmasa.com').trim().replace(/\/+$/, '');
+  const site = (process.env.NEXT_PUBLIC_SITE_URL || 'https://masacrm.cloudmasa.com').trim().replace(/\/+$/, '');
   return `${site}/login`;
 }
 
@@ -66,12 +66,33 @@ export async function POST(request: Request) {
       );
     }
 
-    // Resolve profile details
+    // Resolve profile details + verify caller tenant isolation
     const { data: profile } = await supabaseAdmin()
       .from('profiles')
-      .select('full_name, role, account_role')
+      .select('full_name, role, account_role, account_id, platform_role')
       .eq('user_id', resolvedUserId)
       .maybeSingle();
+
+    if (!profile) {
+      return NextResponse.json(
+        { error: 'User profile not found' },
+        { status: 404 }
+      );
+    }
+
+    if (profile.platform_role === 'super_admin' && ctx.platformRole !== 'super_admin') {
+      return NextResponse.json(
+        { error: 'Cannot reset credentials for a Super Administrator' },
+        { status: 403 }
+      );
+    }
+
+    if (ctx.platformRole !== 'super_admin' && profile.account_id !== ctx.accountId) {
+      return NextResponse.json(
+        { error: 'User does not belong to your organization' },
+        { status: 404 }
+      );
+    }
 
     // Resolve project name
     let projectName = 'Default Workspace';

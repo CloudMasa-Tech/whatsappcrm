@@ -19,7 +19,7 @@ const MIN_PASSWORD_LEN = 8;
 const MAX_NAME_LEN = 80;
 
 function signInUrl(request?: Request): string {
-  const site = (process.env.NEXT_PUBLIC_SITE_URL || 'https://crm.cloudmasa.com').trim().replace(/\/+$/, '');
+  const site = (process.env.NEXT_PUBLIC_SITE_URL || 'https://masacrm.cloudmasa.com').trim().replace(/\/+$/, '');
   return `${site}/login`;
 }
 

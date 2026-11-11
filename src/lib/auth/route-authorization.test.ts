@@ -97,6 +97,7 @@ describe("project-admin endpoints all carry a role gate", () => {
     { path: ["whatsapp", "config"], methods: ["POST", "DELETE"] },
     { path: ["email", "config"], methods: ["POST"] },
     { path: ["facebook", "config"], methods: ["POST", "DELETE"] },
+    { path: ["linkedin", "config"], methods: ["POST", "PATCH", "DELETE"] },
     { path: ["ai", "config"], methods: ["POST"] },
     { path: ["pipelines"], methods: ["POST"] },
   ];

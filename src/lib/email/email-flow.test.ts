@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   applyMergeFields,
@@ -8,6 +10,14 @@ import {
   openTrackingUrl,
   clickTrackingUrl,
 } from './tracking';
+import {
+  ensureEmailHtml,
+  htmlToPlainText,
+  parseRecipientInput,
+  resolveSendMergeValues,
+  STARTER_EMAIL_TEMPLATES,
+} from './campaign-helpers';
+import { insertCampaignRecipients } from './campaign-recipients';
 import { getPresetSmtpConfig } from './presets';
 import { sendEmail, resolveEmailConfig } from './transport';
 
@@ -146,6 +156,130 @@ describe('Email Campaign Flow - Unit & Integration Tests', () => {
       // With a specific project that has no db row, it returns null
       const config = await resolveEmailConfig('non-existent-project-id', 'test-account');
       expect(config).toBeNull();
+    });
+  });
+
+  describe('Campaign Templates, Parsing & Repeat Sends', () => {
+    it('parses plain emails, Name <email> entries, ignores invalid tokens, and deduplicates', () => {
+      const parsed = parseRecipientInput(
+        'alice@example.com\n"Bob Kumar" <BOB@example.com>, not-an-email, alice@example.com; Carol <carol@startup.in>',
+      );
+      expect(parsed).toEqual([
+        { email: 'alice@example.com', name: null },
+        { email: 'bob@example.com', name: 'Bob Kumar' },
+        { email: 'carol@startup.in', name: 'Carol' },
+      ]);
+    });
+
+    it('converts plain text paragraphs safely into HTML while preserving existing HTML', () => {
+      const plain = 'Hi {{name}},\n\nCheck out RegiBIZ <https://regibiz.in>.\nBest,\nTeam';
+      expect(ensureEmailHtml(plain)).toBe(
+        '<p>Hi {{name}},</p>\n\n<p>Check out RegiBIZ &lt;https://regibiz.in&gt;.<br />Best,<br />Team</p>',
+      );
+
+      const html = '<p>Hi {{name}},</p><p><strong>RegiBIZ</strong></p>';
+      expect(ensureEmailHtml(html)).toBe(html);
+      expect(htmlToPlainText(html)).toBe('Hi {{name}},\nRegiBIZ');
+    });
+
+    it('falls back cleanly on blank recipient names for subject & body merge fields', () => {
+      expect(resolveSendMergeValues({ email: 'lead@startup.in', name: null })).toEqual({
+        subjectFields: { name: 'you', email: 'lead@startup.in' },
+        bodyFields: { name: 'there', email: 'lead@startup.in' },
+      });
+      expect(
+        resolveSendMergeValues({ email: 'priya@startup.in', name: 'Priya' }),
+      ).toEqual({
+        subjectFields: { name: 'Priya', email: 'priya@startup.in' },
+        bodyFields: { name: 'Priya', email: 'priya@startup.in' },
+      });
+    });
+
+    it('includes the RegiBIZ First Customer Outreach starter template', () => {
+      const regibiz = STARTER_EMAIL_TEMPLATES.find((t) => t.id === 'regibiz-first-outreach');
+      expect(regibiz).toBeDefined();
+      expect(regibiz?.bodyHtml).toContain('RegiBIZ');
+      expect(regibiz?.bodyHtml).toContain('{{name}}');
+    });
+
+    it('insertCampaignRecipients skips duplicates cleanly unless allowResendExisting is true', async () => {
+      const insertedBatches: Array<Array<Record<string, unknown>>> = [];
+      const mockDb = {
+        from: vi.fn((table: string) => {
+          if (table === 'email_campaign_recipients') {
+            return {
+              select: vi.fn((_cols?: string, opts?: { count?: string; head?: boolean }) => {
+                if (opts?.head) {
+                  return {
+                    eq: vi.fn().mockResolvedValue({ count: 3 }),
+                  };
+                }
+                return {
+                  eq: vi.fn().mockResolvedValue({
+                    data: [
+                      { email: 'sent@example.com', status: 'sent' },
+                      { email: 'queued@example.com', status: 'pending' },
+                    ],
+                    error: null,
+                  }),
+                };
+              }),
+              insert: vi.fn(async (rows: Array<Record<string, unknown>>) => {
+                insertedBatches.push(rows);
+                return { error: null };
+              }),
+            };
+          }
+          if (table === 'email_campaigns') {
+            return {
+              update: vi.fn(() => ({ eq: vi.fn().mockResolvedValue({ error: null }) })),
+            };
+          }
+          throw new Error(`Unexpected table ${table}`);
+        }),
+      };
+
+      const skipRes = await insertCampaignRecipients(mockDb as never, {
+        campaignId: 'camp-1',
+        candidates: [
+          { email: 'sent@example.com', name: 'Already Sent', contact_id: null },
+          { email: 'queued@example.com', name: 'Queued', contact_id: null },
+          { email: 'new@example.com', name: 'New Person', contact_id: 'c-1' },
+        ],
+        allowResendExisting: false,
+      });
+
+      expect(skipRes.addedCount).toBe(1);
+      expect(skipRes.skippedAlreadySent).toBe(1);
+      expect(skipRes.skippedPending).toBe(1);
+      expect(insertedBatches[0]).toHaveLength(1);
+      expect(insertedBatches[0][0].email).toBe('new@example.com');
+
+      const resendRes = await insertCampaignRecipients(mockDb as never, {
+        campaignId: 'camp-1',
+        candidates: [
+          { email: 'sent@example.com', name: 'Already Sent', contact_id: null },
+        ],
+        allowResendExisting: true,
+      });
+
+      expect(resendRes.addedCount).toBe(1);
+      expect(resendRes.skippedAlreadySent).toBe(0);
+    });
+
+    it('allows repeat batch sends on sent campaigns while enforcing account scoping', () => {
+      const sendSrc = readFileSync(
+        join(process.cwd(), 'src', 'app', 'api', 'email', 'campaigns', '[id]', 'send', 'route.ts'),
+        'utf8',
+      );
+      expect(sendSrc).not.toContain("campaign.status === 'sent'");
+      expect(sendSrc).toContain(".eq('status', 'pending')");
+
+      const recipSrc = readFileSync(
+        join(process.cwd(), 'src', 'app', 'api', 'email', 'campaigns', '[id]', 'recipients', 'route.ts'),
+        'utf8',
+      );
+      expect(recipSrc).toContain(".eq('account_id', ctx.accountId)");
     });
   });
 });

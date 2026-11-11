@@ -233,3 +233,67 @@ export function sendViaGateway(params: GatewaySendParams) {
     { method: "POST", body: params, timeoutMs: 45_000 },
   );
 }
+
+export async function fetchMediaViaGateway(
+  projectId: string,
+  ref: string,
+): Promise<{
+  buffer: ArrayBuffer;
+  contentType: string;
+  filename: string | null;
+}> {
+  const { url, token, secret } = gatewayConfig();
+  const rawBody = JSON.stringify({ projectId, ref });
+  const timestamp = Math.floor(Date.now() / 1000);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+
+  let response: Response;
+  try {
+    response = await fetch(`${url}/v1/sessions/${projectId}/media`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+        "x-masacrm-signature": buildSignatureHeader(rawBody, secret, timestamp),
+        "x-wacrm-signature": buildSignatureHeader(rawBody, secret, timestamp),
+      },
+      body: rawBody,
+      signal: controller.signal,
+      cache: "no-store",
+    });
+  } catch (err) {
+    const aborted = err instanceof Error && err.name === "AbortError";
+    throw new GatewayError(
+      aborted ? "gateway_timeout" : "gateway_unreachable",
+      aborted
+        ? "Timed out waiting for WhatsApp gateway media."
+        : `Could not reach the WhatsApp gateway: ${err instanceof Error ? err.message : String(err)}`,
+      504,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as Record<
+      string,
+      unknown
+    > | null;
+    throw new GatewayError(
+      typeof payload?.code === "string" ? payload.code : "gateway_media_error",
+      typeof payload?.error === "string"
+        ? payload.error
+        : `Gateway responded ${response.status}`,
+      response.status >= 500 ? 502 : response.status,
+    );
+  }
+
+  return {
+    buffer: await response.arrayBuffer(),
+    contentType:
+      response.headers.get("content-type") || "application/octet-stream",
+    filename: response.headers.get("x-media-filename"),
+  };
+}

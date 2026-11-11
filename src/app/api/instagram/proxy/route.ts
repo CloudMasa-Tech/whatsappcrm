@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rewriteNavigationUrls } from "@/lib/proxy/rewrite-html";
+import { createClient } from "@/lib/supabase/server";
 
 const ALLOWED_DOMAINS = [
   "instagram.com",
@@ -291,6 +292,16 @@ export async function DELETE(request: NextRequest) {
 }
 
 async function handleProxyRequest(request: NextRequest, method: string) {
+  // Prevent open unauthenticated proxy abuse: require a valid signed-in CRM user.
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const targetUrl = extractTargetUrl(request.url);
 
   const isAjaxOrApi =
@@ -324,7 +335,13 @@ async function handleProxyRequest(request: NextRequest, method: string) {
       });
     }
 
-    const cookieHeader = request.headers.get("cookie") || "";
+    const rawCookieHeader = request.headers.get("cookie") || "";
+    // Never leak CRM Supabase auth / project cookies upstream to Meta servers
+    const cookieHeader = rawCookieHeader
+      .split(";")
+      .map((c) => c.trim())
+      .filter((c) => c && !c.startsWith("sb-") && !c.startsWith("masacrm_project") && !c.startsWith("wacrm_project"))
+      .join("; ");
     const contentTypeReq = request.headers.get("content-type");
 
     let csrfTokenFromCookie = "";
