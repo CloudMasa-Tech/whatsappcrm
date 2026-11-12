@@ -228,3 +228,200 @@ export function resolveSendMergeValues(recipient: {
     },
   };
 }
+
+export const SAMPLE_EMAIL_IMPORT_CSV =
+  'name,email\nPriya Sharma,priya@company.com\nRahul Nair,rahul@startup.in\n';
+
+function parseDelimitedLine(line: string, delimiters: string | string[]): string[] {
+  const delimSet = new Set(Array.isArray(delimiters) ? delimiters : [delimiters]);
+  const cells: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (delimSet.has(ch) && !inQuotes) {
+      cells.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function cleanCell(raw: string | undefined): string {
+  if (!raw) return '';
+  return raw.trim().replace(/^["']+|["']+$/g, '').trim();
+}
+
+export interface EmailImportParseResult {
+  recipients: ParsedRecipient[];
+  totalRows: number;
+  skippedCount: number;
+}
+
+/**
+ * Parses bulk email recipients from uploaded CSV, TSV, or plain-text files.
+ * Supports:
+ *   - Headered CSV/TSV/semicolon files (`email`, `e-mail`, `email_address`, `name`, `first_name` + `last_name`)
+ *   - Headerless two-column rows (`Priya Sharma, priya@company.com` or `priya@company.com, Priya Sharma`)
+ *   - Plain lists with one or more emails per line (`"Priya <priya@company.com>"` or `priya@company.com`)
+ */
+export function parseEmailImportText(text: string): EmailImportParseResult {
+  const cleanText = text.replace(/^\uFEFF/, '').trim();
+  if (!cleanText) {
+    return { recipients: [], totalRows: 0, skippedCount: 0 };
+  }
+
+  const lines = cleanText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return { recipients: [], totalRows: 0, skippedCount: 0 };
+  }
+
+  const firstLine = lines[0];
+  const delimiter = firstLine.includes('\t')
+    ? '\t'
+    : firstLine.includes(';') && !firstLine.includes(',')
+      ? ';'
+      : ',';
+
+  const headerCells = parseDelimitedLine(firstLine, delimiter).map((h) =>
+    cleanCell(h).toLowerCase().replace(/\s+/g, '_'),
+  );
+
+  const emailIdx = headerCells.findIndex((h) =>
+    ['email', 'e-mail', 'email_address', 'emailaddress', 'mail'].includes(h),
+  );
+
+  const byEmail = new Map<string, string | null>();
+  let totalRows = 0;
+  let skippedCount = 0;
+
+  const recordCandidate = (rawEmail: string, rawName?: string | null) => {
+    totalRows += 1;
+    const normalized = rawEmail.trim().toLowerCase();
+    if (!EMAIL_REGEX.test(normalized)) {
+      skippedCount += 1;
+      return;
+    }
+    const cleanName = rawName?.trim() || null;
+    if (!byEmail.has(normalized)) {
+      byEmail.set(normalized, cleanName);
+    } else {
+      skippedCount += 1;
+      if (!byEmail.get(normalized) && cleanName) {
+        byEmail.set(normalized, cleanName);
+      }
+    }
+  };
+
+  if (emailIdx >= 0) {
+    const nameIdx = headerCells.findIndex((h) =>
+      ['name', 'full_name', 'fullname', 'contact_name'].includes(h),
+    );
+    const firstIdx = headerCells.findIndex((h) =>
+      ['first_name', 'firstname'].includes(h),
+    );
+    const lastIdx = headerCells.findIndex((h) =>
+      ['last_name', 'lastname'].includes(h),
+    );
+
+    for (let i = 1; i < lines.length; i++) {
+      const cells = parseDelimitedLine(lines[i], delimiter);
+      const rawEmail = cleanCell(cells[emailIdx]);
+      let fullName = nameIdx >= 0 ? cleanCell(cells[nameIdx]) : '';
+      if (!fullName && (firstIdx >= 0 || lastIdx >= 0)) {
+        fullName = [
+          firstIdx >= 0 ? cleanCell(cells[firstIdx]) : '',
+          lastIdx >= 0 ? cleanCell(cells[lastIdx]) : '',
+        ]
+          .filter(Boolean)
+          .join(' ');
+      }
+      if (!rawEmail && !fullName) continue;
+      recordCandidate(rawEmail, fullName || null);
+    }
+  } else {
+    const angleRegex = /^([^<>]*)<([^<>\s@]+@[^<>\s@]+\.[^<>\s@]+)>\s*$/;
+    for (const line of lines) {
+      const cells = parseDelimitedLine(line, [',', ';', '\t'])
+        .map(cleanCell)
+        .filter(Boolean);
+      const emailCells = cells.filter((c) => EMAIL_REGEX.test(c.toLowerCase()));
+
+      if (emailCells.length === 1 && cells.length === 2) {
+        const other = cells.find((c) => c !== emailCells[0]) ?? '';
+        if (!angleRegex.test(other)) {
+          recordCandidate(emailCells[0], other || null);
+          continue;
+        }
+      }
+
+      for (const cell of cells) {
+        const angleMatch = cell.match(angleRegex);
+        if (angleMatch) {
+          recordCandidate(angleMatch[2], cleanCell(angleMatch[1]) || null);
+        } else if (EMAIL_REGEX.test(cell.toLowerCase())) {
+          recordCandidate(cell, null);
+        } else {
+          const tokens = cell
+            .split(/\s+/)
+            .map((t) => cleanCell(t))
+            .filter(Boolean);
+          for (const token of tokens) {
+            recordCandidate(token, null);
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    recipients: Array.from(byEmail.entries()).map(([email, name]) => ({ email, name })),
+    totalRows,
+    skippedCount,
+  };
+}
+
+export function formatRecipientLine(recipient: ParsedRecipient): string {
+  const safeName = recipient.name
+    ?.replace(/[\r\n,;<>]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return safeName ? `${safeName} <${recipient.email}>` : recipient.email;
+}
+
+/**
+ * Merges newly imported recipients with existing Recipients textarea content,
+ * deduplicating case-insensitively by email and preserving display names.
+ */
+export function mergeImportedRecipientsText(
+  existingText: string,
+  imported: ParsedRecipient[],
+): string {
+  const merged = new Map<string, string | null>();
+  for (const item of [...parseRecipientInput(existingText), ...imported]) {
+    if (!merged.has(item.email)) {
+      merged.set(item.email, item.name);
+    } else if (!merged.get(item.email) && item.name) {
+      merged.set(item.email, item.name);
+    }
+  }
+
+  return Array.from(merged.entries())
+    .map(([email, name]) => formatRecipientLine({ email, name }))
+    .join('\n');
+}

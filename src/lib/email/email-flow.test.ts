@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   applyMergeFields,
   injectOpenPixel,
@@ -13,6 +13,8 @@ import {
 import {
   ensureEmailHtml,
   htmlToPlainText,
+  mergeImportedRecipientsText,
+  parseEmailImportText,
   parseRecipientInput,
   resolveSendMergeValues,
   STARTER_EMAIL_TEMPLATES,
@@ -280,6 +282,31 @@ describe('Email Campaign Flow - Unit & Integration Tests', () => {
         'utf8',
       );
       expect(recipSrc).toContain(".eq('account_id', ctx.accountId)");
+    });
+
+    it('parses bulk CSV/TSV/TXT email imports with BOM, headers, and headerless lines', () => {
+      const bomCsv =
+        '\uFEFF"First Name","Last Name","Email Address"\nPriya,Sharma,PRIYA@company.com\nInvalid,Row,not-email\nRahul,Nair,rahul@startup.in\nPriya,Sharma,priya@company.com';
+      const parsedCsv = parseEmailImportText(bomCsv);
+      expect(parsedCsv.recipients).toEqual([
+        { email: 'priya@company.com', name: 'Priya Sharma' },
+        { email: 'rahul@startup.in', name: 'Rahul Nair' },
+      ]);
+      expect(parsedCsv.skippedCount).toBe(2);
+
+      const headerlessTxt =
+        'Founder One, one@biz.in\ntwo@biz.in\n"Doe, Jane" <jane@biz.in>';
+      const parsedTxt = parseEmailImportText(headerlessTxt);
+      expect(parsedTxt.recipients).toEqual([
+        { email: 'one@biz.in', name: 'Founder One' },
+        { email: 'two@biz.in', name: null },
+        { email: 'jane@biz.in', name: 'Doe, Jane' },
+      ]);
+
+      const merged = mergeImportedRecipientsText('one@biz.in', parsedTxt.recipients);
+      expect(merged).toBe(
+        'Founder One <one@biz.in>\ntwo@biz.in\nDoe Jane <jane@biz.in>',
+      );
     });
   });
 });

@@ -35,6 +35,8 @@ import {
 /** Milliseconds between sends. */
 const SEND_DELAY_MS = 250;
 
+export const maxDuration = 300;
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function POST(

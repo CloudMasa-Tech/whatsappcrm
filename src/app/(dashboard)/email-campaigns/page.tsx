@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   Mail,
   MousePointerClick,
@@ -23,6 +23,9 @@ import {
   Search,
   ChevronDown,
   ChevronUp,
+  Upload,
+  Download,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -44,7 +47,10 @@ import {
 import { cn } from "@/lib/utils";
 import {
   ensureEmailHtml,
+  mergeImportedRecipientsText,
+  parseEmailImportText,
   parseRecipientInput,
+  SAMPLE_EMAIL_IMPORT_CSV,
   STARTER_EMAIL_TEMPLATES,
   type SavedCustomEmailTemplate,
 } from "@/lib/email/campaign-helpers";
@@ -205,6 +211,115 @@ function getTemplatesStorageKey(projectId: string | null | undefined): string {
 }
 
 const emptySubscribe = () => () => {};
+
+function downloadSampleEmailCsv() {
+  const blob = new Blob([SAMPLE_EMAIL_IMPORT_CSV], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "email-recipients-sample.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function RecipientImportBar({
+  value,
+  onChange,
+  parsedCount,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  parsedCount: number;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    if (/\.(xlsx|xls)$/i.test(file.name)) {
+      toast.error(
+        "Excel (.xlsx/.xls) files are binary — save as CSV (.csv) in Excel or Google Sheets and import the .csv file.",
+      );
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      if (text.startsWith("PK\u0003\u0004") || text.startsWith("\uFFFD")) {
+        toast.error("Unsupported binary file — please upload a UTF-8 .csv, .tsv, or .txt file.");
+        return;
+      }
+
+      const result = parseEmailImportText(text);
+      if (result.recipients.length === 0) {
+        toast.error("No valid email addresses found in the uploaded file.");
+        return;
+      }
+
+      onChange(mergeImportedRecipientsText(value, result.recipients));
+      toast.success(
+        `Imported ${result.recipients.length} email(s) from ${file.name}` +
+          (result.skippedCount > 0 ? ` (${result.skippedCount} duplicate/invalid skipped)` : ""),
+      );
+    } catch {
+      toast.error("Failed to read uploaded file.");
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".csv,.txt,.tsv,text/csv,text/plain"
+          className="hidden"
+          onChange={handleFileChange}
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7 px-2.5 text-xs gap-1.5"
+          onClick={() => inputRef.current?.click()}
+        >
+          <Upload className="h-3.5 w-3.5" />
+          Import CSV / TXT
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2 text-xs gap-1 text-muted-foreground hover:text-foreground"
+          onClick={downloadSampleEmailCsv}
+          title="Download sample CSV with name,email columns"
+        >
+          <Download className="h-3 w-3" />
+          Sample CSV
+        </Button>
+        {value.trim() && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs gap-1 text-muted-foreground hover:text-destructive"
+            onClick={() => onChange("")}
+          >
+            <X className="h-3 w-3" />
+            Clear
+          </Button>
+        )}
+      </div>
+      {value.trim() && (
+        <span className="text-xs text-muted-foreground">
+          {parsedCount} valid email{parsedCount === 1 ? "" : "s"} detected
+        </span>
+      )}
+    </div>
+  );
+}
 
 export default function EmailCampaignsPage() {
   const { activeProjectId } = useAuth();
@@ -1150,18 +1265,17 @@ export default function EmailCampaignsPage() {
                   <Label htmlFor="camp-recipients">
                     Recipients <span className="text-xs text-muted-foreground">(Optional)</span>
                   </Label>
-                  {recipients.trim() && (
-                    <span className="text-xs text-muted-foreground">
-                      {parsedNewEmails.length} valid email
-                      {parsedNewEmails.length === 1 ? "" : "s"} detected
-                    </span>
-                  )}
                 </div>
+                <RecipientImportBar
+                  value={recipients}
+                  onChange={setRecipients}
+                  parsedCount={parsedNewEmails.length}
+                />
                 <Textarea
                   id="camp-recipients"
                   rows={3}
                   className="field-sizing-fixed min-h-[76px] max-h-[140px] resize-y overflow-y-auto text-xs"
-                  placeholder='Leave blank to send to all CRM contacts with email, or paste comma/newline emails (e.g. "Priya <priya@company.com>")'
+                  placeholder='Leave blank to send to all CRM contacts with email, import a CSV/TXT file above, or paste emails (e.g. "Priya <priya@company.com>")'
                   value={recipients}
                   onChange={(e) => setRecipients(e.target.value)}
                 />
@@ -1321,22 +1435,21 @@ export default function EmailCampaignsPage() {
                 />
               )}
 
-              {/* Paste Email Input */}
+              {/* Paste or Import Bulk Email Input */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="add-emails-input">Add Email Addresses</Label>
-                  {addEmailsText.trim() && (
-                    <span className="text-xs text-muted-foreground">
-                      {parsedAddEmails.length} valid email
-                      {parsedAddEmails.length === 1 ? "" : "s"}
-                    </span>
-                  )}
                 </div>
+                <RecipientImportBar
+                  value={addEmailsText}
+                  onChange={setAddEmailsText}
+                  parsedCount={parsedAddEmails.length}
+                />
                 <Textarea
                   id="add-emails-input"
                   rows={3}
                   className="field-sizing-fixed min-h-[90px] max-h-[160px] resize-y overflow-y-auto text-xs"
-                  placeholder='Paste emails separated by comma or newline (e.g. client1@domain.com, "Priya <priya@startup.in>")'
+                  placeholder='Import a CSV/TXT list above or paste emails separated by comma/newline (e.g. "Priya <priya@startup.in>")'
                   value={addEmailsText}
                   onChange={(e) => setAddEmailsText(e.target.value)}
                 />

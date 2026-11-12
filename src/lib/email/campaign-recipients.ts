@@ -190,44 +190,47 @@ export async function insertCampaignRecipients(
   }
 
   if (toInsert.length > 0) {
-    const withTokens = toInsert.map((a) => ({
-      campaign_id: params.campaignId,
-      contact_id: a.contact_id,
-      email: a.email,
-      name: a.name,
-      status: 'pending',
-      tracking_token: randomUUID().replace(/-/g, ''),
-    }));
+    const CHUNK_SIZE = 250;
+    let stripTrackingToken = false;
 
-    let { error: insertErr } = await db
-      .from('email_campaign_recipients')
-      .insert(withTokens);
-
-    if (
-      insertErr &&
-      (insertErr.message?.includes('tracking_token') ||
-        insertErr.message?.includes("Could not find the '"))
-    ) {
-      const retry = await db.from('email_campaign_recipients').insert(
-        toInsert.map((a) => ({
+    for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
+      const slice = toInsert.slice(i, i + CHUNK_SIZE);
+      const buildRows = (includeToken: boolean) =>
+        slice.map((a) => ({
           campaign_id: params.campaignId,
           contact_id: a.contact_id,
           email: a.email,
           name: a.name,
           status: 'pending',
-        })),
-      );
-      insertErr = retry.error;
-    }
+          ...(includeToken ? { tracking_token: randomUUID().replace(/-/g, '') } : {}),
+        }));
 
-    if (insertErr) {
-      return {
-        addedCount: 0,
-        skippedAlreadySent,
-        skippedPending,
-        totalRecipients: existingRows?.length ?? 0,
-        error: insertErr.message,
-      };
+      let { error: insertErr } = await db
+        .from('email_campaign_recipients')
+        .insert(buildRows(!stripTrackingToken));
+
+      if (
+        insertErr &&
+        !stripTrackingToken &&
+        (insertErr.message?.includes('tracking_token') ||
+          insertErr.message?.includes("Could not find the '"))
+      ) {
+        stripTrackingToken = true;
+        const retry = await db
+          .from('email_campaign_recipients')
+          .insert(buildRows(false));
+        insertErr = retry.error;
+      }
+
+      if (insertErr) {
+        return {
+          addedCount: i,
+          skippedAlreadySent,
+          skippedPending,
+          totalRecipients: (existingRows?.length ?? 0) + i,
+          error: insertErr.message,
+        };
+      }
     }
   }
 
