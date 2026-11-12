@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { toErrorResponse } from '@/lib/auth/account';
 import { requireProjectRole, requireProject, getCurrentProject } from '@/lib/auth/project';
+import { sanitizeSenderName } from '@/lib/email/campaign-helpers';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
 export async function GET(request: Request) {
@@ -93,7 +94,7 @@ export async function POST(request: Request) {
     const secure = Boolean(body.secure ?? port === 465);
     const user = body.user.trim();
     const pass = body.pass ? body.pass.trim() : '';
-    const fromName = body.fromName?.trim() || 'MaSa CRM';
+    const fromName = sanitizeSenderName(body.fromName) || 'MaSa CRM';
     const fromEmail = body.fromEmail.trim().toLowerCase();
     const replyTo = body.replyTo?.trim() || null;
     const provider = body.provider || 'smtp';

@@ -17,6 +17,7 @@ import {
   parseEmailImportText,
   parseRecipientInput,
   resolveSendMergeValues,
+  sanitizeSenderName,
   STARTER_EMAIL_TEMPLATES,
 } from './campaign-helpers';
 import { insertCampaignRecipients } from './campaign-recipients';
@@ -307,6 +308,25 @@ describe('Email Campaign Flow - Unit & Integration Tests', () => {
       expect(merged).toBe(
         'Founder One <one@biz.in>\ntwo@biz.in\nDoe Jane <jane@biz.in>',
       );
+    });
+
+    it('sanitizes campaign sender names and wires fromName through create and send routes', () => {
+      expect(sanitizeSenderName('  Comlaudi  ')).toBe('Comlaudi');
+      expect(sanitizeSenderName('RegiBIZ\r\n"Team" <vip>')).toBe('RegiBIZ Team vip');
+      expect(sanitizeSenderName('   ')).toBe('');
+
+      const createSrc = readFileSync(
+        join(process.cwd(), 'src', 'app', 'api', 'email', 'campaigns', 'route.ts'),
+        'utf8',
+      );
+      expect(createSrc).toContain('sanitizeSenderName(body.fromName)');
+
+      const transportSrc = readFileSync(
+        join(process.cwd(), 'src', 'lib', 'email', 'transport.ts'),
+        'utf8',
+      );
+      expect(transportSrc).toContain('sanitizeSenderName(options.fromName)');
+      expect(transportSrc).toContain('sanitizeSenderName(config.fromName)');
     });
   });
 });

@@ -50,6 +50,7 @@ import {
   mergeImportedRecipientsText,
   parseEmailImportText,
   parseRecipientInput,
+  sanitizeSenderName,
   SAMPLE_EMAIL_IMPORT_CSV,
   STARTER_EMAIL_TEMPLATES,
   type SavedCustomEmailTemplate,
@@ -61,6 +62,7 @@ interface Campaign {
   subject: string;
   body_html: string;
   body_text?: string | null;
+  from_name?: string | null;
   status: string;
   total_recipients: number;
   sent_count: number;
@@ -344,7 +346,10 @@ export default function EmailCampaignsPage() {
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [bodyMode, setBodyMode] = useState<"write" | "preview">("write");
 
+  const [defaultSenderName, setDefaultSenderName] = useState("");
+  const [defaultFromEmail, setDefaultFromEmail] = useState("");
   const [name, setName] = useState("");
+  const [fromName, setFromName] = useState("");
   const [subject, setSubject] = useState("");
   const [bodyHtml, setBodyHtml] = useState("");
   const [recipients, setRecipients] = useState("");
@@ -390,6 +395,24 @@ export default function EmailCampaignsPage() {
       }
     }
 
+    async function fetchEmailConfig() {
+      try {
+        const configUrl =
+          activeProjectId && activeProjectId !== "all"
+            ? `/api/email/config?project_id=${encodeURIComponent(activeProjectId)}`
+            : "/api/email/config";
+        const res = await fetch(configUrl);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!ignore) {
+          setDefaultSenderName(data?.configured ? data?.config?.fromName || "" : "");
+          setDefaultFromEmail(data?.configured ? data?.config?.fromEmail || "" : "");
+        }
+      } catch {
+        // Ignore email config preview errors
+      }
+    }
+
     async function loadSavedTemplates() {
       try {
         const raw = localStorage.getItem(getTemplatesStorageKey(activeProjectId));
@@ -403,6 +426,7 @@ export default function EmailCampaignsPage() {
     }
 
     void fetchCampaigns();
+    void fetchEmailConfig();
     void loadSavedTemplates();
 
     return () => {
@@ -428,6 +452,7 @@ export default function EmailCampaignsPage() {
 
   const resetForm = () => {
     setName("");
+    setFromName(defaultSenderName);
     setSubject("");
     setBodyHtml("");
     setRecipients("");
@@ -438,12 +463,14 @@ export default function EmailCampaignsPage() {
 
   const openNewWithTemplate = (template: {
     name?: string;
+    fromName?: string | null;
     subject: string;
     bodyHtml: string;
     trackOpens?: boolean;
     trackClicks?: boolean;
   }) => {
     setName(template.name ?? "");
+    setFromName(template.fromName ?? defaultSenderName);
     setSubject(template.subject);
     setBodyHtml(template.bodyHtml);
     setRecipients("");
@@ -455,11 +482,15 @@ export default function EmailCampaignsPage() {
 
   const applyTemplateIntoOpenModal = (template: {
     defaultCampaignName?: string;
+    fromName?: string | null;
     subject: string;
     bodyHtml: string;
   }) => {
     if (!name.trim() && template.defaultCampaignName) {
       setName(template.defaultCampaignName);
+    }
+    if (template.fromName !== undefined) {
+      setFromName(template.fromName || defaultSenderName);
     }
     setSubject(template.subject);
     setBodyHtml(template.bodyHtml);
@@ -476,11 +507,13 @@ export default function EmailCampaignsPage() {
     }
 
     const templateName = name.trim() || cleanSubject.slice(0, 50);
+    const cleanSender = sanitizeSenderName(fromName);
     const nextItem: SavedCustomEmailTemplate = {
       id: `custom-${Date.now()}`,
       name: templateName,
       subject: cleanSubject,
       bodyHtml,
+      ...(cleanSender ? { fromName: cleanSender } : {}),
       updatedAt: new Date().toISOString(),
     };
     const next = [nextItem, ...savedTemplates.filter((t) => t.name !== templateName)];
@@ -510,6 +543,7 @@ export default function EmailCampaignsPage() {
         .map((r) => r.trim())
         .filter(Boolean);
 
+      const cleanSenderName = sanitizeSenderName(fromName);
       const res = await fetch("/api/email/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -520,6 +554,7 @@ export default function EmailCampaignsPage() {
           trackOpens,
           trackClicks,
           projectId: activeProjectId || undefined,
+          ...(cleanSenderName ? { fromName: cleanSenderName } : {}),
           ...(list.length > 0 ? { recipients: list } : {}),
         }),
       });
@@ -893,6 +928,7 @@ export default function EmailCampaignsPage() {
                     onClick={() =>
                       openNewWithTemplate({
                         name: tpl.name,
+                        fromName: tpl.fromName,
                         subject: tpl.subject,
                         bodyHtml: tpl.bodyHtml,
                       })
@@ -988,6 +1024,11 @@ export default function EmailCampaignsPage() {
                       <p className="line-clamp-1 text-xs text-muted-foreground">
                         {c.subject}
                       </p>
+                      {(c.from_name || defaultSenderName) && (
+                        <p className="line-clamp-1 text-[11px] text-muted-foreground/80">
+                          Sender: {c.from_name || defaultSenderName}
+                        </p>
+                      )}
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
                       {pendingCount > 0 && c.sent_count > 0 && (
@@ -1081,6 +1122,7 @@ export default function EmailCampaignsPage() {
                       onClick={() =>
                         openNewWithTemplate({
                           name: `${c.name} (Copy)`,
+                          fromName: c.from_name ?? defaultSenderName,
                           subject: c.subject,
                           bodyHtml: c.body_html,
                           trackOpens: c.track_opens !== false,
@@ -1158,6 +1200,7 @@ export default function EmailCampaignsPage() {
                       onClick={() =>
                         applyTemplateIntoOpenModal({
                           defaultCampaignName: tpl.name,
+                          fromName: tpl.fromName,
                           subject: tpl.subject,
                           bodyHtml: tpl.bodyHtml,
                         })
@@ -1176,6 +1219,7 @@ export default function EmailCampaignsPage() {
                       onClick={() =>
                         applyTemplateIntoOpenModal({
                           defaultCampaignName: `${c.name} (Batch 2)`,
+                          fromName: c.from_name ?? defaultSenderName,
                           subject: c.subject,
                           bodyHtml: c.body_html,
                         })
@@ -1187,15 +1231,35 @@ export default function EmailCampaignsPage() {
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="camp-name">Campaign Name</Label>
-                <Input
-                  id="camp-name"
-                  placeholder="e.g. RegiBIZ Outreach Batch 1"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="camp-name">Campaign Name</Label>
+                  <Input
+                    id="camp-name"
+                    placeholder="e.g. RegiBIZ Outreach Batch 1"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="camp-from-name">Sender Name</Label>
+                    {defaultFromEmail && (
+                      <span className="truncate text-[11px] text-muted-foreground">
+                        &lt;{defaultFromEmail}&gt;
+                      </span>
+                    )}
+                  </div>
+                  <Input
+                    id="camp-from-name"
+                    maxLength={120}
+                    placeholder={defaultSenderName || "e.g. Comlaudi or RegiBIZ"}
+                    value={fromName}
+                    onChange={(e) => setFromName(e.target.value)}
+                  />
+                </div>
               </div>
 
               <div className="space-y-1.5">
@@ -1375,6 +1439,12 @@ export default function EmailCampaignsPage() {
               {/* Summary + Quick Actions */}
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-xs">
                 <div className="flex flex-wrap items-center gap-3">
+                  {(sendMoreCampaign.from_name || defaultSenderName) && (
+                    <span>
+                      Sender:{" "}
+                      <strong>{sendMoreCampaign.from_name || defaultSenderName}</strong>
+                    </span>
+                  )}
                   <span>
                     <strong>{sendMoreCampaign.sent_count}</strong> sent
                   </span>
@@ -1413,6 +1483,7 @@ export default function EmailCampaignsPage() {
                       setSendMoreCampaign(null);
                       openNewWithTemplate({
                         name: `${c.name} (Copy)`,
+                        fromName: c.from_name ?? defaultSenderName,
                         subject: c.subject,
                         bodyHtml: c.body_html,
                         trackOpens: c.track_opens !== false,

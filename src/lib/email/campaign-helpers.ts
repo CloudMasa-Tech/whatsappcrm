@@ -23,7 +23,21 @@ export interface SavedCustomEmailTemplate {
   name: string;
   subject: string;
   bodyHtml: string;
+  fromName?: string;
   updatedAt: string;
+}
+
+/**
+ * Normalizes a campaign or project sender display name and strips characters
+ * (`"`, `<`, `>`, CR, LF) that would break an RFC 5322 `"Name" <email>` header.
+ */
+export function sanitizeSenderName(raw?: string | null): string {
+  if (!raw) return '';
+  return raw
+    .replace(/[\r\n"<>]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
 }
 
 export const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;

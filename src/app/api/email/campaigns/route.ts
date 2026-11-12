@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server';
 
 import { getCurrentAccount, toErrorResponse, UnauthorizedError } from '@/lib/auth/account';
 import { getCurrentProject } from '@/lib/auth/project';
-import { parseRecipientInput } from '@/lib/email/campaign-helpers';
+import { parseRecipientInput, sanitizeSenderName } from '@/lib/email/campaign-helpers';
 import {
   insertCampaignRecipients,
   resolveAudienceRecipients,
@@ -160,9 +160,9 @@ export async function POST(request: Request) {
     subject,
     body_html: bodyHtml,
     body_text: typeof body.bodyText === 'string' ? body.bodyText : null,
-    from_name: typeof body.fromName === 'string' ? body.fromName.trim() : null,
-    from_email: typeof body.fromEmail === 'string' ? body.fromEmail.trim() : null,
-    reply_to: typeof body.replyTo === 'string' ? body.replyTo.trim() : null,
+    from_name: typeof body.fromName === 'string' ? sanitizeSenderName(body.fromName) || null : null,
+    from_email: typeof body.fromEmail === 'string' ? body.fromEmail.trim() || null : null,
+    reply_to: typeof body.replyTo === 'string' ? body.replyTo.trim() || null : null,
     track_opens: body.trackOpens !== false,
     track_clicks: body.trackClicks !== false,
     status: 'draft',

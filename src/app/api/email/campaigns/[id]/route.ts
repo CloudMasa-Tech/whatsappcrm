@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server';
 
 import { getCurrentAccount, toErrorResponse } from '@/lib/auth/account';
+import { sanitizeSenderName } from '@/lib/email/campaign-helpers';
 import { loadProjectEmailContacts } from '@/lib/email/campaign-recipients';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
@@ -99,7 +100,9 @@ export async function PATCH(
   if (typeof body.bodyHtml === 'string' && body.bodyHtml.trim())
     update.body_html = body.bodyHtml;
   if (typeof body.bodyText === 'string') update.body_text = body.bodyText;
-  if (typeof body.fromName === 'string') update.from_name = body.fromName.trim() || null;
+  if (typeof body.fromName === 'string') {
+    update.from_name = sanitizeSenderName(body.fromName) || null;
+  }
   if (typeof body.fromEmail === 'string') update.from_email = body.fromEmail.trim() || null;
   if (typeof body.replyTo === 'string') update.reply_to = body.replyTo.trim() || null;
   if (typeof body.trackOpens === 'boolean') update.track_opens = body.trackOpens;

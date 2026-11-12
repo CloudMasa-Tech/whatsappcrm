@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { sanitizeSenderName } from './campaign-helpers';
 import {
   type EmailServerConfig,
   type SendEmailOptions,
@@ -42,7 +43,7 @@ export async function resolveEmailConfig(
           user,
           pass,
           fromEmail: data.email_address || user,
-          fromName: data.from_name || 'MaSa CRM',
+          fromName: sanitizeSenderName(data.from_name) || 'MaSa CRM',
           replyTo: data.reply_to || undefined,
         };
       }
@@ -70,7 +71,7 @@ export async function resolveEmailConfig(
       user: envUser,
       pass: envPass,
       fromEmail: process.env.SMTP_FROM || process.env.EMAIL_FROM || envUser,
-      fromName: process.env.SMTP_FROM_NAME || 'MaSa WhatsApp CRM',
+      fromName: sanitizeSenderName(process.env.SMTP_FROM_NAME) || 'MaSa WhatsApp CRM',
       replyTo: process.env.SMTP_REPLY_TO,
     };
   }
@@ -116,7 +117,10 @@ export async function sendEmail(
   try {
     const transporter = createMailTransporter(config);
     const fromAddress = options.fromEmail || config.fromEmail;
-    const fromName = options.fromName || config.fromName || 'MaSa CRM';
+    const fromName =
+      sanitizeSenderName(options.fromName) ||
+      sanitizeSenderName(config.fromName) ||
+      'MaSa CRM';
     const fromHeader = `"${fromName}" <${fromAddress}>`;
 
     const info = await transporter.sendMail({
