@@ -275,6 +275,7 @@ export async function DELETE(
     await admin.from("facebook_config").delete().eq("project_id", id);
     await admin.from("instagram_config").delete().eq("project_id", id);
     await admin.from("linkedin_config").delete().eq("project_id", id);
+    await admin.from("x_config").delete().eq("project_id", id);
     await admin.from("ai_knowledge_chunks").delete().eq("project_id", id);
     await admin.from("ai_knowledge_documents").delete().eq("project_id", id);
     await admin.from("ai_configs").delete().eq("project_id", id);

@@ -133,7 +133,31 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.json({ instagram, email, facebook, linkedin });
+    // ---- X (Twitter) -----------------------------------------------
+    let x: ChannelReadiness = { state: 'not_configured' };
+    {
+      let query = db
+        .from('x_config')
+        .select('status, last_error, username, display_name')
+        .eq('account_id', ctx.accountId)
+        .limit(1);
+      if (projectId) query = query.eq('project_id', projectId);
+
+      const { data, error } = await query.maybeSingle();
+
+      if (!error && data) {
+        if (data.status === 'connected') {
+          x = {
+            state: 'ready',
+            detail: data.username ? `@${data.username}` : data.display_name ?? null,
+          };
+        } else if (data.status === 'error') {
+          x = { state: 'error', detail: data.last_error ?? null };
+        }
+      }
+    }
+
+    return NextResponse.json({ instagram, email, facebook, linkedin, x });
   } catch (err) {
     return toErrorResponse(err);
   }

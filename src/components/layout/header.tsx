@@ -26,10 +26,13 @@ const pageTitles: Record<string, string> = {
   "/whatsapp": "whatsapp",
   "/instagram": "instagram",
   "/facebook": "facebook",
+  "/linkedin": "linkedin",
+  "/x": "x",
   "/notifications": "notifications",
   "/contacts": "contacts",
   "/pipelines": "pipelines",
   "/broadcasts": "broadcasts",
+  "/social-campaigns": "socialCampaigns",
   "/automations": "automations",
   "/settings": "settings",
 };

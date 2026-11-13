@@ -18,6 +18,7 @@ import {
   Eye,
   EyeOff,
   AlertCircle,
+  Info,
 } from "lucide-react";
 import { FacebookBrandIcon } from "@/components/icons/facebook";
 import { toast } from "sonner";
@@ -409,9 +410,22 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
                   Find Pages
                 </Button>
               </div>
-              <p className="text-[11px] text-muted-foreground">
-                In Graph API Explorer, select your Page and grant <code>pages_show_list</code>, <code>pages_read_engagement</code> &amp; <code>pages_messaging</code> permissions, then paste the token here.
-              </p>
+              <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs space-y-1.5 text-blue-200">
+                <p className="font-semibold text-blue-300 flex items-center gap-1.5">
+                  <Info className="h-3.5 w-3.5" /> How to generate the right Facebook token in Graph API Explorer:
+                </p>
+                <ol className="list-decimal list-inside space-y-1 text-[11px] text-muted-foreground pl-1">
+                  <li>
+                    Open <strong>Graph API Explorer</strong> and make sure your Meta App is selected.
+                  </li>
+                  <li>
+                    Under <strong>Permissions</strong>, click <em>Add a Permission</em> and select: <code>pages_show_list</code>, <code>pages_read_engagement</code>, and <code>pages_messaging</code>.
+                  </li>
+                  <li>
+                    Click <strong>Generate Access Token</strong> and approve the prompt. Then in the <strong>User or Page</strong> dropdown, choose your <strong>Page</strong> to copy the direct Page Token (or copy the User Token).
+                  </li>
+                </ol>
+              </div>
             </div>
           </form>
 

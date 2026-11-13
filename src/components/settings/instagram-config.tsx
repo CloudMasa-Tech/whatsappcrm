@@ -493,28 +493,73 @@ export function InstagramConfig({ canDisconnect = true }: InstagramConfigProps) 
 
   const handleSendQuickDm = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!quickDmRecipient.trim() || !quickDmText.trim()) return;
+    const parsed = quickDmRecipient
+      .split(/[\n,;]+/)
+      .map((s) => s.trim().replace(/^@+/, ""))
+      .filter(Boolean);
+
+    if (parsed.length === 0 || !quickDmText.trim()) return;
 
     try {
       setQuickDmSending(true);
-      const res = await fetch("/api/inbox/new-chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          channel: "instagram",
-          recipient: quickDmRecipient.trim(),
-          message: quickDmText.trim(),
-        }),
-      });
 
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        throw new Error(data.error || "Failed to send Instagram DM");
+      if (parsed.length === 1) {
+        const res = await fetch("/api/inbox/new-chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            channel: "instagram",
+            recipient: parsed[0],
+            message: quickDmText.trim(),
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          throw new Error(data.error || "Failed to send Instagram DM");
+        }
+
+        toast.success(`Direct message sent to @${data.recipient}!`);
+        setQuickDmRecipient("");
+        setQuickDmText("");
+      } else {
+        // Multi-recipient campaign
+        let sentCount = 0;
+        const failed: string[] = [];
+        for (const recipient of parsed) {
+          try {
+            const res = await fetch("/api/inbox/new-chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                channel: "instagram",
+                recipient,
+                message: quickDmText.trim(),
+              }),
+            });
+            const data = await res.json();
+            if (res.ok && !data.error) {
+              sentCount++;
+            } else {
+              failed.push(recipient);
+            }
+          } catch {
+            failed.push(recipient);
+          }
+        }
+
+        if (sentCount > 0) {
+          toast.success(`Direct message campaign delivered to ${sentCount}/${parsed.length} users!`);
+          setQuickDmText("");
+          if (failed.length === 0) {
+            setQuickDmRecipient("");
+          } else {
+            setQuickDmRecipient(failed.join(", "));
+          }
+        } else {
+          toast.error("Failed to deliver DMs to target Instagram users.");
+        }
       }
-
-      toast.success(`Direct message sent to @${data.recipient}!`);
-      setQuickDmRecipient("");
-      setQuickDmText("");
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to send direct message.");
     } finally {
@@ -1314,90 +1359,125 @@ export function InstagramConfig({ canDisconnect = true }: InstagramConfigProps) 
             )}
 
             {/* TAB 5: Quick DM & Inbox Sync */}
-            {activeActionTab === "dm" && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="space-y-4 bg-muted/40 p-5 rounded-2xl border">
-                  <h4 className="text-sm font-semibold flex items-center gap-2">
-                    <Send className="h-4 w-4 text-pink-500" /> Send Direct Message
-                  </h4>
-                  <p className="text-xs text-muted-foreground">
-                    {isCloudApi
-                      ? "In Meta Cloud API mode, Meta requires the recipient to have messaged you within 24h (or replied via Comment-to-DM) so their IGSID is known."
-                      : "Enter any Instagram @username to start or continue a Direct Message thread."}
-                  </p>
-                  <form onSubmit={handleSendQuickDm} className="space-y-3">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="quick-dm-user" className="text-xs">
-                        Recipient Instagram Username
-                      </Label>
-                      <div className="relative">
-                        <div className="absolute left-3 top-2.5 text-muted-foreground text-xs">@</div>
-                        <Input
-                          id="quick-dm-user"
-                          placeholder="username"
-                          value={quickDmRecipient}
-                          onChange={(e) => setQuickDmRecipient(e.target.value)}
-                          className="pl-7 text-xs"
+            {activeActionTab === "dm" && (() => {
+              const parsedRecipients = quickDmRecipient
+                .split(/[\n,;]+/)
+                .map((s) => s.trim().replace(/^@+/, ""))
+                .filter(Boolean);
+
+              return (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="space-y-4 bg-muted/40 p-5 rounded-2xl border">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-semibold flex items-center gap-2">
+                        <Send className="h-4 w-4 text-pink-500" /> Send Direct Message &amp; DM Campaign
+                      </h4>
+                      {parsedRecipients.length > 1 && (
+                        <span className="rounded-full bg-pink-500/10 px-2 py-0.5 text-[10px] font-semibold text-pink-400 border border-pink-500/30">
+                          🎯 Campaign Mode ({parsedRecipients.length} Users)
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {isCloudApi
+                        ? "Send an instant direct message or campaign with multiple targeted users by entering handles separated by commas or new lines (e.g. @hari, @alex)."
+                        : "Enter any Instagram @username or comma-separated list of usernames to start or continue Direct Message threads."}
+                    </p>
+                    <form onSubmit={handleSendQuickDm} className="space-y-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="quick-dm-user" className="text-xs">
+                          Recipient Instagram Username(s)
+                        </Label>
+                        <div className="relative">
+                          <div className="absolute left-3 top-2.5 text-muted-foreground text-xs">@</div>
+                          <Input
+                            id="quick-dm-user"
+                            placeholder="username or @user1, @user2, @user3..."
+                            value={quickDmRecipient}
+                            onChange={(e) => setQuickDmRecipient(e.target.value)}
+                            className="pl-7 text-xs"
+                            required
+                          />
+                        </div>
+                        {parsedRecipients.length > 1 && (
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {parsedRecipients.slice(0, 6).map((handle) => (
+                              <span
+                                key={handle}
+                                className="rounded bg-pink-500/10 px-1.5 py-0.5 text-[10px] font-mono text-pink-400"
+                              >
+                                @{handle}
+                              </span>
+                            ))}
+                            {parsedRecipients.length > 6 && (
+                              <span className="text-[10px] text-muted-foreground">
+                                +{parsedRecipients.length - 6} more
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="quick-dm-text" className="text-xs">
+                          Message
+                        </Label>
+                        <Textarea
+                          id="quick-dm-text"
+                          rows={3}
+                          placeholder="Type your Direct Message or campaign pitch..."
+                          value={quickDmText}
+                          onChange={(e) => setQuickDmText(e.target.value)}
+                          className="text-xs resize-none"
                           required
                         />
                       </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="quick-dm-text" className="text-xs">
-                        Message
-                      </Label>
-                      <Textarea
-                        id="quick-dm-text"
-                        rows={3}
-                        placeholder="Type your Direct Message..."
-                        value={quickDmText}
-                        onChange={(e) => setQuickDmText(e.target.value)}
-                        className="text-xs resize-none"
-                        required
-                      />
-                    </div>
-                    <Button
-                      type="submit"
-                      size="sm"
-                      disabled={quickDmSending}
-                      className="w-full bg-gradient-to-r from-pink-600 to-purple-600 text-white"
-                    >
-                      {quickDmSending ? "Sending..." : "Send Direct Message"}
-                    </Button>
-                  </form>
-                </div>
+                      <Button
+                        type="submit"
+                        size="sm"
+                        disabled={quickDmSending || parsedRecipients.length === 0}
+                        className="w-full bg-gradient-to-r from-pink-600 to-purple-600 text-white"
+                      >
+                        {quickDmSending
+                          ? "Sending..."
+                          : parsedRecipients.length > 1
+                            ? `Launch DM Campaign to ${parsedRecipients.length} Users`
+                            : "Send Direct Message"}
+                      </Button>
+                    </form>
+                  </div>
 
-                <div className="space-y-4 bg-muted/40 p-5 rounded-2xl border flex flex-col justify-between">
-                  <div className="space-y-2">
-                    <h4 className="text-sm font-semibold flex items-center gap-2">
-                      <Inbox className="h-4 w-4 text-purple-500" /> Sync Existing Instagram DMs to CRM Inbox
-                    </h4>
-                    <p className="text-xs text-muted-foreground">
-                      Pull your recent Instagram Direct threads and messages into the Unified Inbox automatically (safe &amp; deduplicated — never creates duplicates).
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2 pt-3">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={handleSyncInbox}
-                      disabled={syncingInbox}
-                      className="text-xs gap-1.5"
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 ${syncingInbox ? "animate-spin" : ""}`} />
-                      {syncingInbox ? "Syncing Threads..." : "Pull Recent DMs Now"}
-                    </Button>
-                    <Button
-                      type="button"
-                      onClick={() => (window.location.href = "/inbox")}
-                      className="text-xs bg-gradient-to-r from-pink-600 to-purple-600 text-white"
-                    >
-                      Go to Unified Inbox
-                    </Button>
+                  <div className="space-y-4 bg-muted/40 p-5 rounded-2xl border flex flex-col justify-between">
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold flex items-center gap-2">
+                        <Inbox className="h-4 w-4 text-purple-500" /> Sync Existing Instagram DMs to CRM Inbox
+                      </h4>
+                      <p className="text-xs text-muted-foreground">
+                        Pull your recent Instagram Direct threads and messages into the Unified Inbox automatically (safe &amp; deduplicated — never creates duplicates).
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 pt-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handleSyncInbox}
+                        disabled={syncingInbox}
+                        className="text-xs gap-1.5"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${syncingInbox ? "animate-spin" : ""}`} />
+                        {syncingInbox ? "Syncing Threads..." : "Pull Recent DMs Now"}
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => (window.location.href = "/inbox")}
+                        className="text-xs bg-gradient-to-r from-pink-600 to-purple-600 text-white"
+                      >
+                        Go to Unified Inbox
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         </div>
       )}

@@ -50,9 +50,11 @@ import {
   mergeImportedRecipientsText,
   parseEmailImportText,
   parseRecipientInput,
+  reconcileRecipientsWithMetadata,
   sanitizeSenderName,
   SAMPLE_EMAIL_IMPORT_CSV,
   STARTER_EMAIL_TEMPLATES,
+  type ParsedRecipient,
   type SavedCustomEmailTemplate,
 } from "@/lib/email/campaign-helpers";
 
@@ -228,10 +230,12 @@ function RecipientImportBar({
   value,
   onChange,
   parsedCount,
+  onImportRecipients,
 }: {
   value: string;
   onChange: (next: string) => void;
   parsedCount: number;
+  onImportRecipients?: (recipients: ParsedRecipient[]) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -260,6 +264,7 @@ function RecipientImportBar({
         return;
       }
 
+      onImportRecipients?.(result.recipients);
       onChange(mergeImportedRecipientsText(value, result.recipients));
       toast.success(
         `Imported ${result.recipients.length} email(s) from ${file.name}` +
@@ -296,7 +301,7 @@ function RecipientImportBar({
           variant="ghost"
           className="h-7 px-2 text-xs gap-1 text-muted-foreground hover:text-foreground"
           onClick={downloadSampleEmailCsv}
-          title="Download sample CSV with name,email columns"
+          title="Download sample CSV with name,email,company_name columns"
         >
           <Download className="h-3 w-3" />
           Sample CSV
@@ -307,7 +312,10 @@ function RecipientImportBar({
             size="sm"
             variant="ghost"
             className="h-7 px-2 text-xs gap-1 text-muted-foreground hover:text-destructive"
-            onClick={() => onChange("")}
+            onClick={() => {
+              onChange("");
+              onImportRecipients?.([]);
+            }}
           >
             <X className="h-3 w-3" />
             Clear
@@ -353,6 +361,7 @@ export default function EmailCampaignsPage() {
   const [subject, setSubject] = useState("");
   const [bodyHtml, setBodyHtml] = useState("");
   const [recipients, setRecipients] = useState("");
+  const [importedRecipients, setImportedRecipients] = useState<ParsedRecipient[]>([]);
   const [trackOpens, setTrackOpens] = useState(true);
   const [trackClicks, setTrackClicks] = useState(true);
 
@@ -362,6 +371,7 @@ export default function EmailCampaignsPage() {
   const [campaignRecipients, setCampaignRecipients] = useState<CampaignRecipientRow[]>([]);
   const [availableContacts, setAvailableContacts] = useState<AvailableContact[]>([]);
   const [addEmailsText, setAddEmailsText] = useState("");
+  const [importedSendMoreRecipients, setImportedSendMoreRecipients] = useState<ParsedRecipient[]>([]);
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
   const [contactSearch, setContactSearch] = useState("");
   const [allowResendExisting, setAllowResendExisting] = useState(false);
@@ -456,6 +466,7 @@ export default function EmailCampaignsPage() {
     setSubject("");
     setBodyHtml("");
     setRecipients("");
+    setImportedRecipients([]);
     setTrackOpens(true);
     setTrackClicks(true);
     setBodyMode("write");
@@ -528,6 +539,28 @@ export default function EmailCampaignsPage() {
 
   const parsedNewEmails = useMemo(() => parseRecipientInput(recipients), [recipients]);
 
+  const detectedCustomTags = useMemo(() => {
+    const tags = new Set<string>();
+    for (const r of importedRecipients) {
+      if (r.metadata) {
+        for (const k of Object.keys(r.metadata)) {
+          if (/^[a-zA-Z0-9_]+$/.test(k)) {
+            tags.add(k.toLowerCase());
+          }
+        }
+      }
+    }
+    tags.delete("email");
+    tags.delete("name");
+    return Array.from(tags);
+  }, [importedRecipients]);
+
+  const insertMergeTag = (tag: string) => {
+    const textToInsert = `{{${tag}}}`;
+    setBodyHtml((prev) => (prev ? `${prev} ${textToInsert}` : textToInsert));
+    toast.success(`Inserted {{${tag}}} into email body`);
+  };
+
   const submitNewCampaign = async (sendImmediately: boolean) => {
     if (submitting) return;
 
@@ -538,10 +571,7 @@ export default function EmailCampaignsPage() {
 
     setSubmitting(true);
     try {
-      const list = recipients
-        .split(/[\r\n,;]+/)
-        .map((r) => r.trim())
-        .filter(Boolean);
+      const audience = reconcileRecipientsWithMetadata(recipients, importedRecipients);
 
       const cleanSenderName = sanitizeSenderName(fromName);
       const res = await fetch("/api/email/campaigns", {
@@ -555,7 +585,7 @@ export default function EmailCampaignsPage() {
           trackClicks,
           projectId: activeProjectId || undefined,
           ...(cleanSenderName ? { fromName: cleanSenderName } : {}),
-          ...(list.length > 0 ? { recipients: list } : {}),
+          ...(audience.length > 0 ? { recipients: audience } : {}),
         }),
       });
       const data = await res.json();
@@ -748,11 +778,12 @@ export default function EmailCampaignsPage() {
       let queuedOrPending = pendingInModal;
 
       if (hasNewInputs) {
+        const audience = reconcileRecipientsWithMetadata(addEmailsText, importedSendMoreRecipients);
         const res = await fetch(`/api/email/campaigns/${sendMoreCampaign.id}/recipients`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            recipients: rawLines,
+            recipients: audience.length > 0 ? audience : rawLines,
             contactIds: Array.from(selectedContactIds),
             allowResendExisting,
           }),
@@ -1158,8 +1189,9 @@ export default function EmailCampaignsPage() {
           <DialogHeader className="shrink-0">
             <DialogTitle>New Email Campaign</DialogTitle>
             <DialogDescription>
-              Use {"{{name}}"} and {"{{email}}"} for merge fields. Load a template or write
-              HTML / plain text.
+              Use {"{{name}}"}, {"{{email}}"}, or any spreadsheet column (e.g.{" "}
+              {"{{company_name}}"}, {"{{incorporation_date}}"}) for merge fields. Load a
+              template or write HTML / plain text.
             </DialogDescription>
           </DialogHeader>
 
@@ -1333,8 +1365,29 @@ export default function EmailCampaignsPage() {
                 <RecipientImportBar
                   value={recipients}
                   onChange={setRecipients}
+                  onImportRecipients={setImportedRecipients}
                   parsedCount={parsedNewEmails.length}
                 />
+                {detectedCustomTags.length > 0 && (
+                  <div className="rounded-md border border-purple-500/30 bg-purple-500/10 p-2 text-xs">
+                    <div className="mb-1 flex items-center justify-between text-purple-300">
+                      <span className="font-semibold">Spreadsheet columns detected:</span>
+                      <span className="text-[11px] text-muted-foreground">Click to insert into body</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {detectedCustomTags.map((tag) => (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => insertMergeTag(tag)}
+                          className="rounded bg-purple-500/20 px-1.5 py-0.5 font-mono text-[11px] text-purple-200 transition-colors hover:bg-purple-500/30"
+                        >
+                          {`{{${tag}}}`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <Textarea
                   id="camp-recipients"
                   rows={3}
@@ -1514,6 +1567,7 @@ export default function EmailCampaignsPage() {
                 <RecipientImportBar
                   value={addEmailsText}
                   onChange={setAddEmailsText}
+                  onImportRecipients={setImportedSendMoreRecipients}
                   parsedCount={parsedAddEmails.length}
                 />
                 <Textarea

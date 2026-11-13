@@ -8,6 +8,7 @@ export interface ResolvedAudienceRow {
   email: string;
   name: string | null;
   contact_id: string | null;
+  metadata?: Record<string, string>;
 }
 
 export interface ProjectEmailContact {
@@ -57,7 +58,7 @@ export async function loadProjectEmailContacts(
 
 /**
  * Resolves manually entered emails, selected contact IDs, or full project audience
- * into normalized recipient records enriched with matching CRM contact metadata.
+ * into normalized recipient records enriched with matching CRM contact metadata and CSV custom fields.
  */
 export async function resolveAudienceRecipients(
   db: AdminClient,
@@ -92,6 +93,9 @@ export async function resolveAudienceRecipients(
     }
     if (!existing.name && row.name) existing.name = row.name;
     if (!existing.contact_id && row.contact_id) existing.contact_id = row.contact_id;
+    if (row.metadata) {
+      existing.metadata = { ...(existing.metadata || {}), ...row.metadata };
+    }
   };
 
   for (const parsed of params.parsedRecipients ?? []) {
@@ -100,6 +104,7 @@ export async function resolveAudienceRecipients(
       email: parsed.email,
       name: contact?.name || parsed.name || null,
       contact_id: contact?.id ?? null,
+      metadata: parsed.metadata,
     });
   }
 
@@ -130,6 +135,7 @@ export async function resolveAudienceRecipients(
 /**
  * Appends recipients as `pending` rows to a campaign while preventing duplicate
  * queued sends and optionally skipping addresses that already received it.
+ * Preserves custom CSV columns via metadata JSONB column and dual-layer JSON fallback.
  */
 export async function insertCampaignRecipients(
   db: AdminClient,
@@ -192,22 +198,48 @@ export async function insertCampaignRecipients(
   if (toInsert.length > 0) {
     const CHUNK_SIZE = 250;
     let stripTrackingToken = false;
+    let stripMetadataCol = false;
 
     for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
       const slice = toInsert.slice(i, i + CHUNK_SIZE);
-      const buildRows = (includeToken: boolean) =>
-        slice.map((a) => ({
-          campaign_id: params.campaignId,
-          contact_id: a.contact_id,
-          email: a.email,
-          name: a.name,
-          status: 'pending',
-          ...(includeToken ? { tracking_token: randomUUID().replace(/-/g, '') } : {}),
-        }));
+      const buildRows = (includeToken: boolean, includeMetadata: boolean) =>
+        slice.map((a) => {
+          let storedName = a.name;
+          if (a.metadata && Object.keys(a.metadata).length > 0) {
+            // Encode metadata as JSON fallback inside name so it survives even if metadata column is absent in DB
+            storedName = JSON.stringify({
+              name: a.name || null,
+              ...a.metadata,
+            });
+          }
+          return {
+            campaign_id: params.campaignId,
+            contact_id: a.contact_id,
+            email: a.email,
+            name: storedName,
+            status: 'pending',
+            ...(includeMetadata && a.metadata ? { metadata: a.metadata } : {}),
+            ...(includeToken ? { tracking_token: randomUUID().replace(/-/g, '') } : {}),
+          };
+        });
 
       let { error: insertErr } = await db
         .from('email_campaign_recipients')
-        .insert(buildRows(!stripTrackingToken));
+        .insert(buildRows(!stripTrackingToken, !stripMetadataCol));
+
+      if (
+        insertErr &&
+        !stripMetadataCol &&
+        (insertErr.message?.includes('metadata') ||
+          insertErr.message?.includes("Could not find the 'metadata'") ||
+          insertErr.code === 'PGRST204')
+      ) {
+        stripMetadataCol = true;
+        const retry = await db
+          .from('email_campaign_recipients')
+          .insert(buildRows(!stripTrackingToken, false));
+        insertErr = retry.error;
+      }
 
       if (
         insertErr &&
@@ -218,7 +250,7 @@ export async function insertCampaignRecipients(
         stripTrackingToken = true;
         const retry = await db
           .from('email_campaign_recipients')
-          .insert(buildRows(false));
+          .insert(buildRows(false, !stripMetadataCol));
         insertErr = retry.error;
       }
 
@@ -256,4 +288,3 @@ export async function insertCampaignRecipients(
     totalRecipients,
   };
 }
-

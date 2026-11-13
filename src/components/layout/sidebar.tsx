@@ -18,6 +18,7 @@ import {
   LifeBuoy,
   LogOut,
   Mail,
+  Megaphone,
   MessageSquare,
   Radio,
   Settings,
@@ -34,6 +35,7 @@ import { Instagram } from "@/components/icons/instagram";
 import { WhatsApp } from "@/components/icons/whatsapp";
 import { Facebook } from "@/components/icons/facebook";
 import { LinkedIn } from "@/components/icons/linkedin";
+import { XSocialIcon } from "@/components/icons/x";
 import { ProjectSwitcher } from "@/components/projects/project-switcher";
 import type { AccountRole } from "@/lib/auth/roles";
 
@@ -109,9 +111,11 @@ const navItems: NavItem[] = [
   { href: "/instagram", labelKey: "instagram", icon: Instagram, roles: ["admin", "agent"] },
   { href: "/facebook", labelKey: "facebook", icon: Facebook, roles: ["admin", "agent"] },
   { href: "/linkedin", labelKey: "linkedin", icon: LinkedIn, roles: ["admin", "agent"] },
+  { href: "/x", labelKey: "x", icon: XSocialIcon, roles: ["admin", "agent"] },
   { href: "/email-campaigns", labelKey: "campaigns", icon: Mail, roles: ["admin", "agent"] },
   { href: "/contacts", labelKey: "contacts", icon: Users, roles: ["admin", "agent"] },
   { href: "/broadcasts", labelKey: "broadcasts", icon: Radio, roles: ["admin", "agent"] },
+  { href: "/social-campaigns", labelKey: "socialCampaigns", icon: Megaphone, roles: ["admin", "agent"] },
   { href: "/templates", labelKey: "templates", icon: FileText, roles: ["admin"] },
   { href: "/pipelines", labelKey: "pipelines", icon: GitBranch, roles: ["admin", "agent"] },
   { href: "/automations", labelKey: "automations", icon: Zap, roles: ["admin"] },

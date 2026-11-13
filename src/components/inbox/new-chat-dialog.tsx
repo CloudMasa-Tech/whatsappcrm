@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { MessageCircle, Send, Loader2, User, Phone } from "lucide-react";
 import { Instagram } from "@/components/icons/instagram";
+import { XBrandIcon } from "@/components/icons/x";
 import { toast } from "sonner";
 
 interface NewChatDialogProps {
@@ -28,7 +29,7 @@ export function NewChatDialog({
   onOpenChange,
   onConversationCreated,
 }: NewChatDialogProps) {
-  const [channel, setChannel] = useState<"whatsapp" | "instagram">("instagram");
+  const [channel, setChannel] = useState<"whatsapp" | "instagram" | "x">("instagram");
   const [loading, setLoading] = useState(false);
 
   // Form fields
@@ -43,7 +44,9 @@ export function NewChatDialog({
       toast.error(
         channel === "instagram"
           ? "Please enter an Instagram username."
-          : "Please enter a phone number.",
+          : channel === "x"
+            ? "Please enter an X (Twitter) username."
+            : "Please enter a phone number.",
       );
       return;
     }
@@ -75,7 +78,9 @@ export function NewChatDialog({
       toast.success(
         channel === "instagram"
           ? `Direct message sent to @${data.recipient}!`
-          : `Message sent to ${data.recipient}!`,
+          : channel === "x"
+            ? `Direct message sent to @${data.recipient} on X!`
+            : `Message sent to ${data.recipient}!`,
       );
 
       setRecipient("");
@@ -103,28 +108,34 @@ export function NewChatDialog({
             Start New Conversation
           </DialogTitle>
           <DialogDescription>
-            Send a direct message on Instagram or WhatsApp to open a new chat.
+            Send a direct message on Instagram, X (Twitter), or WhatsApp to open a new chat.
           </DialogDescription>
         </DialogHeader>
 
         <Tabs
           value={channel}
           onValueChange={(v) => {
-            setChannel(v as "whatsapp" | "instagram");
+            setChannel(v as "whatsapp" | "instagram" | "x");
             setRecipient("");
           }}
           className="mt-2"
         >
-          <TabsList className="grid grid-cols-2 w-full p-1 bg-muted rounded-xl">
+          <TabsList className="grid grid-cols-3 w-full p-1 bg-muted rounded-xl">
             <TabsTrigger
               value="instagram"
-              className="rounded-lg flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-pink-500 data-[state=active]:to-purple-600 data-[state=active]:text-white"
+              className="rounded-lg flex items-center gap-1.5 data-[state=active]:bg-gradient-to-r data-[state=active]:from-pink-500 data-[state=active]:to-purple-600 data-[state=active]:text-white text-xs font-semibold"
             >
-              <Instagram className="h-4 w-4" /> Instagram DM
+              <Instagram className="h-4 w-4" /> Instagram
+            </TabsTrigger>
+            <TabsTrigger
+              value="x"
+              className="rounded-lg flex items-center gap-1.5 data-[state=active]:bg-sky-600 data-[state=active]:text-white text-xs font-semibold"
+            >
+              <XBrandIcon className="h-3.5 w-3.5" /> X (Twitter)
             </TabsTrigger>
             <TabsTrigger
               value="whatsapp"
-              className="rounded-lg flex items-center gap-2 data-[state=active]:bg-emerald-600 data-[state=active]:text-white"
+              className="rounded-lg flex items-center gap-1.5 data-[state=active]:bg-emerald-600 data-[state=active]:text-white text-xs font-semibold"
             >
               <MessageCircle className="h-4 w-4" /> WhatsApp
             </TabsTrigger>
@@ -143,7 +154,24 @@ export function NewChatDialog({
                     placeholder="username (e.g. johndoe)"
                     value={recipient}
                     onChange={(e) => setRecipient(e.target.value)}
-                    className="pl-8 font-medium"
+                    className="pl-8 font-medium text-xs"
+                    required
+                  />
+                </div>
+              </div>
+            ) : channel === "x" ? (
+              <div className="space-y-2">
+                <Label htmlFor="x-recipient">X (Twitter) Username</Label>
+                <div className="relative">
+                  <div className="absolute left-3 top-2.5 text-muted-foreground font-medium text-xs">
+                    @
+                  </div>
+                  <Input
+                    id="x-recipient"
+                    placeholder="username (e.g. elonmusk)"
+                    value={recipient}
+                    onChange={(e) => setRecipient(e.target.value)}
+                    className="pl-8 font-medium font-mono text-xs"
                     required
                   />
                 </div>
@@ -186,7 +214,9 @@ export function NewChatDialog({
                 placeholder={
                   channel === "instagram"
                     ? "Type your Instagram direct message..."
-                    : "Type your WhatsApp message..."
+                    : channel === "x"
+                      ? "Type your X direct message..."
+                      : "Type your WhatsApp message..."
                 }
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
@@ -210,7 +240,9 @@ export function NewChatDialog({
                 className={
                   channel === "instagram"
                     ? "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white font-medium shadow-md shadow-pink-500/20"
-                    : "bg-emerald-600 hover:bg-emerald-500 text-white"
+                    : channel === "x"
+                      ? "bg-sky-600 hover:bg-sky-500 text-white font-medium shadow-md shadow-sky-500/20"
+                      : "bg-emerald-600 hover:bg-emerald-500 text-white"
                 }
               >
                 {loading ? (

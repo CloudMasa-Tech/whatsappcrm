@@ -289,10 +289,12 @@ describe('Email Campaign Flow - Unit & Integration Tests', () => {
       const bomCsv =
         '\uFEFF"First Name","Last Name","Email Address"\nPriya,Sharma,PRIYA@company.com\nInvalid,Row,not-email\nRahul,Nair,rahul@startup.in\nPriya,Sharma,priya@company.com';
       const parsedCsv = parseEmailImportText(bomCsv);
-      expect(parsedCsv.recipients).toEqual([
+      expect(parsedCsv.recipients.map((r) => ({ email: r.email, name: r.name }))).toEqual([
         { email: 'priya@company.com', name: 'Priya Sharma' },
         { email: 'rahul@startup.in', name: 'Rahul Nair' },
       ]);
+      expect(parsedCsv.recipients[0].metadata?.first_name).toBe('Priya');
+      expect(parsedCsv.recipients[0].metadata?.last_name).toBe('Sharma');
       expect(parsedCsv.skippedCount).toBe(2);
 
       const headerlessTxt =
@@ -308,6 +310,68 @@ describe('Email Campaign Flow - Unit & Integration Tests', () => {
       expect(merged).toBe(
         'Founder One <one@biz.in>\ntwo@biz.in\nDoe Jane <jane@biz.in>',
       );
+    });
+
+    it('correctly parses custom columns from spreadsheet CSV and replaces placeholders like {{company_name}}', () => {
+      const userCsv =
+        'S.No,Registered Mail,Company Name,Incorporation Date,Login Mail,Password Setup Status\n' +
+        '1,arunkumarmurali07248@gmail.com,7STAR SCAFFOLDING PRIVATE LIMITED,2026-06-09,arunkumarmurali07248@gmail.com,Active\n' +
+        '2,aarav.shibub@gmail.com,7STAR SCAFFOLDING PRIVATE LIMITED,2026-06-09,aarav.shibub@gmail.com,Active\n';
+
+      const parsed = parseEmailImportText(userCsv);
+      expect(parsed.recipients).toHaveLength(2);
+
+      const r1 = parsed.recipients[0];
+      expect(r1.email).toBe('arunkumarmurali07248@gmail.com');
+      expect(r1.name).toBe('7STAR SCAFFOLDING PRIVATE LIMITED');
+      expect(r1.metadata?.company_name).toBe('7STAR SCAFFOLDING PRIVATE LIMITED');
+      expect(r1.metadata?.['Company Name']).toBe('7STAR SCAFFOLDING PRIVATE LIMITED');
+      expect(r1.metadata?.incorporation_date).toBe('2026-06-09');
+      expect(r1.metadata?.login_mail).toBe('arunkumarmurali07248@gmail.com');
+      expect(r1.metadata?.password_setup_status).toBe('Active');
+
+      // Test resolveSendMergeValues and applyMergeFields on email body and subject
+      const { subjectFields, bodyFields } = resolveSendMergeValues(r1);
+
+      const subjectTemplate = 'Welcome {{company_name}}!';
+      const renderedSubject = applyMergeFields(subjectTemplate, subjectFields);
+      expect(renderedSubject).toBe('Welcome 7STAR SCAFFOLDING PRIVATE LIMITED!');
+
+      const bodyTemplate =
+        '<p>Dear {{company_name}} Team,</p>' +
+        '<p>Welcome to Complaudi! Incorporated on {{incorporation_date}}.</p>' +
+        '<p>Your login email is {{login_mail}} and password status is {{password_setup_status}}.</p>';
+      const renderedBody = applyMergeFields(bodyTemplate, bodyFields);
+
+      expect(renderedBody).toContain('Dear 7STAR SCAFFOLDING PRIVATE LIMITED Team,');
+      expect(renderedBody).toContain('Incorporated on 2026-06-09.');
+      expect(renderedBody).toContain('Your login email is arunkumarmurali07248@gmail.com');
+      expect(renderedBody).toContain('password status is Active.');
+
+      // Test that {{login_email}} matches "Login Mail" from the CSV
+      const bodyWithLoginEmail =
+        '<p>Username: {{login_email}}</p>' +
+        '<p>Registered: {{registered_email}}</p>' +
+        '<p>Account: {{username}}</p>';
+      const renderedLogin = applyMergeFields(bodyWithLoginEmail, bodyFields);
+      expect(renderedLogin).toContain('Username: arunkumarmurali07248@gmail.com');
+      expect(renderedLogin).toContain('Registered: arunkumarmurali07248@gmail.com');
+      expect(renderedLogin).toContain('Account: arunkumarmurali07248@gmail.com');
+
+      // Also verify dual-layer fallback when recipient has JSON encoded in name
+      const fallbackRecipient = {
+        email: 'test@example.com',
+        name: JSON.stringify({
+          name: null,
+          company_name: 'Acme Pvt Ltd',
+          incorporation_date: '2025-01-01',
+        }),
+      };
+      const fallbackValues = resolveSendMergeValues(fallbackRecipient);
+      expect(fallbackValues.bodyFields.company_name).toBe('Acme Pvt Ltd');
+      expect(applyMergeFields('Hi {{company_name}}', fallbackValues.bodyFields)).toBe('Hi Acme Pvt Ltd');
+      // {{name}} falls back to company name
+      expect(applyMergeFields('Hello {{name}}', fallbackValues.bodyFields)).toBe('Hello Acme Pvt Ltd');
     });
 
     it('sanitizes campaign sender names and wires fromName through create and send routes', () => {

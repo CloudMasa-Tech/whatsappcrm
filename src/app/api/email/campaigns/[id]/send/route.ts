@@ -79,15 +79,44 @@ export async function POST(
     );
   }
 
-  const { data: recipients, error: recipErr } = await db
+  // Try selecting with metadata column first, fall back if schema cache lacks it
+  let recipients: Array<{
+    id: string;
+    email: string;
+    name: string | null;
+    contact_id: string | null;
+    tracking_token?: string | null;
+    metadata?: Record<string, string> | null;
+  }> | null = null;
+
+  const { data: recipsWithMeta, error: recipMetaErr } = await db
     .from('email_campaign_recipients')
-    .select('id, email, name, contact_id, tracking_token')
+    .select('id, email, name, contact_id, tracking_token, metadata')
     .eq('campaign_id', id)
     .eq('status', 'pending');
 
-  if (recipErr) {
-    return NextResponse.json({ error: 'Failed to load recipients' }, { status: 500 });
+  if (!recipMetaErr && recipsWithMeta) {
+    recipients = recipsWithMeta as Array<{
+      id: string;
+      email: string;
+      name: string | null;
+      contact_id: string | null;
+      tracking_token?: string | null;
+      metadata?: Record<string, string> | null;
+    }>;
+  } else {
+    const { data: recipsBasic, error: recipErr } = await db
+      .from('email_campaign_recipients')
+      .select('id, email, name, contact_id, tracking_token')
+      .eq('campaign_id', id)
+      .eq('status', 'pending');
+
+    if (recipErr) {
+      return NextResponse.json({ error: 'Failed to load recipients' }, { status: 500 });
+    }
+    recipients = recipsBasic;
   }
+
   if (!recipients || recipients.length === 0) {
     return NextResponse.json(
       { error: 'This campaign has no pending recipients. Add new emails first to send again.' },

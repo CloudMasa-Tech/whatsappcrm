@@ -121,6 +121,26 @@ export async function verifyFacebookPageToken(
       }
 
       if (!requestedPageId) {
+        // Before throwing "0 Pages", check if the token itself is directly a Page Access Token
+        try {
+          const meDirectRes = await fetch(
+            `${GRAPH_BASE}/me?fields=id,name,category,picture{url}&access_token=${encodeURIComponent(cleanToken)}`,
+            { cache: 'no-store' },
+          );
+          const meDirect = (await meDirectRes.json().catch(() => ({}))) as GraphPageNode;
+          if (meDirectRes.ok && meDirect.id && meDirect.name && meDirect.category) {
+            return {
+              id: meDirect.id,
+              name: meDirect.name,
+              category: meDirect.category ?? null,
+              profilePictureUrl: meDirect.picture?.data?.url ?? null,
+              pageAccessToken: cleanToken,
+            };
+          }
+        } catch {
+          // fall through
+        }
+
         throw new Error(
           'This Facebook User token returned 0 Pages. Ensure you selected at least one Facebook Page and granted pages_show_list + pages_messaging permissions, or paste a Page Access Token.',
         );
@@ -352,17 +372,248 @@ export async function fetchUserFacebookPages(
       ];
     }
 
+    // Friendly message if the access token has expired (OAuthException #190)
+    if (
+      payload.error?.code === 190 ||
+      payload.error?.message?.toLowerCase().includes('session has expired') ||
+      payload.error?.message?.toLowerCase().includes('error validating access token')
+    ) {
+      throw new Error(
+        'Meta Access Token has expired. Please return to Meta Graph API Explorer, click "Generate Access Token" for a fresh token, and select your Facebook Page in the dropdown.',
+      );
+    }
+
     throw new Error(
       payload.error?.message ?? `Failed to fetch Facebook Pages (${response.status})`,
     );
   }
 
   const pages = payload.data || [];
-  return pages.map((p) => ({
-    id: p.id,
-    name: p.name,
-    category: p.category,
-    accessToken: p.access_token || cleanToken,
-    profilePictureUrl: p.picture?.data?.url ?? null,
-  }));
+  if (pages.length > 0) {
+    return pages.map((p) => ({
+      id: p.id,
+      name: p.name,
+      category: p.category,
+      accessToken: p.access_token || cleanToken,
+      profilePictureUrl: p.picture?.data?.url ?? null,
+    }));
+  }
+
+  // 1. If /me/accounts returned 0 pages, check if this token is directly a Page Access Token
+  try {
+    const directRes = await fetch(
+      `${GRAPH_BASE}/me?fields=id,name,category,picture{url}&access_token=${encodeURIComponent(cleanToken)}`,
+      { cache: 'no-store' },
+    );
+    const directPayload = (await directRes.json().catch(() => ({}))) as GraphPageNode;
+    if (directRes.ok && directPayload.id && directPayload.name && directPayload.category) {
+      return [
+        {
+          id: directPayload.id,
+          name: directPayload.name,
+          category: directPayload.category,
+          accessToken: cleanToken,
+          profilePictureUrl: directPayload.picture?.data?.url ?? null,
+        },
+      ];
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2. Check /me/permissions to see if 'pages_show_list' is missing so we can provide a pinpoint actionable error
+  try {
+    const permRes = await fetch(
+      `${GRAPH_BASE}/me/permissions?access_token=${encodeURIComponent(cleanToken)}`,
+      { cache: 'no-store' },
+    );
+    const permPayload = (await permRes.json().catch(() => ({}))) as {
+      data?: Array<{ permission: string; status: string }>;
+    };
+    if (Array.isArray(permPayload?.data)) {
+      const granted = new Set(
+        permPayload.data
+          .filter((p) => p.status === 'granted')
+          .map((p) => p.permission),
+      );
+
+      if (!granted.has('pages_show_list')) {
+        throw new Error(
+          "Your token is missing the 'pages_show_list' permission. In Graph API Explorer, click 'Add a Permission' -> Permissions -> pages_show_list & pages_messaging, then click 'Generate Access Token'.",
+        );
+      }
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('pages_show_list')) {
+      throw err;
+    }
+  }
+
+  return [];
+}
+
+export interface FacebookPublishMediaItem {
+  url: string;
+  kind: 'image' | 'video' | 'document';
+}
+
+export interface FacebookPublishResult {
+  postId: string;
+  kind: 'feed' | 'photo' | 'multi_photo' | 'video';
+}
+
+function mapFacebookPublishError(
+  payload: GraphError | undefined,
+  status: number,
+  fallback: string,
+): Error {
+  const code = payload?.error?.code;
+  const rawMessage = payload?.error?.message ?? `${fallback} (HTTP ${status})`;
+  if (
+    code === 200 ||
+    code === 10 ||
+    /pages_manage_posts|permission|requires.*capability/i.test(rawMessage)
+  ) {
+    return new Error(
+      `${rawMessage} — Ensure your Facebook Page token includes the "pages_manage_posts" and "pages_read_engagement" permissions.`,
+    );
+  }
+  return new Error(rawMessage);
+}
+
+/**
+ * Publishes a post, photo, multi-photo album, or video to a connected Facebook Page.
+ */
+export async function publishFacebookPagePost(params: {
+  pageAccessToken: string;
+  pageId: string;
+  message?: string;
+  linkUrl?: string;
+  mediaItems?: FacebookPublishMediaItem[];
+}): Promise<FacebookPublishResult> {
+  const cleanToken = validateFacebookTokenInput(params.pageAccessToken);
+  const pageId = params.pageId.trim();
+  if (!pageId) {
+    throw new Error('Facebook Page ID is required to publish a post.');
+  }
+
+  const caption = params.message?.trim() || '';
+  const linkUrl = params.linkUrl?.trim() || '';
+  const mediaItems = (params.mediaItems ?? []).filter((m) => m.url?.trim());
+
+  const videoItem = mediaItems.find((m) => m.kind === 'video');
+  const imageItems = mediaItems.filter((m) => m.kind === 'image');
+
+  if (videoItem) {
+    const res = await fetch(`${GRAPH_BASE}/${encodeURIComponent(pageId)}/videos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({
+        file_url: videoItem.url.trim(),
+        ...(caption ? { description: caption } : {}),
+        access_token: cleanToken,
+      }),
+    });
+    const payload = (await res.json().catch(() => ({}))) as GraphError & { id?: string };
+    if (!res.ok || payload.error || !payload.id) {
+      throw mapFacebookPublishError(payload, res.status, 'Facebook Video publish failed');
+    }
+    return { postId: String(payload.id), kind: 'video' };
+  }
+
+  if (imageItems.length === 1) {
+    const res = await fetch(`${GRAPH_BASE}/${encodeURIComponent(pageId)}/photos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({
+        url: imageItems[0].url.trim(),
+        ...(caption ? { caption } : {}),
+        published: true,
+        access_token: cleanToken,
+      }),
+    });
+    const payload = (await res.json().catch(() => ({}))) as GraphError & {
+      id?: string;
+      post_id?: string;
+    };
+    const postId = payload.post_id || payload.id;
+    if (!res.ok || payload.error || !postId) {
+      throw mapFacebookPublishError(payload, res.status, 'Facebook Photo publish failed');
+    }
+    return { postId: String(postId), kind: 'photo' };
+  }
+
+  if (imageItems.length >= 2) {
+    const photoIds: string[] = [];
+    for (const img of imageItems.slice(0, 10)) {
+      const uploadRes = await fetch(
+        `${GRAPH_BASE}/${encodeURIComponent(pageId)}/photos`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify({
+            url: img.url.trim(),
+            published: false,
+            access_token: cleanToken,
+          }),
+        },
+      );
+      const uploadPayload = (await uploadRes.json().catch(() => ({}))) as GraphError & {
+        id?: string;
+      };
+      if (!uploadRes.ok || uploadPayload.error || !uploadPayload.id) {
+        throw mapFacebookPublishError(
+          uploadPayload,
+          uploadRes.status,
+          'Facebook multi-photo staging failed',
+        );
+      }
+      photoIds.push(String(uploadPayload.id));
+    }
+
+    const feedRes = await fetch(`${GRAPH_BASE}/${encodeURIComponent(pageId)}/feed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({
+        ...(caption ? { message: caption } : {}),
+        attached_media: photoIds.map((id) => ({ media_fbid: id })),
+        access_token: cleanToken,
+      }),
+    });
+    const feedPayload = (await feedRes.json().catch(() => ({}))) as GraphError & {
+      id?: string;
+    };
+    if (!feedRes.ok || feedPayload.error || !feedPayload.id) {
+      throw mapFacebookPublishError(
+        feedPayload,
+        feedRes.status,
+        'Facebook multi-photo publish failed',
+      );
+    }
+    return { postId: String(feedPayload.id), kind: 'multi_photo' };
+  }
+
+  if (!caption && !linkUrl) {
+    throw new Error('Provide text, a link URL, or media to post on Facebook.');
+  }
+
+  const res = await fetch(`${GRAPH_BASE}/${encodeURIComponent(pageId)}/feed`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+    body: JSON.stringify({
+      ...(caption ? { message: caption } : {}),
+      ...(linkUrl ? { link: linkUrl } : {}),
+      access_token: cleanToken,
+    }),
+  });
+  const payload = (await res.json().catch(() => ({}))) as GraphError & { id?: string };
+  if (!res.ok || payload.error || !payload.id) {
+    throw mapFacebookPublishError(payload, res.status, 'Facebook Feed publish failed');
+  }
+  return { postId: String(payload.id), kind: 'feed' };
 }

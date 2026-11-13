@@ -12,6 +12,7 @@ import {
   SendMessageError,
 } from '@/lib/whatsapp/send-message'
 import { sendInstagramMessage, InstagramSendError } from '@/lib/instagram/send-message'
+import { sendXDirectMessageToConversation, XSendError } from '@/lib/x/send-message'
 
 // The dashboard's outbound-send endpoint. It owns auth, per-user rate
 // limiting, and the two ways the UI targets a thread — an existing
@@ -213,6 +214,35 @@ export async function POST(request: Request) {
         }
         return NextResponse.json(
           { error: err instanceof Error ? err.message : 'Failed to send Instagram message' },
+          { status: 500 }
+        )
+      }
+    }
+
+    if (convRow?.channel === 'x') {
+      try {
+        const result = await sendXDirectMessageToConversation(supabase, {
+          conversationId,
+          projectId,
+          accountId,
+          userId: user.id,
+          contentText: content_text,
+        })
+
+        return NextResponse.json({
+          success: true,
+          message_id: result.messageId,
+          x_message_id: result.externalId,
+        })
+      } catch (err: unknown) {
+        if (err instanceof XSendError) {
+          return NextResponse.json(
+            { error: err.message, code: err.code },
+            { status: err.status }
+          )
+        }
+        return NextResponse.json(
+          { error: err instanceof Error ? err.message : 'Failed to send X direct message' },
           { status: 500 }
         )
       }
