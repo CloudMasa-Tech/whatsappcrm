@@ -128,7 +128,7 @@ export async function verifyFacebookPageToken(
             { cache: 'no-store' },
           );
           const meDirect = (await meDirectRes.json().catch(() => ({}))) as GraphPageNode;
-          if (meDirectRes.ok && meDirect.id && meDirect.name && meDirect.category) {
+          if (meDirectRes.ok && meDirect.id && meDirect.name) {
             return {
               id: meDirect.id,
               name: meDirect.name,
@@ -406,12 +406,12 @@ export async function fetchUserFacebookPages(
       { cache: 'no-store' },
     );
     const directPayload = (await directRes.json().catch(() => ({}))) as GraphPageNode;
-    if (directRes.ok && directPayload.id && directPayload.name && directPayload.category) {
+    if (directRes.ok && directPayload.id && directPayload.name) {
       return [
         {
           id: directPayload.id,
           name: directPayload.name,
-          category: directPayload.category,
+          category: directPayload.category ?? undefined,
           accessToken: cleanToken,
           profilePictureUrl: directPayload.picture?.data?.url ?? null,
         },
@@ -437,9 +437,11 @@ export async function fetchUserFacebookPages(
           .map((p) => p.permission),
       );
 
+      const grantedList = Array.from(granted).join(', ');
+
       if (!granted.has('pages_show_list')) {
         throw new Error(
-          "Your token is missing the 'pages_show_list' permission. In Graph API Explorer, click 'Add a Permission' -> Permissions -> pages_show_list & pages_messaging, then click 'Generate Access Token'.",
+          `Your Meta token is missing the 'pages_show_list' permission (currently granted on this token: ${grantedList || 'none'}). To fix this: 1) In Graph API Explorer under "User or Page" dropdown, select your Facebook Page directly to copy its direct Page Access Token, OR 2) Click "Generate Access Token" and in the Facebook popup, check the box next to your Facebook Page.`,
         );
       }
     }
