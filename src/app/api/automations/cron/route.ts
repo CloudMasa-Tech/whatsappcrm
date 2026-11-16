@@ -18,7 +18,7 @@ import type { AutomationContext } from '@/lib/automations/engine'
 export async function GET(request: Request) {
   const expected = process.env.AUTOMATION_CRON_SECRET
   if (!expected) {
-    return NextResponse.json({ error: 'cron not configured' }, { status: 503 })
+    return NextResponse.json({ error: 'Cron schedule is not configured.' }, { status: 503 })
   }
   const supplied = request.headers.get('x-cron-secret') ?? ''
   const suppliedBuf = Buffer.from(supplied)

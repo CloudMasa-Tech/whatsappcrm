@@ -26,6 +26,11 @@ import {
   Upload,
   Download,
   X,
+  HelpCircle,
+  CheckCircle,
+  MessageSquare,
+  Webhook,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -377,6 +382,22 @@ export default function EmailCampaignsPage() {
   const [allowResendExisting, setAllowResendExisting] = useState(false);
   const [showTemplatePreviewInModal, setShowTemplatePreviewInModal] = useState(false);
   const [addingRecipients, setAddingRecipients] = useState(false);
+  const [recordingLeadId, setRecordingLeadId] = useState<string | null>(null);
+  const [showLeadHelp, setShowLeadHelp] = useState(false);
+  const [showInboundModal, setShowInboundModal] = useState(false);
+  const [testInboundEmail, setTestInboundEmail] = useState("");
+  const [testInboundSubject, setTestInboundSubject] = useState("Re: Quick question about our onboarding");
+  const [testInboundText, setTestInboundText] = useState("Hello! We received your outreach and would love to move forward with your team.");
+  const [testingInbound, setTestingInbound] = useState(false);
+  const [inboundTestResult, setInboundTestResult] = useState<{
+    success: boolean;
+    leadRecorded?: boolean;
+    message: string;
+    conversationId?: string;
+  } | null>(null);
+  const [copiedWebhookUrl, setCopiedWebhookUrl] = useState(false);
+  const [copiedSecret, setCopiedSecret] = useState(false);
+  const [syncingMailbox, setSyncingMailbox] = useState(false);
 
   // Bumped to re-run the fetch effect after a create/send/delete.
   const [reloadKey, setReloadKey] = useState(0);
@@ -848,6 +869,118 @@ export default function EmailCampaignsPage() {
     }
   };
 
+  const handleRecordLead = async (campaignId: string, recipientId: string, email: string) => {
+    if (recordingLeadId) return;
+    setRecordingLeadId(recipientId);
+    try {
+      const res = await fetch(`/api/email/campaigns/${campaignId}/record-lead`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recipientId, email }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to record lead");
+        return;
+      }
+      toast.success(data.message || `Lead recorded for ${email}!`);
+      // Update local recipient status to replied
+      setCampaignRecipients((prev) =>
+        prev.map((r) =>
+          r.id === recipientId
+            ? { ...r, status: "replied", replied_at: new Date().toISOString() }
+            : r,
+        ),
+      );
+      // Update campaign in list and in modal
+      setCampaigns((prev) =>
+        prev.map((c) =>
+          c.id === campaignId ? { ...c, replied_count: (c.replied_count || 0) + 1 } : c,
+        ),
+      );
+      setSendMoreCampaign((prev) =>
+        prev && prev.id === campaignId
+          ? { ...prev, replied_count: (prev.replied_count || 0) + 1 }
+          : prev,
+      );
+    } catch {
+      toast.error("Network error recording lead");
+    } finally {
+      setRecordingLeadId(null);
+    }
+  };
+
+  const handleTestInbound = async () => {
+    if (!testInboundEmail || !testInboundEmail.includes("@")) {
+      toast.error("Please enter a valid email address to test");
+      return;
+    }
+    setTestingInbound(true);
+    setInboundTestResult(null);
+    try {
+      const res = await fetch("/api/email/inbound/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromEmail: testInboundEmail.trim(),
+          subject: testInboundSubject.trim(),
+          text: testInboundText.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Inbound webhook test failed");
+        setInboundTestResult({ success: false, message: data.error || "Inbound test failed" });
+        return;
+      }
+      toast.success(data.message || "Inbound email reply recorded!");
+      setInboundTestResult({
+        success: true,
+        leadRecorded: data.inboundResult?.leadRecorded,
+        conversationId: data.inboundResult?.conversationId,
+        message: data.message,
+      });
+      void load();
+      if (sendMoreCampaign) {
+        void openSendMoreDialog(sendMoreCampaign);
+      }
+    } catch {
+      toast.error("Network error testing inbound webhook");
+      setInboundTestResult({ success: false, message: "Network connection failed" });
+    } finally {
+      setTestingInbound(false);
+    }
+  };
+
+  const handleSyncMailbox = async () => {
+    if (syncingMailbox) return;
+    setSyncingMailbox(true);
+    try {
+      const res = await fetch("/api/email/sync-mailbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to sync mailbox");
+        return;
+      }
+      toast.success(
+        data.message ||
+          `Mailbox synced (${data.scannedCount} emails scanned, ${data.newLeadsCount} new leads)!`,
+      );
+      void load();
+      if (sendMoreCampaign) {
+        void openSendMoreDialog(sendMoreCampaign);
+      }
+    } catch {
+      toast.error("Network error syncing mailbox");
+    } finally {
+      setSyncingMailbox(false);
+    }
+  };
+
   return (
     <div className="space-y-6 p-4 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -858,6 +991,36 @@ export default function EmailCampaignsPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="default"
+            onClick={handleSyncMailbox}
+            disabled={syncingMailbox}
+            className="bg-emerald-600 text-white hover:bg-emerald-500 shadow-sm"
+            title="Scan info@cloudmasa.com Gmail inbox directly to fetch customer replies and record Leads"
+          >
+            {syncingMailbox ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-2 h-4 w-4" />
+            )}
+            {syncingMailbox ? "Syncing Gmail..." : "Sync Mailbox (Fetch Replies)"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setShowInboundModal(true)}
+            className="border-primary/40 text-primary hover:bg-primary/10"
+          >
+            <Webhook className="mr-2 h-4 w-4" />
+            Inbound Webhook (Option 2)
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setShowLeadHelp(true)}
+            className="border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"
+          >
+            <HelpCircle className="mr-2 h-4 w-4 text-emerald-500" />
+            How Leads & Tracking Work
+          </Button>
           <Button
             variant="outline"
             onClick={() => setShowTemplates((v) => !v)}
@@ -1716,16 +1879,59 @@ export default function EmailCampaignsPage() {
                             </div>
                           )}
                         </div>
-                        <div className="flex shrink-0 items-center gap-2">
+                        <div className="flex shrink-0 items-center gap-1.5">
                           <span className="text-[11px] text-muted-foreground">
                             {r.open_count}o · {r.click_count}c
                           </span>
-                          <Badge
-                            variant="outline"
-                            className={cn("text-[10px] capitalize", STATUS_STYLES[r.status])}
-                          >
-                            {r.status}
-                          </Badge>
+                          {r.status === "replied" ? (
+                            <Badge
+                              variant="outline"
+                              className="border-emerald-500/40 bg-emerald-500/10 text-[10px] font-semibold text-emerald-500"
+                            >
+                              ✓ Lead
+                            </Badge>
+                          ) : (
+                            <Badge
+                              variant="outline"
+                              className={cn("text-[10px] capitalize", STATUS_STYLES[r.status])}
+                            >
+                              {r.status}
+                            </Badge>
+                          )}
+                          {r.status === "replied" ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 px-2 text-[10px] text-primary hover:underline"
+                              onClick={() => {
+                                window.location.href = "/inbox";
+                              }}
+                              title="Open reply thread in Unified Inbox"
+                            >
+                              <MessageSquare className="mr-1 h-3 w-3" />
+                              Inbox
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-6 px-2 text-[10px] border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"
+                              disabled={recordingLeadId === r.id}
+                              onClick={() =>
+                                void handleRecordLead(sendMoreCampaign.id, r.id, r.email)
+                              }
+                              title="Mark as Lead / Customer Replied (increments Leads and creates Inbox conversation)"
+                            >
+                              {recordingLeadId === r.id ? (
+                                <Loader2 className="mr-1 h-2.5 w-2.5 animate-spin" />
+                              ) : (
+                                <CheckCircle className="mr-1 h-2.5 w-2.5" />
+                              )}
+                              Mark Lead
+                            </Button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1768,6 +1974,301 @@ export default function EmailCampaignsPage() {
                   ? `Send ${pendingInModal} Pending`
                   : "Send Now"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Help Modal: How Leads & Email Tracking Work */}
+      <Dialog open={showLeadHelp} onOpenChange={setShowLeadHelp}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <HelpCircle className="h-5 w-5 text-emerald-500" />
+              <span>How Leads &amp; Mailbox Tracking Work</span>
+            </DialogTitle>
+            <DialogDescription>
+              Understand how MasaCRM tracks Opens, Clicks, and converts customer replies into Leads.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 text-xs leading-relaxed">
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 space-y-1.5 text-foreground">
+              <div className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 text-sm">
+                <Reply className="h-4 w-4" /> What is a &ldquo;Lead&rdquo; in Email Campaigns?
+              </div>
+              <p>
+                In MasaCRM, <strong>Leads</strong> are prospects who replied to your campaign email or showed direct interest. Each reply increments the Leads count on the campaign card and starts a thread in your Unified Inbox.
+              </p>
+            </div>
+
+            <div className="space-y-2 rounded-lg border p-3">
+              <div className="font-semibold text-sm flex items-center gap-1.5">
+                <Eye className="h-4 w-4 text-blue-500" /> Opens &amp; Clicks Tracking
+              </div>
+              <p className="text-muted-foreground">
+                • <strong>Opens:</strong> MasaCRM embeds a tiny 1×1 transparent tracking pixel. When the recipient opens the email in Gmail/Outlook, the pixel loads from your server and increments Opens.
+              </p>
+              <p className="text-muted-foreground">
+                • <strong>Clicks:</strong> Links inside the email are wrapped in redirect tracking links. When a recipient clicks any link, the click is logged before redirecting to the target page.
+              </p>
+              <div className="rounded bg-muted/50 p-2 text-[11px] text-muted-foreground">
+                <strong>Why Opens/Clicks show 0 on localhost:</strong> External email providers (Gmail, Yahoo, Outlook) cannot load images or links from <code className="font-mono">http://localhost:3000</code>. On your public domain (<code className="font-mono">https://masacrm.cloudmasa.com</code>), all opens and clicks are tracked automatically in real-time.
+              </div>
+            </div>
+
+            <div className="space-y-2 rounded-lg border p-3">
+              <div className="font-semibold text-sm flex items-center gap-1.5">
+                <CheckCircle className="h-4 w-4 text-emerald-500" /> How to Record Replies &amp; Leads
+              </div>
+              <div className="space-y-2 text-muted-foreground">
+                <div>
+                  <strong>1. Instant 1-Click &ldquo;Mark Lead&rdquo;:</strong>
+                  <p className="mt-0.5">
+                    Click <strong>&ldquo;Add Emails &amp; Send&rdquo;</strong> on any campaign card to view the recipient list. Next to any customer who replied, click the <strong>&ldquo;Mark Lead&rdquo;</strong> button. This instantly increments the campaign&rsquo;s <strong>Leads</strong> count, syncs them to CRM Contacts, and opens a thread in your <strong>Unified Inbox</strong>.
+                  </p>
+                </div>
+                <div>
+                  <strong>2. Automated Inbound Email Webhook:</strong>
+                  <p className="mt-0.5">
+                    Configure your mail provider (Mailgun, SendGrid, Postmark, AWS SES, or Cloudflare Email Routing) to forward incoming replies to MasaCRM&rsquo;s Inbound Webhook:
+                  </p>
+                  <code className="block mt-1 rounded bg-muted p-2 font-mono text-[11px] select-all break-all text-foreground">
+                    https://masacrm.cloudmasa.com/api/email/inbound
+                  </code>
+                  <p className="mt-1">
+                    Incoming replies are automatically matched to the recipient, the Lead counter is incremented, and the message appears directly in your Unified Inbox so your sales team can reply immediately!
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button onClick={() => setShowLeadHelp(false)}>Got it</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Option 2: Automated Inbound Webhook Modal */}
+      <Dialog open={showInboundModal} onOpenChange={setShowInboundModal}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Webhook className="h-5 w-5 text-primary" />
+              <span>Option 2: Automated Inbound Email Webhook</span>
+            </DialogTitle>
+            <DialogDescription>
+              Incoming email replies from customers are automatically captured, recorded as Leads, and routed to your Unified Inbox.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 text-xs leading-relaxed">
+            {/* Live Webhook URL & Secret */}
+            <div className="space-y-3 rounded-lg border border-primary/20 bg-card p-4">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-foreground text-sm">Your Webhook Endpoint</span>
+                <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-500">
+                  Active
+                </Badge>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Inbound Webhook URL (POST)</Label>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 rounded-md border bg-muted/60 p-2 font-mono text-[11px] select-all break-all text-foreground">
+                    {(typeof window !== "undefined" ? window.location.origin : "https://masacrm.cloudmasa.com") +
+                      "/api/email/inbound?secret=masacrm_inbound_sec_4d8e9f2a7b1c3e5a"}
+                  </code>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 shrink-0"
+                    onClick={() => {
+                      const url =
+                        (typeof window !== "undefined" ? window.location.origin : "https://masacrm.cloudmasa.com") +
+                        "/api/email/inbound?secret=masacrm_inbound_sec_4d8e9f2a7b1c3e5a";
+                      navigator.clipboard.writeText(url);
+                      setCopiedWebhookUrl(true);
+                      toast.success("Webhook URL copied to clipboard!");
+                      setTimeout(() => setCopiedWebhookUrl(false), 2000);
+                    }}
+                  >
+                    {copiedWebhookUrl ? (
+                      <Check className="mr-1.5 h-3.5 w-3.5 text-emerald-500" />
+                    ) : (
+                      <Copy className="mr-1.5 h-3.5 w-3.5" />
+                    )}
+                    {copiedWebhookUrl ? "Copied" : "Copy URL"}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Inbound Secret Token</Label>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 rounded-md border bg-muted/60 p-2 font-mono text-[11px] select-all text-foreground">
+                    masacrm_inbound_sec_4d8e9f2a7b1c3e5a
+                  </code>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 shrink-0"
+                    onClick={() => {
+                      navigator.clipboard.writeText("masacrm_inbound_sec_4d8e9f2a7b1c3e5a");
+                      setCopiedSecret(true);
+                      toast.success("Secret copied!");
+                      setTimeout(() => setCopiedSecret(false), 2000);
+                    }}
+                  >
+                    {copiedSecret ? (
+                      <Check className="mr-1.5 h-3.5 w-3.5 text-emerald-500" />
+                    ) : (
+                      <Copy className="mr-1.5 h-3.5 w-3.5" />
+                    )}
+                    {copiedSecret ? "Copied" : "Copy Secret"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Live Webhook Simulator / Test Panel */}
+            <div className="rounded-lg border border-dashed border-primary/30 bg-muted/20 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="font-semibold text-foreground text-sm flex items-center gap-1.5">
+                  <Sparkles className="h-4 w-4 text-primary" /> Live Inbound Reply Simulator
+                </div>
+                <span className="text-[11px] text-muted-foreground">Test Option 2 end-to-end</span>
+              </div>
+
+              <p className="text-muted-foreground">
+                Enter any recipient email (e.g. one from your campaign) and send a simulated reply to verify that your Leads count increments and the conversation appears in your Inbox.
+              </p>
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="test-sender-email" className="text-xs">
+                    Customer Reply Email *
+                  </Label>
+                  <Input
+                    id="test-sender-email"
+                    type="email"
+                    placeholder="e.g. saravanasiva143@gmail.com"
+                    value={testInboundEmail}
+                    onChange={(e) => setTestInboundEmail(e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="test-reply-subject" className="text-xs">
+                    Email Subject
+                  </Label>
+                  <Input
+                    id="test-reply-subject"
+                    placeholder="Re: Quick question"
+                    value={testInboundSubject}
+                    onChange={(e) => setTestInboundSubject(e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="test-reply-text" className="text-xs">
+                  Customer Reply Message
+                </Label>
+                <Textarea
+                  id="test-reply-text"
+                  rows={2}
+                  value={testInboundText}
+                  onChange={(e) => setTestInboundText(e.target.value)}
+                  className="field-sizing-fixed min-h-[60px] text-xs"
+                />
+              </div>
+
+              {inboundTestResult && (
+                <div
+                  className={cn(
+                    "rounded-lg border p-3 text-xs flex items-start gap-2.5",
+                    inboundTestResult.success
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                      : "border-destructive/40 bg-destructive/10 text-destructive",
+                  )}
+                >
+                  {inboundTestResult.success ? (
+                    <CheckCircle className="h-4 w-4 shrink-0 text-emerald-500 mt-0.5" />
+                  ) : (
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-destructive mt-0.5" />
+                  )}
+                  <div className="flex-1 space-y-1">
+                    <div className="font-semibold">{inboundTestResult.message}</div>
+                    {inboundTestResult.success && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs border-emerald-500/40 text-emerald-500 hover:bg-emerald-500/20"
+                          onClick={() => {
+                            window.location.href = "/inbox";
+                          }}
+                        >
+                          <MessageSquare className="mr-1.5 h-3 w-3" />
+                          View in Unified Inbox
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <Button
+                type="button"
+                onClick={handleTestInbound}
+                disabled={testingInbound}
+                className="w-full sm:w-auto"
+              >
+                {testingInbound ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="mr-2 h-4 w-4" />
+                )}
+                Simulate Customer Reply &amp; Test Webhook
+              </Button>
+            </div>
+
+            {/* Provider Configuration Guides */}
+            <div className="space-y-3 rounded-lg border p-4">
+              <div className="font-semibold text-sm">Provider Setup Instructions</div>
+              <div className="space-y-2 text-muted-foreground">
+                <div className="rounded border bg-muted/30 p-2.5">
+                  <strong className="text-foreground">Method A: Gmail / Google Workspace Auto-Forwarding</strong>
+                  <p className="mt-1">
+                    1. In Gmail (<code className="font-mono">info@cloudmasa.com</code>), go to <strong>Settings → Forwarding and POP/IMAP</strong>.<br />
+                    2. Add a forwarding rule or filter for incoming replies.<br />
+                    3. For automated webhook forwarding from Gmail, you can use a free Cloudflare Email Worker, Zapier Gmail trigger, or Mailgun Inbound route.
+                  </p>
+                </div>
+                <div className="rounded border bg-muted/30 p-2.5">
+                  <strong className="text-foreground">Method B: Cloudflare Email Routing (Recommended &amp; 100% Free)</strong>
+                  <p className="mt-1">
+                    If your domain DNS is on Cloudflare:
+                    Go to <strong>Email Routing → Email Workers</strong>, create a worker that forwards incoming customer emails directly to your MasaCRM webhook endpoint above.
+                  </p>
+                </div>
+                <div className="rounded border bg-muted/30 p-2.5">
+                  <strong className="text-foreground">Method C: SendGrid Inbound Parse / Mailgun Routes / Postmark</strong>
+                  <p className="mt-1">
+                    Under your provider&rsquo;s Inbound Settings, paste the Webhook URL above as your Destination URL. Every reply will be parsed and posted into MasaCRM in real time!
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button onClick={() => setShowInboundModal(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

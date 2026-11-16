@@ -236,7 +236,7 @@ export async function POST(request: Request) {
 
     if (!access_token || !phone_number_id) {
       return NextResponse.json(
-        { error: 'access_token and phone_number_id are required' },
+        { error: 'Access token and Phone Number ID are required.' },
         { status: 400 }
       )
     }

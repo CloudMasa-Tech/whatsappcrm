@@ -79,7 +79,7 @@ export async function POST(request: Request) {
 
   if (!effectiveName || !effectiveTriggerType) {
     return NextResponse.json(
-      { error: 'name and trigger_type are required' },
+      { error: 'Name and trigger type are required.' },
       { status: 400 },
     )
   }

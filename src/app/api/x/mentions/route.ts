@@ -26,6 +26,20 @@ export async function GET() {
 
     return NextResponse.json({ mentions });
   } catch (err) {
+    if (
+      err instanceof XApiError &&
+      (err.status === 402 ||
+        err.status === 403 ||
+        err.message?.toLowerCase().includes('credits depleted') ||
+        err.message?.toLowerCase().includes('payment required'))
+    ) {
+      return NextResponse.json({
+        mentions: [],
+        tierLimited: true,
+        message:
+          'X Developer Free tier active. Reading mentions requires X Basic tier or higher.',
+      });
+    }
     if (err instanceof XApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status || 400 });
     }

@@ -27,7 +27,7 @@ export async function PATCH(
   const update: Record<string, unknown> = {}
   if (typeof body.title === 'string') {
     const title = body.title.trim()
-    if (!title) return NextResponse.json({ error: 'title cannot be empty' }, { status: 400 })
+    if (!title) return NextResponse.json({ error: 'Title cannot be empty.' }, { status: 400 })
     update.title = title
   }
 
@@ -36,7 +36,7 @@ export async function PATCH(
   // otherwise a switched row keeps a stale payload the picker mis-routes on.
   if ('kind' in body) {
     if (body.kind !== 'text' && body.kind !== 'interactive') {
-      return NextResponse.json({ error: 'kind must be "text" or "interactive"' }, { status: 400 })
+      return NextResponse.json({ error: 'Kind must be either "text" or "interactive".' }, { status: 400 })
     }
     update.kind = body.kind
     if (body.kind === 'interactive') {
@@ -48,7 +48,7 @@ export async function PATCH(
       const text = typeof body.content_text === 'string' ? body.content_text : ''
       if (!text.trim()) {
         return NextResponse.json(
-          { error: 'content_text is required for text quick replies' },
+          { error: 'Message content text is required for text quick replies.' },
           { status: 400 },
         )
       }

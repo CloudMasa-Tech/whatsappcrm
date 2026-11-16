@@ -291,7 +291,7 @@ export async function sendMediaMessage(
   args: SendMediaMessageArgs,
 ): Promise<MetaSendResult> {
   const { phoneNumberId, accessToken, to, kind, link, caption, filename, contextMessageId } = args
-  if (!link) throw new Error('sendMediaMessage requires a link.')
+  if (!link) throw new Error('Media message requires a link.')
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
 
   // Audio accepts neither caption nor filename per Meta's spec — adding

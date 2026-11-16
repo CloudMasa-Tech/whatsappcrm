@@ -112,7 +112,7 @@ export async function PUT(
   }
   if (body.name !== undefined && !body.name.trim()) {
     return NextResponse.json(
-      { error: 'name cannot be empty' },
+      { error: 'Flow name cannot be empty.' },
       { status: 400 },
     )
   }

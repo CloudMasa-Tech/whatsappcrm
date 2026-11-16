@@ -204,7 +204,7 @@ export async function POST(request: Request) {
 
     if (!template_name) {
       return NextResponse.json(
-        { error: 'template_name is required' },
+        { error: 'Template name is required.' },
         { status: 400 }
       );
     }

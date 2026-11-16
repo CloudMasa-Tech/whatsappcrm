@@ -103,7 +103,7 @@ export function XConfig({ canDisconnect = true }: XConfigProps) {
   const [dmSending, setDmSending] = useState(false);
   const [dmBatchResults, setDmBatchResults] = useState<
     Array<{ recipient: string; status: "sent" | "failed"; error?: string; messageId?: string }>
-  | null>(null);
+    | null>(null);
   const [syncingDms, setSyncingDms] = useState(false);
 
   const [postsLoading, setPostsLoading] = useState(false);
@@ -158,10 +158,23 @@ export function XConfig({ canDisconnect = true }: XConfigProps) {
     try {
       const res = await fetch("/api/x/posts", { cache: "no-store" });
       const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Failed to load X posts");
+      if (!res.ok) {
+        if (
+          res.status === 402 ||
+          json?.error?.toLowerCase().includes("credits depleted") ||
+          json?.error?.toLowerCase().includes("payment required")
+        ) {
+          setPosts([]);
+          return;
+        }
+        throw new Error(json?.error || "Failed to load X posts");
+      }
       setPosts((json.posts ?? []) as XTweetItem[]);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not load X timeline");
+      const msg = err instanceof Error ? err.message : "Could not load X timeline";
+      if (!msg.toLowerCase().includes("credits depleted") && !msg.toLowerCase().includes("payment required")) {
+        toast.error(msg);
+      }
     } finally {
       setPostsLoading(false);
     }
@@ -172,10 +185,23 @@ export function XConfig({ canDisconnect = true }: XConfigProps) {
     try {
       const res = await fetch("/api/x/mentions", { cache: "no-store" });
       const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Failed to load X mentions");
+      if (!res.ok) {
+        if (
+          res.status === 402 ||
+          json?.error?.toLowerCase().includes("credits depleted") ||
+          json?.error?.toLowerCase().includes("payment required")
+        ) {
+          setMentions([]);
+          return;
+        }
+        throw new Error(json?.error || "Failed to load X mentions");
+      }
       setMentions((json.mentions ?? []) as XMentionItem[]);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not load X mentions");
+      const msg = err instanceof Error ? err.message : "Could not load X mentions";
+      if (!msg.toLowerCase().includes("credits depleted") && !msg.toLowerCase().includes("payment required")) {
+        toast.error(msg);
+      }
     } finally {
       setMentionsLoading(false);
     }
@@ -196,10 +222,10 @@ export function XConfig({ canDisconnect = true }: XConfigProps) {
                 setPosts(pJson.posts);
               }
             })
-            .catch(() => {});
+            .catch(() => { });
         }
       })
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
@@ -384,8 +410,7 @@ export function XConfig({ canDisconnect = true }: XConfigProps) {
         }
       } else if (data.failedCount > 0) {
         toast.error(
-          `Could not deliver DM: ${
-            data.results?.[0]?.error || "Please verify handle and permissions"
+          `Could not deliver DM: ${data.results?.[0]?.error || "Please verify handle and permissions"
           }`,
         );
       }
@@ -438,7 +463,11 @@ export function XConfig({ canDisconnect = true }: XConfigProps) {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Failed to publish X post");
-      toast.success("Post published on X!");
+      if (json.notice) {
+        toast.info(json.notice);
+      } else {
+        toast.success("Post published on X!");
+      }
       setTweetText("");
       setMediaUrls([]);
       void loadPosts();
@@ -973,6 +1002,10 @@ export function XConfig({ canDisconnect = true }: XConfigProps) {
                     Post to X
                   </Button>
                 </div>
+
+                <p className="text-[11px] text-muted-foreground/80">
+                  ℹ️ <strong>X Tier Notice:</strong> Free Developer tier accounts support text posting. Direct photo/video uploads require Twitter Basic tier ($100/mo); with attached media on Free tier, links are automatically included.
+                </p>
               </div>
 
               {/* Recent X Posts */}
@@ -996,7 +1029,7 @@ export function XConfig({ canDisconnect = true }: XConfigProps) {
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                   </div>
                 ) : posts.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No recent posts returned.</p>
+                  <p className="text-xs text-muted-foreground">No posts published yet. Compose your first update above.</p>
                 ) : (
                   <div className="space-y-2.5">
                     {posts.map((post) => (

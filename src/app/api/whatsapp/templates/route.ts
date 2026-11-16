@@ -96,7 +96,7 @@ export async function POST(request: Request) {
     const { starter_slug, make_common, projectId: bodyProjectId } = body;
 
     if (!starter_slug) {
-      return NextResponse.json({ error: 'starter_slug is required' }, { status: 400 });
+      return NextResponse.json({ error: 'Starter template identifier is required.' }, { status: 400 });
     }
 
     const starter = STARTER_MESSAGE_TEMPLATES.find((s) => s.slug === starter_slug);

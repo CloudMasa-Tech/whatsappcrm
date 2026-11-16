@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null)
   const projectId = typeof body?.project_id === 'string' ? body.project_id : ''
   if (!projectId) {
-    return NextResponse.json({ error: 'project_id is required' }, { status: 400 })
+    return NextResponse.json({ error: 'Project ID is required.' }, { status: 400 })
   }
 
   let project

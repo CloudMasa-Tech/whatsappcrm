@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     const content = typeof body?.content === 'string' ? body.content.trim() : ''
     if (!title || !content) {
       return NextResponse.json(
-        { error: 'title and content are required' },
+        { error: 'Title and content are required.' },
         { status: 400 },
       )
     }

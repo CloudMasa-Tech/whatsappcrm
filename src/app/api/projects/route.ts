@@ -99,11 +99,11 @@ export async function POST(request: Request) {
 
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   if (!name) {
-    return NextResponse.json({ error: 'name is required' }, { status: 400 })
+    return NextResponse.json({ error: 'Project name is required.' }, { status: 400 })
   }
   if (name.length > 80) {
     return NextResponse.json(
-      { error: 'name must be 80 characters or fewer' },
+      { error: 'Project name must be 80 characters or fewer.' },
       { status: 400 },
     )
   }
@@ -111,7 +111,7 @@ export async function POST(request: Request) {
   const channelType = body.channel_type ?? 'qr'
   if (!isChannelType(channelType)) {
     return NextResponse.json(
-      { error: "channel_type must be 'qr' or 'cloud_api'" },
+      { error: "Channel type must be either 'qr' or 'cloud_api'." },
       { status: 400 },
     )
   }
@@ -127,7 +127,7 @@ export async function POST(request: Request) {
     )
     if (parsed.length === 0) {
       return NextResponse.json(
-        { error: 'allowed_channels must be a non-empty array containing "qr" and/or "cloud_api"' },
+        { error: 'Allowed channels must be a non-empty list containing "qr" and/or "cloud_api".' },
         { status: 400 },
       )
     }

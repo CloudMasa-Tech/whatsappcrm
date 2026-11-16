@@ -29,7 +29,7 @@ import { resolveFallbackPolicy } from '@/lib/flows/fallback'
 export async function GET(request: Request) {
   const expected = process.env.AUTOMATION_CRON_SECRET
   if (!expected) {
-    return NextResponse.json({ error: 'cron not configured' }, { status: 503 })
+    return NextResponse.json({ error: 'Cron schedule is not configured.' }, { status: 503 })
   }
   // Constant-time compare so an attacker who can hit the endpoint
   // can't recover the secret byte-by-byte from response-time deltas.

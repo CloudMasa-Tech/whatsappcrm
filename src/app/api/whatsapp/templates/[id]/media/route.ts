@@ -74,7 +74,7 @@ export async function POST(
 
     if (!URL_RE.test(headerMediaUrl)) {
       return NextResponse.json(
-        { error: 'header_media_url must be a public http(s) URL.' },
+        { error: 'Header media URL must be a public HTTP or HTTPS link.' },
         { status: 400 }
       );
     }

@@ -50,10 +50,10 @@ export async function PATCH(request: Request, { params }: Params) {
       return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })
     }
     if (title !== undefined && !title) {
-      return NextResponse.json({ error: 'title cannot be empty' }, { status: 400 })
+      return NextResponse.json({ error: 'Title cannot be empty.' }, { status: 400 })
     }
     if (content !== undefined && !content) {
-      return NextResponse.json({ error: 'content cannot be empty' }, { status: 400 })
+      return NextResponse.json({ error: 'Content cannot be empty.' }, { status: 400 })
     }
 
     const update: Record<string, string> = {}

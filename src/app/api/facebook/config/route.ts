@@ -15,9 +15,13 @@ import { NextResponse } from 'next/server';
 
 import { getCurrentProject, requireProjectRole } from '@/lib/auth/project';
 import { toErrorResponse } from '@/lib/auth/account';
+import { decrypt } from '@/lib/whatsapp/encryption';
 import { sanitizeAccessToken } from '@/lib/instagram/meta-client';
 import { saveFacebookPageConfig } from '@/lib/facebook/config-store';
-import { verifyFacebookPageToken } from '@/lib/facebook/meta-client';
+import {
+  fetchFacebookPageDetails,
+  verifyFacebookPageToken,
+} from '@/lib/facebook/meta-client';
 
 /** Columns safe to return to the browser — no token columns. */
 const PUBLIC_COLUMNS =
@@ -59,8 +63,47 @@ export async function GET(request: Request) {
       });
     }
 
+    let enrichedConfig: Record<string, unknown> = config ?? { status: 'disconnected' };
+
+    // If connected, fetch live page details (followers, likes, about, link) so the dashboard
+    // shows live stats just like Instagram does.
+    if (config?.status === 'connected') {
+      try {
+        const { data: secretRow } = await ctx.supabase
+          .from('facebook_config')
+          .select('access_token, page_id')
+          .eq('project_id', ctx.projectId)
+          .maybeSingle();
+
+        if (secretRow?.access_token) {
+          const decryptedToken = decrypt(secretRow.access_token);
+          const detailed = await fetchFacebookPageDetails(
+            decryptedToken,
+            secretRow.page_id ?? undefined,
+          );
+
+          enrichedConfig = {
+            ...enrichedConfig,
+            page_id: detailed.id || enrichedConfig.page_id,
+            page_name: detailed.name || enrichedConfig.page_name,
+            profile_picture_url:
+              detailed.profilePictureUrl || enrichedConfig.profile_picture_url,
+            category: detailed.category ?? null,
+            about: detailed.about ?? null,
+            fan_count: detailed.fanCount ?? null,
+            followers_count: detailed.followersCount ?? null,
+            posts_count: detailed.postsCount ?? null,
+            link: detailed.link ?? `https://www.facebook.com/${detailed.id}`,
+            is_verified: detailed.isVerified ?? false,
+          };
+        }
+      } catch (liveErr) {
+        console.warn('[GET /api/facebook/config] live profile fetch failed:', liveErr);
+      }
+    }
+
     return NextResponse.json({
-      config: config ?? { status: 'disconnected' },
+      config: enrichedConfig,
       webhook_url: webhookUrl,
       default_verify_token: defaultVerifyToken,
     });

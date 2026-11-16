@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     const ctx = await requireProjectRole('viewer');
     const postUrn = request.nextUrl.searchParams.get('postUrn')?.trim();
     if (!postUrn) {
-      return NextResponse.json({ error: 'postUrn query parameter is required.' }, { status: 400 });
+      return NextResponse.json({ error: 'LinkedIn post identifier is required.' }, { status: 400 });
     }
 
     const cfg = await loadActiveLinkedInConfig(ctx.projectId);
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     const postUrn = typeof body?.postUrn === 'string' ? body.postUrn.trim() : '';
     const text = typeof body?.text === 'string' ? body.text.trim() : '';
     if (!postUrn || !text) {
-      return NextResponse.json({ error: 'postUrn and text are required.' }, { status: 400 });
+      return NextResponse.json({ error: 'LinkedIn post identifier and comment text are required.' }, { status: 400 });
     }
 
     const cfg = await loadActiveLinkedInConfig(ctx.projectId);

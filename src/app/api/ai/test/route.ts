@@ -30,13 +30,13 @@ export async function POST(request: Request) {
     const provider = body.provider as AiProvider
     if (provider !== 'openai' && provider !== 'anthropic') {
       return NextResponse.json(
-        { error: 'provider must be "openai" or "anthropic"' },
+        { error: 'Provider must be either "openai" or "anthropic".' },
         { status: 400 },
       )
     }
     const model = typeof body.model === 'string' ? body.model.trim() : ''
     if (!model) {
-      return NextResponse.json({ error: 'model is required' }, { status: 400 })
+      return NextResponse.json({ error: 'Model name is required.' }, { status: 400 })
     }
 
     const rawKey = typeof body.api_key === 'string' ? body.api_key.trim() : ''

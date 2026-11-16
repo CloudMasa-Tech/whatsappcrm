@@ -105,7 +105,7 @@ export async function DELETE(request: NextRequest) {
 
     const postUrn = request.nextUrl.searchParams.get('postUrn')?.trim();
     if (!postUrn) {
-      return NextResponse.json({ error: 'postUrn query parameter is required.' }, { status: 400 });
+      return NextResponse.json({ error: 'LinkedIn post identifier is required.' }, { status: 400 });
     }
 
     await deleteLinkedInPost(cfg.accessToken, postUrn);

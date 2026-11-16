@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
-import { Mail, Server, ShieldCheck, Send, Loader2, CheckCircle2, AlertCircle, Unplug } from 'lucide-react';
+import { Mail, Server, ShieldCheck, Send, Loader2, CheckCircle2, AlertCircle, Unplug, Webhook, Copy, Check, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import { getPresetSmtpConfig } from '@/lib/email/presets';
 import { useAuth } from '@/hooks/use-auth';
 
@@ -27,6 +28,7 @@ export function EmailConfigPanel() {
   const [testing, setTesting] = useState(false);
   const [configured, setConfigured] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [copiedWebhook, setCopiedWebhook] = useState(false);
 
   const loadConfig = useCallback(async (pId: string | null) => {
     if (!pId) {
@@ -476,6 +478,57 @@ export function EmailConfigPanel() {
           </Button>
         </div>
       </form>
+
+      {/* Inbound Webhook & Automated Lead Capture (Option 2) */}
+      <div className="rounded-xl border border-primary/20 bg-card p-6 shadow-sm space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Webhook className="h-5 w-5 text-primary" />
+            <h3 className="font-semibold text-foreground">Inbound Reply Webhook (Automated Leads)</h3>
+            <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-500 text-xs">
+              Live &amp; Active
+            </Badge>
+          </div>
+        </div>
+
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Forward incoming customer email replies to this webhook endpoint. When a customer replies to your campaign outreach, MasaCRM automatically matches the recipient, increments the campaign&rsquo;s <strong>Leads</strong> counter, and places the email conversation thread directly into your <strong>Unified Inbox</strong> (/inbox).
+        </p>
+
+        <div className="space-y-2">
+          <Label className="text-xs">Inbound Webhook URL</Label>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 rounded-md border bg-muted/60 p-2.5 font-mono text-xs select-all break-all">
+              {(typeof window !== 'undefined' ? window.location.origin : 'https://masacrm.cloudmasa.com') +
+                '/api/email/inbound?secret=masacrm_inbound_sec_4d8e9f2a7b1c3e5a'}
+            </code>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const url =
+                  (typeof window !== 'undefined' ? window.location.origin : 'https://masacrm.cloudmasa.com') +
+                  '/api/email/inbound?secret=masacrm_inbound_sec_4d8e9f2a7b1c3e5a';
+                navigator.clipboard.writeText(url);
+                setCopiedWebhook(true);
+                toast.success('Inbound Webhook URL copied!');
+                setTimeout(() => setCopiedWebhook(false), 2000);
+              }}
+            >
+              {copiedWebhook ? <Check className="mr-1.5 h-3.5 w-3.5 text-emerald-500" /> : <Copy className="mr-1.5 h-3.5 w-3.5" />}
+              {copiedWebhook ? 'Copied' : 'Copy'}
+            </Button>
+          </div>
+        </div>
+
+        <div className="rounded-lg border bg-muted/20 p-3 text-xs space-y-1.5 text-muted-foreground">
+          <p className="font-semibold text-foreground">Supported Email Inbound Forwarders:</p>
+          <p>• <strong>Gmail / Google Workspace:</strong> Set an automatic forwarding filter in your Gmail Settings to forward incoming replies.</p>
+          <p>• <strong>Cloudflare Email Routing:</strong> Use a lightweight Cloudflare Email Worker to route domain replies straight to this URL.</p>
+          <p>• <strong>SendGrid Inbound Parse / Mailgun Routes / Postmark:</strong> Set this URL as the webhook destination.</p>
+        </div>
+      </div>
     </div>
   );
 }

@@ -76,7 +76,7 @@ export async function PATCH(request: NextRequest) {
     const ctx = await requireProjectRole("agent");
     const body = await request.json().catch(() => null);
     if (!body?.mediaId || typeof body.mediaId !== "string") {
-      return NextResponse.json({ error: "mediaId is required" }, { status: 400 });
+      return NextResponse.json({ error: "Instagram post ID is required." }, { status: 400 });
     }
 
     const { accessToken, tokenType } = await loadCloudConfig(ctx.projectId);

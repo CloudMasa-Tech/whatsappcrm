@@ -46,6 +46,7 @@ services:
       EMAIL_SERVER_USER: ${EMAIL_SERVER_USER:-}
       EMAIL_SERVER_PASSWORD: ${EMAIL_SERVER_PASSWORD:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
+      EMAIL_INBOUND_SECRET: ${EMAIL_INBOUND_SECRET:-masacrm_inbound_sec_4d8e9f2a7b1c3e5a}
     depends_on:
       - gateway
 

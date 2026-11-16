@@ -34,6 +34,20 @@ export async function GET() {
 
     return NextResponse.json({ posts });
   } catch (err) {
+    if (
+      err instanceof XApiError &&
+      (err.status === 402 ||
+        err.status === 403 ||
+        err.message?.toLowerCase().includes('credits depleted') ||
+        err.message?.toLowerCase().includes('payment required'))
+    ) {
+      return NextResponse.json({
+        posts: [],
+        tierLimited: true,
+        message:
+          'X Developer Free tier active. Free tier supports text posting, but tweet timeline reading is not included in Free tier credits.',
+      });
+    }
     if (err instanceof XApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status || 400 });
     }
@@ -86,19 +100,56 @@ export async function POST(request: Request) {
     }
 
     const mediaIds: string[] = [];
+    let mediaUploadError: string | null = null;
+    let isCreditOrTierError = false;
+
     for (const url of targetUrls) {
-      const uploaded = await uploadXMediaFromUrl({
-        accessToken: cfg.accessToken,
-        mediaUrl: url,
-        mimeType:
-          typeof body?.mediaMimeType === 'string' ? body.mediaMimeType : undefined,
-      });
-      mediaIds.push(uploaded.mediaId);
+      try {
+        const uploaded = await uploadXMediaFromUrl({
+          accessToken: cfg.accessToken,
+          mediaUrl: url,
+          mimeType:
+            typeof body?.mediaMimeType === 'string' ? body.mediaMimeType : undefined,
+        });
+        mediaIds.push(uploaded.mediaId);
+      } catch (uploadErr) {
+        mediaUploadError =
+          uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
+        if (
+          uploadErr instanceof XApiError &&
+          (uploadErr.status === 402 ||
+            uploadErr.status === 403 ||
+            mediaUploadError.toLowerCase().includes('credits depleted') ||
+            mediaUploadError.toLowerCase().includes('payment required'))
+        ) {
+          isCreditOrTierError = true;
+        }
+        break;
+      }
+    }
+
+    // If photo upload failed due to X Free tier (402 credits depleted)
+    let fallbackNotice: string | null = null;
+    let finalText = text || ' ';
+    if (mediaUploadError && mediaIds.length === 0 && targetUrls.length > 0) {
+      if (text && isCreditOrTierError) {
+        // Fall back to posting text tweet with the image link attached so the user's post succeeds
+        finalText = targetUrls[0] && !text.includes(targetUrls[0]) ? `${text}\n${targetUrls[0]}` : text;
+        fallbackNotice =
+          'Direct photo upload is restricted on X Free tier (HTTP 402). Your update was posted as a text post with the media link.';
+      } else {
+        throw new XApiError(
+          isCreditOrTierError
+            ? 'X Developer Free tier does not include photo upload credits (HTTP 402: credits depleted). Remove the attached image to post text-only on X, or upgrade to X Basic tier ($100/mo) for media uploads.'
+            : `Photo upload failed: ${mediaUploadError}`,
+          isCreditOrTierError ? 402 : 400,
+        );
+      }
     }
 
     const created = await publishXPost({
       accessToken: cfg.accessToken,
-      text: text || ' ',
+      text: finalText,
       mediaIds: mediaIds.length > 0 ? mediaIds : undefined,
       replyToTweetId:
         typeof body?.replyToTweetId === 'string' ? body.replyToTweetId : undefined,
@@ -106,6 +157,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
+      notice: fallbackNotice,
       post: {
         id: created.id,
         text: created.text,

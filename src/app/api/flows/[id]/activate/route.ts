@@ -49,7 +49,7 @@ export async function POST(
   const status = body?.status
   if (!status || !['draft', 'active', 'archived'].includes(status)) {
     return NextResponse.json(
-      { error: "status must be one of 'draft' | 'active' | 'archived'" },
+      { error: "Status must be 'draft', 'active', or 'archived'." },
       { status: 400 },
     )
   }

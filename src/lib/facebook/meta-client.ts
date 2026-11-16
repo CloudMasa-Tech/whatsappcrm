@@ -214,6 +214,335 @@ export async function verifyFacebookPageToken(
   };
 }
 
+export interface FacebookPageDetailedProfile {
+  id: string;
+  name: string;
+  category?: string | null;
+  about?: string | null;
+  fanCount?: number | null;
+  followersCount?: number | null;
+  postsCount?: number | null;
+  profilePictureUrl?: string | null;
+  link?: string | null;
+  isVerified?: boolean;
+  pageAccessToken?: string | null;
+}
+
+export interface FacebookPostItem {
+  id: string;
+  message?: string | null;
+  story?: string | null;
+  createdTime: string;
+  fullPicture?: string | null;
+  permalinkUrl?: string | null;
+  likesCount: number;
+  commentsCount: number;
+  sharesCount: number;
+}
+
+export interface FacebookConversationMessage {
+  id: string;
+  text?: string | null;
+  createdTime: string;
+  fromId?: string | null;
+  fromName?: string | null;
+  toId?: string | null;
+  mediaUrl?: string | null;
+  contentType?: string;
+  isFromPage: boolean;
+}
+
+export interface FacebookConversationThread {
+  threadId: string;
+  updatedTime: string;
+  participantId: string;
+  participantName: string;
+  messages: FacebookConversationMessage[];
+}
+
+/**
+ * Fetch detailed Facebook Page profile information including follower/fan counts,
+ * category, bio/about, and picture.
+ */
+export async function fetchFacebookPageDetails(
+  accessToken: string,
+  pageId?: string,
+): Promise<FacebookPageDetailedProfile> {
+  const cleanToken = validateFacebookTokenInput(accessToken);
+  const target = pageId?.trim() || 'me';
+
+  // Try comprehensive fields first
+  const fields =
+    'id,name,category,about,fan_count,followers_count,picture{url},link,verification_status,published_posts.limit(1).summary(true)';
+  const url = `${GRAPH_BASE}/${encodeURIComponent(target)}?fields=${fields}&access_token=${encodeURIComponent(cleanToken)}`;
+
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    const payload = (await res.json().catch(() => ({}))) as {
+      id?: string;
+      name?: string;
+      category?: string;
+      about?: string;
+      fan_count?: number;
+      followers_count?: number;
+      picture?: { data?: { url?: string } };
+      link?: string;
+      verification_status?: string;
+      published_posts?: { summary?: { total_count?: number } };
+      error?: { message?: string; code?: number };
+    };
+
+    if (res.ok && payload.id && payload.name) {
+      return {
+        id: payload.id,
+        name: payload.name,
+        category: payload.category ?? null,
+        about: payload.about ?? null,
+        fanCount: payload.fan_count ?? null,
+        followersCount: payload.followers_count ?? null,
+        postsCount: payload.published_posts?.summary?.total_count ?? null,
+        profilePictureUrl: payload.picture?.data?.url ?? null,
+        link: payload.link ?? `https://www.facebook.com/${payload.id}`,
+        isVerified:
+          payload.verification_status === 'blue_verified' ||
+          payload.verification_status === 'verified',
+        pageAccessToken: cleanToken,
+      };
+    }
+
+    // Fallback without published_posts summary if permissions restricted
+    const basicUrl = `${GRAPH_BASE}/${encodeURIComponent(target)}?fields=id,name,category,about,fan_count,followers_count,picture{url},link&access_token=${encodeURIComponent(cleanToken)}`;
+    const basicRes = await fetch(basicUrl, { cache: 'no-store' });
+    const basicPayload = (await basicRes.json().catch(() => ({}))) as {
+      id?: string;
+      name?: string;
+      category?: string;
+      about?: string;
+      fan_count?: number;
+      followers_count?: number;
+      picture?: { data?: { url?: string } };
+      link?: string;
+    };
+
+    if (basicRes.ok && basicPayload.id && basicPayload.name) {
+      return {
+        id: basicPayload.id,
+        name: basicPayload.name,
+        category: basicPayload.category ?? null,
+        about: basicPayload.about ?? null,
+        fanCount: basicPayload.fan_count ?? null,
+        followersCount: basicPayload.followers_count ?? null,
+        postsCount: null,
+        profilePictureUrl: basicPayload.picture?.data?.url ?? null,
+        link: basicPayload.link ?? `https://www.facebook.com/${basicPayload.id}`,
+        isVerified: false,
+        pageAccessToken: cleanToken,
+      };
+    }
+  } catch (err) {
+    console.warn('[fetchFacebookPageDetails] fallback to verifyFacebookPageToken:', err);
+  }
+
+  // Final fallback to verifyFacebookPageToken
+  const basic = await verifyFacebookPageToken(cleanToken, pageId);
+  return {
+    id: basic.id,
+    name: basic.name,
+    category: basic.category ?? null,
+    about: null,
+    fanCount: null,
+    followersCount: null,
+    postsCount: null,
+    profilePictureUrl: basic.profilePictureUrl,
+    link: `https://www.facebook.com/${basic.id}`,
+    isVerified: false,
+    pageAccessToken: basic.pageAccessToken,
+  };
+}
+
+/**
+ * Fetch recent posts for the connected Facebook Page feed.
+ */
+export async function fetchFacebookPageFeed(
+  accessToken: string,
+  pageId: string,
+  limit = 24,
+): Promise<FacebookPostItem[]> {
+  const cleanToken = validateFacebookTokenInput(accessToken);
+  const targetId = pageId.trim() || 'me';
+  const boundedLimit = Math.min(Math.max(limit, 1), 100);
+
+  const fields =
+    'id,message,story,created_time,full_picture,permalink_url,shares,likes.summary(true),comments.summary(true)';
+  const url = `${GRAPH_BASE}/${encodeURIComponent(targetId)}/posts?fields=${fields}&limit=${boundedLimit}&access_token=${encodeURIComponent(cleanToken)}`;
+
+  const res = await fetch(url, { cache: 'no-store' });
+  const payload = (await res.json().catch(() => ({}))) as {
+    data?: Array<{
+      id: string;
+      message?: string;
+      story?: string;
+      created_time: string;
+      full_picture?: string;
+      permalink_url?: string;
+      shares?: { count?: number };
+      likes?: { summary?: { total_count?: number } };
+      comments?: { summary?: { total_count?: number } };
+    }>;
+    error?: { message?: string; code?: number };
+  };
+
+  if (!res.ok || payload.error) {
+    // If /posts is restricted, fallback to /feed
+    const feedUrl = `${GRAPH_BASE}/${encodeURIComponent(targetId)}/feed?fields=${fields}&limit=${boundedLimit}&access_token=${encodeURIComponent(cleanToken)}`;
+    const feedRes = await fetch(feedUrl, { cache: 'no-store' });
+    const feedPayload = (await feedRes.json().catch(() => ({}))) as typeof payload;
+
+    if (!feedRes.ok || feedPayload.error) {
+      throw new Error(
+        payload.error?.message ||
+          feedPayload.error?.message ||
+          `Failed to fetch Facebook feed (HTTP ${res.status})`,
+      );
+    }
+
+    return (feedPayload.data ?? []).map((p) => ({
+      id: p.id,
+      message: p.message ?? null,
+      story: p.story ?? null,
+      createdTime: p.created_time,
+      fullPicture: p.full_picture ?? null,
+      permalinkUrl: p.permalink_url ?? `https://www.facebook.com/${p.id}`,
+      likesCount: p.likes?.summary?.total_count ?? 0,
+      commentsCount: p.comments?.summary?.total_count ?? 0,
+      sharesCount: p.shares?.count ?? 0,
+    }));
+  }
+
+  return (payload.data ?? []).map((p) => ({
+    id: p.id,
+    message: p.message ?? null,
+    story: p.story ?? null,
+    createdTime: p.created_time,
+    fullPicture: p.full_picture ?? null,
+    permalinkUrl: p.permalink_url ?? `https://www.facebook.com/${p.id}`,
+    likesCount: p.likes?.summary?.total_count ?? 0,
+    commentsCount: p.comments?.summary?.total_count ?? 0,
+    sharesCount: p.shares?.count ?? 0,
+  }));
+}
+
+/**
+ * Fetch recent Facebook Messenger conversation threads and messages from Meta Graph API.
+ */
+export async function fetchFacebookConversations(
+  accessToken: string,
+  pageId: string,
+  limit = 20,
+): Promise<FacebookConversationThread[]> {
+  const cleanToken = validateFacebookTokenInput(accessToken);
+  const targetId = pageId.trim() || 'me';
+  const boundedLimit = Math.min(Math.max(limit, 1), 50);
+
+  const fields =
+    'id,updated_time,participants{id,name,email},messages.limit(20){id,message,created_time,from,to,attachments{id,mime_type,image_data,video_data,file_url}}';
+  const url = `${GRAPH_BASE}/${encodeURIComponent(targetId)}/conversations?fields=${fields}&limit=${boundedLimit}&access_token=${encodeURIComponent(cleanToken)}`;
+
+  const res = await fetch(url, { cache: 'no-store' });
+  const payload = (await res.json().catch(() => ({}))) as {
+    data?: Array<{
+      id: string;
+      updated_time: string;
+      participants?: {
+        data?: Array<{ id: string; name: string; email?: string }>;
+      };
+      messages?: {
+        data?: Array<{
+          id: string;
+          message?: string;
+          created_time: string;
+          from?: { id: string; name: string };
+          to?: { data?: Array<{ id: string; name: string }> };
+          attachments?: {
+            data?: Array<{
+              id?: string;
+              mime_type?: string;
+              image_data?: { url?: string };
+              video_data?: { url?: string };
+              file_url?: string;
+            }>;
+          };
+        }>;
+      };
+    }>;
+    error?: { message?: string; code?: number };
+  };
+
+  if (!res.ok || payload.error) {
+    throw new Error(
+      payload.error?.message ??
+        `Failed to fetch Facebook conversations (HTTP ${res.status})`,
+    );
+  }
+
+  const threads: FacebookConversationThread[] = [];
+
+  for (const rawThread of payload.data ?? []) {
+    const participants = rawThread.participants?.data ?? [];
+    // The recipient is the participant whose ID != pageId
+    const otherParticipant =
+      participants.find((p) => p.id !== targetId && p.id !== pageId) ||
+      participants[0];
+
+    if (!otherParticipant) continue;
+
+    const messages: FacebookConversationMessage[] = [];
+
+    for (const rawMsg of rawThread.messages?.data ?? []) {
+      const fromId = rawMsg.from?.id ?? null;
+      const isFromPage = fromId === targetId || fromId === pageId;
+
+      let mediaUrl: string | null = null;
+      let contentType = 'text';
+
+      const att = rawMsg.attachments?.data?.[0];
+      if (att) {
+        mediaUrl =
+          att.image_data?.url ||
+          att.video_data?.url ||
+          att.file_url ||
+          null;
+        if (att.mime_type?.startsWith('image/')) contentType = 'image';
+        else if (att.mime_type?.startsWith('video/')) contentType = 'video';
+        else if (att.mime_type?.startsWith('audio/')) contentType = 'audio';
+        else if (mediaUrl) contentType = 'document';
+      }
+
+      messages.push({
+        id: rawMsg.id,
+        text: rawMsg.message ?? null,
+        createdTime: rawMsg.created_time,
+        fromId,
+        fromName: rawMsg.from?.name ?? null,
+        toId: rawMsg.to?.data?.[0]?.id ?? null,
+        mediaUrl,
+        contentType,
+        isFromPage,
+      });
+    }
+
+    threads.push({
+      threadId: rawThread.id,
+      updatedTime: rawThread.updated_time,
+      participantId: otherParticipant.id,
+      participantName: otherParticipant.name || `Facebook User (${otherParticipant.id.slice(0, 6)})`,
+      messages,
+    });
+  }
+
+  return threads;
+}
+
 export interface FacebookUserProfile {
   name: string | null;
   profilePic: string | null;
@@ -525,6 +854,38 @@ export async function publishFacebookPagePost(params: {
   }
 
   if (imageItems.length === 1) {
+    // 1. Stage the photo as unpublished first so we can publish directly to the main Timeline Feed
+    const stageRes = await fetch(`${GRAPH_BASE}/${encodeURIComponent(pageId)}/photos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({
+        url: imageItems[0].url.trim(),
+        published: false,
+        access_token: cleanToken,
+      }),
+    });
+    const stagePayload = (await stageRes.json().catch(() => ({}))) as GraphError & { id?: string };
+
+    if (stageRes.ok && stagePayload.id) {
+      // 2. Publish as an official Main Timeline Feed post!
+      const feedRes = await fetch(`${GRAPH_BASE}/${encodeURIComponent(pageId)}/feed`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify({
+          ...(caption ? { message: caption } : {}),
+          attached_media: [{ media_fbid: stagePayload.id }],
+          access_token: cleanToken,
+        }),
+      });
+      const feedPayload = (await feedRes.json().catch(() => ({}))) as GraphError & { id?: string };
+      if (feedRes.ok && feedPayload.id) {
+        return { postId: String(feedPayload.id), kind: 'photo' };
+      }
+    }
+
+    // Fallback: direct photo publish if feed attachment is restricted
     const res = await fetch(`${GRAPH_BASE}/${encodeURIComponent(pageId)}/photos`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

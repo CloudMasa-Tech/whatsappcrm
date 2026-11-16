@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => null)
     const rawMessages = Array.isArray(body?.messages) ? body.messages : null
     if (!rawMessages) {
-      return NextResponse.json({ error: 'messages is required' }, { status: 400 })
+      return NextResponse.json({ error: 'Messages are required.' }, { status: 400 })
     }
 
     const messages: ChatMessage[] = rawMessages

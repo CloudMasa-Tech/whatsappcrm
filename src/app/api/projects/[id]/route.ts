@@ -38,7 +38,7 @@ export async function PATCH(
     const name = typeof body.name === "string" ? body.name.trim() : "";
     if (!name || name.length > 80) {
       return NextResponse.json(
-        { error: "name must be between 1 and 80 characters" },
+        { error: "Project name must be between 1 and 80 characters." },
         { status: 400 },
       );
     }
@@ -48,7 +48,7 @@ export async function PATCH(
   if (body.archived !== undefined) {
     if (typeof body.archived !== "boolean") {
       return NextResponse.json(
-        { error: "archived must be a boolean" },
+        { error: "Archived field must be a boolean." },
         { status: 400 },
       );
     }
@@ -60,7 +60,7 @@ export async function PATCH(
   if (body.allowed_channels !== undefined) {
     if (!Array.isArray(body.allowed_channels)) {
       return NextResponse.json(
-        { error: "allowed_channels must be an array" },
+        { error: "Allowed channels must be a list." },
         { status: 400 },
       );
     }
@@ -71,7 +71,7 @@ export async function PATCH(
     );
     if (parsed.length === 0) {
       return NextResponse.json(
-        { error: 'allowed_channels must contain at least one of "qr" or "cloud_api"' },
+        { error: 'Allowed channels must contain at least one of "qr" or "cloud_api".' },
         { status: 400 },
       );
     }

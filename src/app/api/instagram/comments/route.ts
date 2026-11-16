@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     const ctx = await requireProjectRole("viewer");
     const mediaId = request.nextUrl.searchParams.get("mediaId")?.trim();
     if (!mediaId) {
-      return NextResponse.json({ error: "mediaId query parameter is required" }, { status: 400 });
+      return NextResponse.json({ error: "Instagram post or reel ID is required." }, { status: 400 });
     }
 
     const { accessToken, tokenType } = await loadCloudConfig(ctx.projectId);
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
     const ctx = await requireProjectRole("agent");
     const body = await request.json().catch(() => null);
     if (!body?.action || !body?.commentId) {
-      return NextResponse.json({ error: "action and commentId are required" }, { status: 400 });
+      return NextResponse.json({ error: "Action and comment ID are required." }, { status: 400 });
     }
 
     const { action, commentId, text } = body as {

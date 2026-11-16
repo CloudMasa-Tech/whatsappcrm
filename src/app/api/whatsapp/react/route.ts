@@ -59,7 +59,7 @@ export async function POST(request: Request) {
 
     if (!message_id || typeof emoji !== 'string') {
       return NextResponse.json(
-        { error: 'message_id and emoji are required' },
+        { error: 'Message ID and emoji are required.' },
         { status: 400 },
       );
     }

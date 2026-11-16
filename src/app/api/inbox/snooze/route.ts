@@ -17,7 +17,7 @@ export async function GET(request: Request) {
 
     if (!conversationId) {
       return NextResponse.json(
-        { error: "conversation_id query parameter is required" },
+        { error: "Conversation ID is required." },
         { status: 400 }
       );
     }
@@ -81,7 +81,7 @@ export async function POST(request: Request) {
 
     if (!conversationId) {
       return NextResponse.json(
-        { error: "conversation_id is required" },
+        { error: "Conversation ID is required." },
         { status: 400 }
       );
     }
@@ -165,7 +165,7 @@ export async function DELETE(request: Request) {
 
     if (!conversationId) {
       return NextResponse.json(
-        { error: "conversation_id query parameter is required" },
+        { error: "Conversation ID is required." },
         { status: 400 }
       );
     }

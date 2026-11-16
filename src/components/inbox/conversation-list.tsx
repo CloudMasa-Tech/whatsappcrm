@@ -12,7 +12,8 @@ import {
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
-import { Search, ChevronDown, X, MessageCircle, Plus, Mail } from "lucide-react";
+import { Search, ChevronDown, X, MessageCircle, Plus, Mail, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 import { Instagram } from "@/components/icons/instagram";
 import { Facebook } from "@/components/icons/facebook";
 import { Button } from "@/components/ui/button";
@@ -122,6 +123,33 @@ export function ConversationList({
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [newChatOpen, setNewChatOpen] = useState(false);
+  const [syncingMailbox, setSyncingMailbox] = useState(false);
+
+  const handleSyncMailbox = async () => {
+    if (syncingMailbox) return;
+    setSyncingMailbox(true);
+    try {
+      const res = await fetch("/api/email/sync-mailbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: activeProjectId || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to sync mailbox");
+        return;
+      }
+      toast.success(
+        data.newLeadsCount > 0
+          ? `Synced ${data.scannedCount} emails: ${data.newLeadsCount} new Lead(s) recorded in Inbox!`
+          : `Mailbox checked (${data.scannedCount} emails scanned). Inbox is up to date.`,
+      );
+    } catch {
+      toast.error("Network error syncing mailbox");
+    } finally {
+      setSyncingMailbox(false);
+    }
+  };
 
   // Keep the latest callback in a ref so the fetch effect below can
   // have a stable, empty-dep identity. Previously the fetch useCallback
@@ -356,6 +384,17 @@ export function ConversationList({
           >
             <Plus className="h-4 w-4" />
             <span className="hidden sm:inline text-xs">New</span>
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={syncingMailbox}
+            onClick={handleSyncMailbox}
+            className="h-9 px-2 text-muted-foreground hover:text-foreground shrink-0 border-border"
+            title="Fetch new customer email replies from mailbox (info@cloudmasa.com)"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", syncingMailbox && "animate-spin text-primary")} />
           </Button>
         </div>
 

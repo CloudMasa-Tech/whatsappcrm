@@ -85,7 +85,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            'Either conversation_id or contact_id, plus message_type, are required',
+            'A conversation ID (or contact ID) and message type are required.',
         },
         { status: 400 }
       )

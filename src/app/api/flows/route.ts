@@ -150,7 +150,7 @@ export async function POST(request: Request) {
 
   // -------- Plain (empty) create path --------
   if (!body.name?.trim()) {
-    return NextResponse.json({ error: 'name is required' }, { status: 400 })
+    return NextResponse.json({ error: 'Flow name is required.' }, { status: 400 })
   }
   const trigger_type = body.trigger_type ?? 'keyword'
 

@@ -45,7 +45,7 @@ export async function POST(request: Request) {
   const conversationId =
     typeof body.conversationId === 'string' ? body.conversationId.trim() : '';
   if (!conversationId) {
-    return NextResponse.json({ error: 'conversationId is required' }, { status: 400 });
+    return NextResponse.json({ error: 'Conversation ID is required.' }, { status: 400 });
   }
 
   const text = typeof body.text === 'string' ? body.text.trim() : '';
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
 
   if (!text && !mediaUrl) {
     return NextResponse.json(
-      { error: 'Either text or mediaUrl is required' },
+      { error: 'Either text or media URL is required.' },
       { status: 400 },
     );
   }

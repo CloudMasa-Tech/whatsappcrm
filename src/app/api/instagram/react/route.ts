@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     const emoji = typeof body?.emoji === "string" ? body.emoji : null;
 
     if (!messageId || emoji === null) {
-      return NextResponse.json({ error: "message_id and emoji are required" }, { status: 400 });
+      return NextResponse.json({ error: "Message ID and emoji are required." }, { status: 400 });
     }
 
     const db = supabaseAdmin();

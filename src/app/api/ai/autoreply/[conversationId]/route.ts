@@ -38,7 +38,7 @@ export async function POST(request: Request, { params }: Params) {
     const body = await request.json().catch(() => null)
     if (!body || typeof body.paused !== 'boolean') {
       return NextResponse.json(
-        { error: 'paused (boolean) is required' },
+        { error: 'The "paused" parameter (boolean) is required.' },
         { status: 400 },
       )
     }

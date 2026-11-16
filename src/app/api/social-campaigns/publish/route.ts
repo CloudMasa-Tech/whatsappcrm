@@ -270,11 +270,13 @@ async function publishFacebookTarget(params: {
             ? 'Photo Post'
             : 'Feed Post';
 
+    const pageUrl = `https://www.facebook.com/${encodeURIComponent(config.page_id)}`;
+
     return {
       platform: 'facebook',
       status: 'sent',
       externalId: res.postId,
-      summary: `Published Facebook ${kindLabel}${config.page_name ? ` on ${config.page_name}` : ''}`,
+      summary: `Published Facebook ${kindLabel} to "${config.page_name || 'Facebook Page'}" (${pageUrl})`,
     };
   } catch (err) {
     return {
@@ -399,13 +401,57 @@ async function publishXTarget(params: {
 
   try {
     const mediaIds: string[] = [];
+    let mediaUploadError: string | null = null;
+    let isCreditOrTierError = false;
+
     for (const item of uploadItems) {
-      const uploaded = await uploadXMediaFromUrl({
-        accessToken: cfg.accessToken,
-        mediaUrl: item.url,
-        mimeType: item.mimeType,
-      });
-      mediaIds.push(uploaded.mediaId);
+      try {
+        const uploaded = await uploadXMediaFromUrl({
+          accessToken: cfg.accessToken,
+          mediaUrl: item.url,
+          mimeType: item.mimeType,
+        });
+        mediaIds.push(uploaded.mediaId);
+      } catch (uploadErr) {
+        mediaUploadError =
+          uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
+        if (
+          uploadErr instanceof XApiError &&
+          (uploadErr.status === 402 ||
+            uploadErr.status === 403 ||
+            mediaUploadError.toLowerCase().includes('credits depleted') ||
+            mediaUploadError.toLowerCase().includes('payment required'))
+        ) {
+          isCreditOrTierError = true;
+        }
+        break;
+      }
+    }
+
+    // If media upload failed due to X Free tier / credits depleted (402), fallback to text post with link if caption exists
+    if (mediaUploadError && mediaIds.length === 0 && uploadItems.length > 0) {
+      if (text && isCreditOrTierError) {
+        const fallbackText =
+          uploadItems[0]?.url && !text.includes(uploadItems[0].url)
+            ? `${text}\n${uploadItems[0].url}`
+            : text;
+        const fallbackRes = await publishXPost({
+          accessToken: cfg.accessToken,
+          text: fallbackText,
+        });
+        return {
+          platform: 'x',
+          status: 'sent',
+          externalId: fallbackRes.id,
+          summary: 'Published X Post (photo direct upload restricted on X Free tier; link attached)',
+        };
+      }
+      throw new XApiError(
+        isCreditOrTierError
+          ? `X media upload restricted: ${mediaUploadError}. Note: X Free Tier does not include media upload credits (HTTP 402). Posting text-only or upgrading to X Basic tier is required for direct media uploads.`
+          : `X media upload failed: ${mediaUploadError}`,
+        isCreditOrTierError ? 402 : 400,
+      );
     }
 
     const res = await publishXPost({

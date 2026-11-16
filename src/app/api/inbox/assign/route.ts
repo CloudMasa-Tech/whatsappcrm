@@ -32,7 +32,7 @@ export async function POST(request: Request) {
 
     if (!conversation_id) {
       return NextResponse.json(
-        { error: "conversation_id is required" },
+        { error: "Conversation ID is required." },
         { status: 400 }
       );
     }

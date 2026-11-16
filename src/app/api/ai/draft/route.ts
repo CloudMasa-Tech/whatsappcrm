@@ -39,7 +39,7 @@ export async function POST(request: Request) {
       body && typeof body.conversation_id === 'string' ? body.conversation_id : ''
     if (!conversationId) {
       return NextResponse.json(
-        { error: 'conversation_id is required' },
+        { error: 'Conversation ID is required.' },
         { status: 400 },
       )
     }
