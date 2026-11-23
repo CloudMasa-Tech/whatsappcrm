@@ -112,13 +112,18 @@ export async function syncMailbox(options: {
     });
   } catch (err) {
     console.error('[mailbox-sync] IMAP connection failed:', err);
+    const anyErr = err as { message?: string; code?: string; errors?: Error[] };
+    let errMsg = anyErr?.message || anyErr?.code || (anyErr?.errors?.[0]?.message) || String(err) || 'Failed to connect to IMAP server';
+    if (errMsg.toLowerCase().includes('timed out') || errMsg.toLowerCase().includes('etimedout')) {
+      errMsg = `IMAP connection to ${imapConfig.host}:993 timed out. Your ISP, router, or local network may be blocking outbound port 993. When testing locally, you can use the Inbound Webhook (Option 2) or verify on a server with open ports.`;
+    }
     return {
       success: false,
       scannedCount: 0,
       newLeadsCount: 0,
       newMessagesCount: 0,
       matchedRecipients: [],
-      error: err instanceof Error ? err.message : 'Failed to connect to IMAP server',
+      error: errMsg,
     };
   }
 

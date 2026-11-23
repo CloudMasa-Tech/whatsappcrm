@@ -3,6 +3,7 @@ import {
   validateStepsForActivation,
   validateTriggerForActivation,
 } from "./validate";
+import { AUTOMATION_TEMPLATES } from "./templates";
 
 describe("validateStepsForActivation", () => {
   it("rejects empty or missing step lists", () => {
@@ -284,5 +285,20 @@ describe("validateTriggerForActivation", () => {
 
   it("does not flag unknown trigger types (handled elsewhere)", () => {
     expect(validateTriggerForActivation("some_future_trigger", {})).toEqual([]);
+  });
+
+  it("ensures every automation template has valid trigger and step configurations", () => {
+    const templates = Object.values(AUTOMATION_TEMPLATES);
+    expect(templates.length).toBe(12);
+
+    for (const tpl of templates) {
+      expect(tpl.slug).toBeTruthy();
+      expect(tpl.name).toBeTruthy();
+      const triggerIssues = validateTriggerForActivation(tpl.trigger_type, tpl.trigger_config);
+      expect(triggerIssues, `Template ${tpl.slug} has invalid trigger config`).toEqual([]);
+
+      const stepIssues = validateStepsForActivation(tpl.steps as any);
+      expect(stepIssues, `Template ${tpl.slug} has invalid step config`).toEqual([]);
+    }
   });
 });

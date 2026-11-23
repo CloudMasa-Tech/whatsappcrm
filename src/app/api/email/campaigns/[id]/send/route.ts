@@ -148,6 +148,10 @@ export async function POST(
       ? applyMergeFields(campaign.body_text, bodyFields)
       : htmlToPlainText(renderedBodyHtml);
 
+    const parentMsgId =
+      ((recipient as unknown as { parent_message_id?: string }).parent_message_id) ||
+      ((recipient.metadata as Record<string, unknown> | null | undefined)?.parent_message_id as string | undefined);
+
     const result = await sendEmail({
       to: recipient.email,
       subject,
@@ -158,6 +162,8 @@ export async function POST(
       replyTo: campaign.reply_to ?? undefined,
       projectId: campaign.project_id ?? undefined,
       accountId: campaign.account_id,
+      inReplyTo: parentMsgId || undefined,
+      references: parentMsgId || undefined,
     }).catch((err: unknown) => ({
       success: false,
       error: String(err),

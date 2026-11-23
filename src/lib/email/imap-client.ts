@@ -152,7 +152,7 @@ export async function fetchRecentEmailsFromMailbox(
   options: { maxEmails?: number } = {},
 ): Promise<FetchedEmail[]> {
   const maxEmails = options.maxEmails ?? 30;
-  const timeoutMs = config.timeoutMs ?? 15_000;
+  const timeoutMs = config.timeoutMs ?? 30_000;
   const host = config.host || 'imap.gmail.com';
   const port = config.port ?? 993;
 
@@ -185,9 +185,10 @@ export async function fetchRecentEmailsFromMailbox(
         {
           host,
           port,
+          family: 4, // Force IPv4 to prevent hanging on unreachable IPv6 routes
           rejectUnauthorized: false, // tolerate self-signed in test environments
           servername: host,
-        },
+        } as tls.ConnectionOptions & { family?: number },
         () => {
           // Connected
         },
@@ -204,6 +205,7 @@ export async function fetchRecentEmailsFromMailbox(
       | 'await_select'
       | 'await_fetch'
       | 'await_logout' = 'await_greeting';
+    let greetingHandled = false;
     let totalMessages = 0;
     const fetchedEmails: FetchedEmail[] = [];
 
@@ -215,8 +217,12 @@ export async function fetchRecentEmailsFromMailbox(
     socket.on('data', (data) => {
       buffer += data.toString();
 
+      // Guard: only process when we have at least one complete line
+      if (!buffer.includes('\n')) return;
+
       if (step === 'await_greeting') {
-        if (buffer.includes('* OK')) {
+        if (!greetingHandled && buffer.includes('* OK')) {
+          greetingHandled = true;
           buffer = '';
           step = 'await_login';
           // Sanitize credentials
@@ -246,8 +252,9 @@ export async function fetchRecentEmailsFromMailbox(
             return;
           }
 
-          // Fetch the latest N messages
-          const startSeq = Math.max(1, totalMessages - maxEmails + 1);
+          // Fetch the latest N messages (limit to 20 to avoid large FETCH timeouts)
+          const fetchCount = Math.min(maxEmails, 20);
+          const startSeq = Math.max(1, totalMessages - fetchCount + 1);
           const range = `${startSeq}:${totalMessages}`;
           step = 'await_fetch';
           // Using BODY.PEEK so Gmail DOES NOT mark emails as read

@@ -19,6 +19,8 @@ export interface SendEmailOptions {
   replyTo?: string;
   projectId?: string;
   accountId?: string;
+  inReplyTo?: string;
+  references?: string;
 }
 
 /**

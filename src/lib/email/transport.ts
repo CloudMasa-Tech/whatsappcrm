@@ -123,6 +123,11 @@ export async function sendEmail(
       'MaSa CRM';
     const fromHeader = `"${fromName}" <${fromAddress}>`;
 
+    const headers: Record<string, string> = {
+      'X-Entity-Ref-ID': `${Date.now()}`,
+      'X-Mailer': 'CloudMaSa WhatsApp CRM',
+    };
+
     const info = await transporter.sendMail({
       from: fromHeader,
       to: options.to,
@@ -130,10 +135,9 @@ export async function sendEmail(
       html: options.html,
       text: options.text,
       replyTo: options.replyTo || config.replyTo,
-      headers: {
-        'X-Entity-Ref-ID': `${Date.now()}`,
-        'X-Mailer': 'CloudMaSa WhatsApp CRM',
-      },
+      inReplyTo: options.inReplyTo,
+      references: options.references,
+      headers,
     });
 
     console.log(`[Email Service] Successfully sent email to ${options.to} (Message ID: ${info.messageId})`);

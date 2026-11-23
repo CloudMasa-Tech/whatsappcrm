@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { resumePendingExecution } from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
+import { processDueScheduledCampaigns } from '@/lib/email/follow-up-engine'
 
 /**
  * Drain due `automation_pending_executions` rows. Meant to be hit
@@ -69,6 +70,11 @@ export async function GET(request: Request) {
     })
     processed++
   }
+
+  // Also sweep any scheduled email campaigns / reminders that are due
+  await processDueScheduledCampaigns().catch((err) => {
+    console.error('[cron] scheduled email campaigns sweep error:', err)
+  })
 
   return NextResponse.json({ processed })
 }

@@ -16,7 +16,18 @@ import {
   Users,
   PhoneCall,
   Loader2,
+  UserPlus,
+  UserCheck,
+  Sparkles,
+  CalendarClock,
+  MousePointerClick,
+  Mail,
+  Reply,
+  Layers,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 
 import { createClient } from "@/lib/supabase/client"
 import { useCan } from "@/hooks/use-can"
@@ -49,6 +60,14 @@ const TEMPLATE_ORDER: TemplateSlug[] = [
   "out_of_office",
   "lead_qualifier",
   "follow_up_reminder",
+  "new_contact_onboarding",
+  "conversation_assigned_notice",
+  "vip_tag_routing",
+  "daily_scheduled_nudge",
+  "interactive_menu_handler",
+  "email_opened_whatsapp_nudge",
+  "email_clicked_hot_lead",
+  "email_reply_lead_conversion",
 ]
 
 const TEMPLATE_ICON: Record<TemplateSlug, typeof Zap> = {
@@ -56,6 +75,14 @@ const TEMPLATE_ICON: Record<TemplateSlug, typeof Zap> = {
   out_of_office: Clock,
   lead_qualifier: Users,
   follow_up_reminder: PhoneCall,
+  new_contact_onboarding: UserPlus,
+  conversation_assigned_notice: UserCheck,
+  vip_tag_routing: Sparkles,
+  daily_scheduled_nudge: CalendarClock,
+  interactive_menu_handler: Zap,
+  email_opened_whatsapp_nudge: Mail,
+  email_clicked_hot_lead: MousePointerClick,
+  email_reply_lead_conversion: Reply,
 }
 
 export default function AutomationsPage() {
@@ -66,6 +93,9 @@ export default function AutomationsPage() {
   const [error, setError] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<Automation | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [showTemplatesSection, setShowTemplatesSection] = useState(true)
+  const [selectedCategory, setSelectedCategory] = useState<string>("all")
+  const [seeding, setSeeding] = useState(false)
 
   async function load() {
     try {
@@ -137,6 +167,28 @@ export default function AutomationsPage() {
     router.push(`/automations/new?template=${slug}`)
   }
 
+  async function seedSamples() {
+    setSeeding(true)
+    try {
+      const res = await fetch("/api/automations/seed-samples", { method: "POST" })
+      const data = await res.json()
+      if (res.ok) {
+        if (data.seededCount > 0) {
+          toast.success(`Created ${data.seededCount} sample automations!`)
+        } else {
+          toast.info("Sample automations are already present in this project.")
+        }
+        load()
+      } else {
+        toast.error(data.error ?? "Failed to seed sample automations")
+      }
+    } catch {
+      toast.error("Network error while seeding sample automations")
+    } finally {
+      setSeeding(false)
+    }
+  }
+
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
@@ -156,47 +208,129 @@ export default function AutomationsPage() {
     )
   }
 
-  const showTemplates = automations.length < 3
-
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground">{t("title")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {t("subtitle")}
           </p>
         </div>
-        <GatedButton
-          canAct={canCreate}
-          gateReason="create automations"
-          onClick={() => router.push("/automations/new")}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-        >
-          <Plus className="h-4 w-4" />
-          {t("create")}
-        </GatedButton>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void seedSamples()}
+            disabled={seeding}
+            className="h-9 gap-1.5 border-primary/30 text-xs text-foreground hover:bg-primary/10"
+            title="Automatically populate sample automations for all 11 trigger formats into your workspace"
+          >
+            {seeding ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+            )}
+            {seeding ? "Seeding..." : "Seed All Sample Automations"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowTemplatesSection(!showTemplatesSection)}
+            className="h-9 gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            {showTemplatesSection ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            {showTemplatesSection ? "Hide Templates" : "Browse Templates"}
+          </Button>
+          <GatedButton
+            canAct={canCreate}
+            gateReason="create automations"
+            onClick={() => router.push("/automations/new")}
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            <Plus className="h-4 w-4" />
+            {t("create")}
+          </GatedButton>
+        </div>
       </div>
 
-      {showTemplates && (
-        <section>
-          <h2 className="mb-3 text-sm font-semibold text-muted-foreground">{t("templatesTitle")}</h2>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {TEMPLATE_ORDER.map((slug) => {
-              const t = AUTOMATION_TEMPLATES[slug]
-              const Icon = TEMPLATE_ICON[slug]
-              return (
+      {showTemplatesSection && (
+        <section className="space-y-3 rounded-2xl border border-border/80 bg-card/50 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                <Sparkles className="h-4 w-4 text-primary" />
+                Sample Automations Gallery (All Formats)
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                Production-ready templates covering every trigger format. Click any template to inspect, customize, or launch.
+              </p>
+            </div>
+            {/* Category pills */}
+            <div className="flex flex-wrap gap-1">
+              {[
+                { id: "all", label: "All Formats (12)" },
+                { id: "onboarding", label: "Onboarding" },
+                { id: "sales", label: "Sales & Leads" },
+                { id: "support", label: "Support & Ops" },
+                { id: "retention", label: "Retention" },
+                { id: "email_omnichannel", label: "Email & Omnichannel" },
+              ].map((cat) => (
                 <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setSelectedCategory(cat.id)}
+                  className={cn(
+                    "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
+                    selectedCategory === cat.id
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {TEMPLATE_ORDER.filter((slug) => {
+              if (selectedCategory === "all") return true
+              return AUTOMATION_TEMPLATES[slug].category === selectedCategory
+            }).map((slug) => {
+              const tpl = AUTOMATION_TEMPLATES[slug]
+              const Icon = TEMPLATE_ICON[slug]
+              const meta = triggerMeta(tpl.trigger_type)
+              return (
+                <div
                   key={slug}
                   onClick={() => startFromTemplate(slug)}
-                  className="group flex flex-col items-start rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-primary/50 hover:bg-card/80"
+                  className="group flex flex-col justify-between rounded-xl border border-border/70 bg-card p-3.5 text-left transition-all hover:border-primary/50 hover:shadow-sm cursor-pointer"
                 >
-                  <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary group-hover:bg-primary/15">
-                    <Icon className="h-5 w-5" />
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary group-hover:bg-primary/20 transition-colors">
+                        <Icon className="h-4 w-4" />
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={cn("text-[10px] font-normal truncate", meta.pillClass)}
+                      >
+                        {meta.label}
+                      </Badge>
+                    </div>
+                    <div className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors">
+                      {tpl.name}
+                    </div>
+                    <p className="mt-1 text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">
+                      {tpl.description}
+                    </p>
                   </div>
-                  <div className="text-sm font-semibold text-foreground">{t.name}</div>
-                  <p className="mt-1 text-xs text-muted-foreground">{t.description}</p>
-                </button>
+                  <div className="mt-3 flex items-center justify-between border-t border-border/50 pt-2 text-[11px]">
+                    <span className="text-muted-foreground/80">{tpl.steps.length} steps</span>
+                    <span className="font-medium text-primary group-hover:underline">Use Template →</span>
+                  </div>
+                </div>
               )
             })}
           </div>

@@ -31,6 +31,11 @@ import {
   MessageSquare,
   Webhook,
   RefreshCw,
+  BellRing,
+  CalendarClock,
+  Clock,
+  Calendar,
+  SendHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -79,6 +84,10 @@ interface Campaign {
   failed_count: number;
   track_opens?: boolean | null;
   track_clicks?: boolean | null;
+  scheduled_at?: string | null;
+  parent_campaign_id?: string | null;
+  is_followup?: boolean | null;
+  followup_type?: string | null;
   created_at: string;
   sent_at: string | null;
 }
@@ -107,6 +116,7 @@ const STATUS_STYLES: Record<string, string> = {
   sent: "bg-green-500/10 text-green-600 border-green-500/20",
   failed: "bg-destructive/10 text-destructive border-destructive/20",
   pending: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+  scheduled: "bg-purple-500/10 text-purple-600 border-purple-500/20",
 };
 
 const EMAIL_MIGRATION_SQL = `-- 056_email_campaigns_and_configs.sql
@@ -165,7 +175,10 @@ ALTER TABLE public.email_campaigns
   ADD COLUMN IF NOT EXISTS track_clicks  BOOLEAN NOT NULL DEFAULT true,
   ADD COLUMN IF NOT EXISTS replied_count INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS scheduled_at  TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS sent_at       TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS sent_at       TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS parent_campaign_id UUID REFERENCES public.email_campaigns(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS is_followup   BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS followup_type TEXT;
 
 CREATE TABLE IF NOT EXISTS public.email_campaign_recipients (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -399,12 +412,57 @@ export default function EmailCampaignsPage() {
   const [copiedSecret, setCopiedSecret] = useState(false);
   const [syncingMailbox, setSyncingMailbox] = useState(false);
 
+  // Follow-Up & Reminder state
+  const [followUpOpen, setFollowUpOpen] = useState(false);
+  const [followUpParentCampaign, setFollowUpParentCampaign] = useState<Campaign | null>(null);
+  const [loadingFollowUpStats, setLoadingFollowUpStats] = useState(false);
+  const [submittingFollowUp, setSubmittingFollowUp] = useState(false);
+  const [followUpFilter, setFollowUpFilter] = useState<"non_repliers" | "unopened" | "opened_not_replied">("non_repliers");
+  const [followUpTiming, setFollowUpTiming] = useState<"now" | "scheduled">("now");
+  const [followUpScheduledAt, setFollowUpScheduledAt] = useState("");
+  const [followUpName, setFollowUpName] = useState("");
+  const [followUpSubject, setFollowUpSubject] = useState("");
+  const [followUpBodyHtml, setFollowUpBodyHtml] = useState("");
+  const [followUpBodyMode, setFollowUpBodyMode] = useState<"write" | "preview">("write");
+  const [followUpKeepThread, setFollowUpKeepThread] = useState(true);
+  const [followUpStats, setFollowUpStats] = useState<{
+    counts: {
+      totalSent: number;
+      nonRepliers: number;
+      unopened: number;
+      openedNotReplied: number;
+      replied: number;
+    };
+    recipients: Array<{
+      id: string;
+      email: string;
+      name: string | null;
+      openCount: number;
+      repliedAt: string | null;
+      status: string;
+    }>;
+  } | null>(null);
+  const [selectedFollowUpIds, setSelectedFollowUpIds] = useState<Set<string>>(new Set());
+  const [followUpSearch, setFollowUpSearch] = useState("");
+  const [showFollowUpRecipientsList, setShowFollowUpRecipientsList] = useState(false);
+
   // Bumped to re-run the fetch effect after a create/send/delete.
   const [reloadKey, setReloadKey] = useState(0);
   const load = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
     let ignore = false;
+
+    // Sweep due scheduled reminders in background
+    void fetch("/api/email/campaigns/scheduled", { method: "POST" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.processed > 0 && !ignore) {
+          toast.info(`Dispatched ${data.processed} due scheduled reminder(s)`);
+          setReloadKey((k) => k + 1);
+        }
+      })
+      .catch(() => {});
 
     async function fetchCampaigns() {
       try {
@@ -691,6 +749,146 @@ export default function EmailCampaignsPage() {
       void load();
     } catch {
       toast.error("Network error while deleting");
+    }
+  };
+
+  const openFollowUpDialog = async (c: Campaign) => {
+    setFollowUpParentCampaign(c);
+    setFollowUpFilter("non_repliers");
+    setFollowUpTiming("now");
+    setFollowUpKeepThread(true);
+    setFollowUpBodyMode("write");
+    setShowFollowUpRecipientsList(false);
+    setFollowUpSearch("");
+    setFollowUpName(`${c.name} — Quick Follow-Up`);
+    setFollowUpSubject(c.subject.startsWith("Re:") ? c.subject : `Re: ${c.subject}`);
+
+    // Default scheduled time to tomorrow at 10:00 AM local time
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(10, 0, 0, 0);
+    const tzOffset = tomorrow.getTimezoneOffset() * 60000;
+    const localISOTime = new Date(tomorrow.getTime() - tzOffset).toISOString().slice(0, 16);
+    setFollowUpScheduledAt(localISOTime);
+
+    // Pre-fill body from starter follow-up template or default bump
+    const starterFollowup = STARTER_EMAIL_TEMPLATES.find((t) => t.id === "regibiz-followup");
+    if (starterFollowup) {
+      setFollowUpBodyHtml(starterFollowup.bodyHtml);
+    } else {
+      setFollowUpBodyHtml(
+        `<p>Hi {{name}},</p>\n<p>Just following up on my previous note regarding <strong>${c.subject}</strong>.</p>\n<p>Wanted to check if you had a chance to review it, and see if you have any questions.</p>\n<p>Would you be open to a quick 5-minute call this week?</p>\n<p>Best regards,<br/>${c.from_name || defaultSenderName || "Our Team"}</p>`
+      );
+    }
+
+    setFollowUpOpen(true);
+    setLoadingFollowUpStats(true);
+    try {
+      const res = await fetch(`/api/email/campaigns/${c.id}/follow-up`);
+      const data = await res.json();
+      if (res.ok && data.counts) {
+        setFollowUpStats(data);
+        const defaultIds = new Set<string>();
+        for (const r of data.recipients || []) {
+          if (!r.repliedAt) defaultIds.add(r.id);
+        }
+        setSelectedFollowUpIds(defaultIds);
+      } else {
+        toast.error(data.error ?? "Could not load follow-up metrics");
+      }
+    } catch {
+      toast.error("Network error while loading follow-up metrics");
+    } finally {
+      setLoadingFollowUpStats(false);
+    }
+  };
+
+  const handleFollowUpFilterChange = (filter: "non_repliers" | "unopened" | "opened_not_replied") => {
+    setFollowUpFilter(filter);
+    if (!followUpStats?.recipients) return;
+
+    const nextIds = new Set<string>();
+    for (const r of followUpStats.recipients) {
+      if (r.repliedAt) continue;
+      if (filter === "unopened" && r.openCount === 0) {
+        nextIds.add(r.id);
+      } else if (filter === "opened_not_replied" && r.openCount > 0) {
+        nextIds.add(r.id);
+      } else if (filter === "non_repliers") {
+        nextIds.add(r.id);
+      }
+    }
+    setSelectedFollowUpIds(nextIds);
+  };
+
+  const setQuickSchedule = (daysFromNow: number, hour = 10) => {
+    const d = new Date();
+    d.setDate(d.getDate() + daysFromNow);
+    d.setHours(hour, 0, 0, 0);
+    const tzOffset = d.getTimezoneOffset() * 60000;
+    const local = new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+    setFollowUpScheduledAt(local);
+  };
+
+  const submitFollowUp = async () => {
+    if (!followUpParentCampaign || submittingFollowUp) return;
+
+    if (!followUpSubject.trim()) {
+      toast.error("Please enter a follow-up subject line.");
+      return;
+    }
+
+    if (!followUpBodyHtml.trim()) {
+      toast.error("Please write the follow-up email content.");
+      return;
+    }
+
+    if (selectedFollowUpIds.size === 0) {
+      toast.error("Please select at least 1 recipient to receive this follow-up.");
+      return;
+    }
+
+    if (followUpTiming === "scheduled" && !followUpScheduledAt) {
+      toast.error("Please choose a schedule date & time for the reminder.");
+      return;
+    }
+
+    setSubmittingFollowUp(true);
+    try {
+      const res = await fetch(`/api/email/campaigns/${followUpParentCampaign.id}/follow-up`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: followUpName.trim() || `${followUpParentCampaign.name} — Follow-Up`,
+          subject: followUpSubject.trim(),
+          bodyHtml: followUpBodyHtml,
+          fromName: followUpParentCampaign.from_name || defaultSenderName,
+          targetFilter: followUpFilter,
+          selectedRecipientIds: Array.from(selectedFollowUpIds),
+          timing: followUpTiming,
+          scheduledAt: followUpTiming === "scheduled" ? new Date(followUpScheduledAt).toISOString() : undefined,
+          keepThread: followUpKeepThread,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error ?? "Failed to create follow-up campaign");
+        return;
+      }
+
+      if (data.timing === "now") {
+        toast.success(`Follow-up sent to ${data.sent} recipient(s)` + (data.failed > 0 ? ` (${data.failed} failed)` : ""));
+      } else {
+        toast.success(`Follow-up reminder scheduled for ${new Date(followUpScheduledAt).toLocaleString()}`);
+      }
+
+      setFollowUpOpen(false);
+      void load();
+    } catch {
+      toast.error("Network error while creating follow-up");
+    } finally {
+      setSubmittingFollowUp(false);
     }
   };
 
@@ -1202,10 +1400,17 @@ export default function EmailCampaignsPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {campaigns.map((c) => {
             const isSending = c.status === "sending";
+            const isScheduled = c.status === "scheduled";
             const pendingCount = Math.max(
               0,
               c.total_recipients - c.sent_count - c.failed_count,
             );
+            const awaitingReply = Math.max(0, c.sent_count - (c.replied_count || 0));
+            const isFollowUp =
+              Boolean(c.is_followup) ||
+              c.name.includes("(Follow-Up") ||
+              c.name.includes("— Quick Follow-Up") ||
+              c.name.includes("— Follow-Up");
             return (
               <div
                 key={c.id}
@@ -1223,8 +1428,38 @@ export default function EmailCampaignsPage() {
                           Sender: {c.from_name || defaultSenderName}
                         </p>
                       )}
+                      {c.sent_count > 0 && awaitingReply > 0 && (
+                        <div className="flex items-center gap-1.5 pt-0.5 text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                          <Clock className="h-3 w-3 shrink-0" />
+                          <span>{awaitingReply} awaiting reply</span>
+                          <span className="text-[10px] text-muted-foreground font-normal">
+                            ({c.opened_count} opened)
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
+                      {isFollowUp && (
+                        <Badge
+                          variant="outline"
+                          className="border-primary/40 bg-primary/10 text-primary text-[10px]"
+                        >
+                          Follow-Up
+                        </Badge>
+                      )}
+                      {isScheduled && c.scheduled_at && (
+                        <Badge
+                          variant="outline"
+                          className="border-purple-500/40 bg-purple-500/10 text-purple-600 dark:text-purple-400 text-[10px] gap-1"
+                          title={`Scheduled for ${new Date(c.scheduled_at).toLocaleString()}`}
+                        >
+                          <CalendarClock className="h-2.5 w-2.5" />
+                          {new Date(c.scheduled_at).toLocaleDateString([], {
+                            month: "short",
+                            day: "numeric",
+                          })}
+                        </Badge>
+                      )}
                       {pendingCount > 0 && c.sent_count > 0 && (
                         <Badge
                           variant="outline"
@@ -1282,7 +1517,33 @@ export default function EmailCampaignsPage() {
                     {c.total_recipients} recipient{c.total_recipients === 1 ? "" : "s"}
                   </button>
                   <div className="flex flex-wrap items-center gap-1">
-                    {pendingCount > 0 && (
+                    {c.sent_count > 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 border-amber-500/40 text-xs text-amber-600 hover:bg-amber-500/10 dark:text-amber-400 font-medium gap-1"
+                        disabled={isSending || sendingId === c.id}
+                        onClick={() => void openFollowUpDialog(c)}
+                        title="Send or schedule a reminder / follow-up email to non-repliers"
+                      >
+                        <BellRing className="h-3 w-3" />
+                        Follow-Up
+                      </Button>
+                    )}
+                    {isScheduled && (
+                      <Button
+                        size="sm"
+                        variant="default"
+                        className="h-7 text-xs bg-purple-600 hover:bg-purple-700 text-white gap-1"
+                        disabled={isSending || sendingId === c.id}
+                        onClick={() => void handleSend(c)}
+                        title="Send this scheduled reminder now"
+                      >
+                        <Send className="h-3 w-3" />
+                        Send Now
+                      </Button>
+                    )}
+                    {pendingCount > 0 && !isScheduled && (
                       <Button
                         size="sm"
                         variant="default"
@@ -1300,7 +1561,7 @@ export default function EmailCampaignsPage() {
                     )}
                     <Button
                       size="sm"
-                      variant={pendingCount === 0 ? "default" : "outline"}
+                      variant={pendingCount === 0 && !isScheduled ? "default" : "outline"}
                       className="h-7 text-xs"
                       disabled={isSending || sendingId === c.id}
                       onClick={() => void openSendMoreDialog(c)}
@@ -2269,6 +2530,513 @@ export default function EmailCampaignsPage() {
 
           <DialogFooter>
             <Button onClick={() => setShowInboundModal(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Follow-Up & Reminder Dialog */}
+      <Dialog open={followUpOpen} onOpenChange={setFollowUpOpen}>
+        <DialogContent className="flex max-h-[92dvh] flex-col overflow-hidden sm:max-w-2xl">
+          <DialogHeader className="shrink-0">
+            <DialogTitle className="flex items-center gap-2">
+              <BellRing className="h-5 w-5 text-amber-500" />
+              <span>Campaign Follow-Up &amp; Reminder</span>
+            </DialogTitle>
+            <DialogDescription>
+              Re-engage recipients from &ldquo;{followUpParentCampaign?.name}&rdquo; who have not replied yet, or schedule an automated reminder sequence.
+            </DialogDescription>
+          </DialogHeader>
+
+          {loadingFollowUpStats ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-2 text-muted-foreground">
+              <Loader2 className="h-6 w-6 animate-spin text-amber-500" />
+              <span className="text-xs">Analyzing campaign response metrics &amp; non-repliers...</span>
+            </div>
+          ) : (
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+              {/* Step 1: Target Audience Selection */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    1. Select Follow-Up Audience
+                  </Label>
+                  {followUpStats && (
+                    <span className="text-[11px] text-muted-foreground">
+                      {selectedFollowUpIds.size} recipient(s) selected
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {/* Card 1: Non-Repliers */}
+                  <button
+                    type="button"
+                    onClick={() => handleFollowUpFilterChange("non_repliers")}
+                    className={cn(
+                      "flex flex-col text-left p-3 rounded-lg border transition-all text-xs relative",
+                      followUpFilter === "non_repliers"
+                        ? "border-amber-500 bg-amber-500/10 text-foreground ring-1 ring-amber-500"
+                        : "border-border bg-card/50 hover:bg-muted/50 text-muted-foreground",
+                    )}
+                  >
+                    <div className="flex items-center justify-between w-full mb-1">
+                      <span className="font-semibold text-foreground flex items-center gap-1">
+                        🎯 All Non-Repliers
+                      </span>
+                      <Badge variant="outline" className="text-[9px] border-amber-500/40 text-amber-500 bg-amber-500/10">
+                        Recommended
+                      </Badge>
+                    </div>
+                    <div className="text-base font-bold text-foreground">
+                      {followUpStats?.counts.nonRepliers ?? 0}
+                    </div>
+                    <p className="text-[11px] mt-0.5 text-muted-foreground line-clamp-2">
+                      Recipients who have not replied yet.
+                    </p>
+                  </button>
+
+                  {/* Card 2: Opened but No Reply */}
+                  <button
+                    type="button"
+                    onClick={() => handleFollowUpFilterChange("opened_not_replied")}
+                    className={cn(
+                      "flex flex-col text-left p-3 rounded-lg border transition-all text-xs relative",
+                      followUpFilter === "opened_not_replied"
+                        ? "border-amber-500 bg-amber-500/10 text-foreground ring-1 ring-amber-500"
+                        : "border-border bg-card/50 hover:bg-muted/50 text-muted-foreground",
+                    )}
+                  >
+                    <div className="flex items-center justify-between w-full mb-1">
+                      <span className="font-semibold text-foreground flex items-center gap-1">
+                        💬 Opened, No Reply
+                      </span>
+                      <Badge variant="outline" className="text-[9px] border-blue-500/40 text-blue-500 bg-blue-500/10">
+                        Hot Leads
+                      </Badge>
+                    </div>
+                    <div className="text-base font-bold text-foreground">
+                      {followUpStats?.counts.openedNotReplied ?? 0}
+                    </div>
+                    <p className="text-[11px] mt-0.5 text-muted-foreground line-clamp-2">
+                      Viewed email but haven&rsquo;t converted yet.
+                    </p>
+                  </button>
+
+                  {/* Card 3: Unopened */}
+                  <button
+                    type="button"
+                    onClick={() => handleFollowUpFilterChange("unopened")}
+                    className={cn(
+                      "flex flex-col text-left p-3 rounded-lg border transition-all text-xs relative",
+                      followUpFilter === "unopened"
+                        ? "border-amber-500 bg-amber-500/10 text-foreground ring-1 ring-amber-500"
+                        : "border-border bg-card/50 hover:bg-muted/50 text-muted-foreground",
+                    )}
+                  >
+                    <div className="flex items-center justify-between w-full mb-1">
+                      <span className="font-semibold text-foreground flex items-center gap-1">
+                        👁️ Unopened Only
+                      </span>
+                      <Badge variant="outline" className="text-[9px] border-muted-foreground/30 text-muted-foreground">
+                        Re-engage
+                      </Badge>
+                    </div>
+                    <div className="text-base font-bold text-foreground">
+                      {followUpStats?.counts.unopened ?? 0}
+                    </div>
+                    <p className="text-[11px] mt-0.5 text-muted-foreground line-clamp-2">
+                      Missed your initial message completely.
+                    </p>
+                  </button>
+                </div>
+
+                {/* Recipient list toggle */}
+                <div className="pt-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs px-2 gap-1 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowFollowUpRecipientsList(!showFollowUpRecipientsList)}
+                  >
+                    {showFollowUpRecipientsList ? (
+                      <ChevronUp className="h-3 w-3" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3" />
+                    )}
+                    {showFollowUpRecipientsList ? "Hide" : "Customize"} Recipients ({selectedFollowUpIds.size})
+                  </Button>
+
+                  {showFollowUpRecipientsList && followUpStats?.recipients && (
+                    <div className="mt-2 rounded-lg border bg-muted/20 p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <Input
+                          placeholder="Search recipients by name or email..."
+                          value={followUpSearch}
+                          onChange={(e) => setFollowUpSearch(e.target.value)}
+                          className="h-7 text-xs flex-1"
+                        />
+                        <div className="flex gap-1 shrink-0">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[11px] px-2"
+                            onClick={() => {
+                              const allIds = new Set<string>();
+                              for (const r of followUpStats.recipients) {
+                                if (!r.repliedAt) allIds.add(r.id);
+                              }
+                              setSelectedFollowUpIds(allIds);
+                            }}
+                          >
+                            Select All
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-[11px] px-2"
+                            onClick={() => setSelectedFollowUpIds(new Set())}
+                          >
+                            Clear
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="max-h-36 overflow-y-auto space-y-1 text-xs divide-y divide-border/50">
+                        {followUpStats.recipients
+                          .filter((r) => {
+                            if (r.repliedAt) return false;
+                            const q = followUpSearch.toLowerCase().trim();
+                            if (!q) return true;
+                            return (
+                              r.email.toLowerCase().includes(q) ||
+                              (r.name && r.name.toLowerCase().includes(q))
+                            );
+                          })
+                          .map((r) => {
+                            const isSelected = selectedFollowUpIds.has(r.id);
+                            return (
+                              <label
+                                key={r.id}
+                                className="flex items-center justify-between gap-2 py-1.5 px-1 hover:bg-muted/40 rounded cursor-pointer"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <Checkbox
+                                    checked={isSelected}
+                                    onCheckedChange={(checked) => {
+                                      setSelectedFollowUpIds((prev) => {
+                                        const next = new Set(prev);
+                                        if (checked) next.add(r.id);
+                                        else next.delete(r.id);
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                  <div className="min-w-0 truncate">
+                                    <span className="font-medium text-foreground">{r.email}</span>
+                                    {r.name && (
+                                      <span className="text-[11px] text-muted-foreground ml-1.5 truncate">
+                                        ({r.name})
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="shrink-0 flex items-center gap-1.5 text-[11px]">
+                                  {r.openCount > 0 ? (
+                                    <span className="text-emerald-500 font-medium">
+                                      Opened {r.openCount}x
+                                    </span>
+                                  ) : (
+                                    <span className="text-muted-foreground">Unopened</span>
+                                  )}
+                                </div>
+                              </label>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Step 2: Schedule & Timing */}
+              <div className="space-y-2 rounded-lg border bg-card p-3">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  2. Choose Timing &amp; Schedule
+                </Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFollowUpTiming("now")}
+                    className={cn(
+                      "flex items-center justify-center gap-2 p-2.5 rounded-lg border text-xs font-medium transition-all",
+                      followUpTiming === "now"
+                        ? "border-amber-500 bg-amber-500/10 text-foreground ring-1 ring-amber-500"
+                        : "border-border bg-card hover:bg-muted text-muted-foreground",
+                    )}
+                  >
+                    <Send className="h-3.5 w-3.5 text-amber-500" />
+                    <span>Send Follow-Up Now</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFollowUpTiming("scheduled")}
+                    className={cn(
+                      "flex items-center justify-center gap-2 p-2.5 rounded-lg border text-xs font-medium transition-all",
+                      followUpTiming === "scheduled"
+                        ? "border-purple-500 bg-purple-500/10 text-foreground ring-1 ring-purple-500"
+                        : "border-border bg-card hover:bg-muted text-muted-foreground",
+                    )}
+                  >
+                    <CalendarClock className="h-3.5 w-3.5 text-purple-500" />
+                    <span>Schedule Auto-Reminder</span>
+                  </button>
+                </div>
+
+                {followUpTiming === "scheduled" && (
+                  <div className="space-y-2 pt-2 border-t mt-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] text-muted-foreground">Quick Presets:</span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[11px] px-2"
+                        onClick={() => setQuickSchedule(1, 10)}
+                      >
+                        Tomorrow 10 AM
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[11px] px-2"
+                        onClick={() => setQuickSchedule(2, 10)}
+                      >
+                        In 2 Days
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[11px] px-2"
+                        onClick={() => setQuickSchedule(3, 10)}
+                      >
+                        In 3 Days
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[11px] px-2"
+                        onClick={() => setQuickSchedule(7, 10)}
+                      >
+                        In 1 Week
+                      </Button>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label htmlFor="followup-schedule-time" className="text-xs text-muted-foreground">
+                        Exact Send Date &amp; Time
+                      </Label>
+                      <Input
+                        id="followup-schedule-time"
+                        type="datetime-local"
+                        value={followUpScheduledAt}
+                        onChange={(e) => setFollowUpScheduledAt(e.target.value)}
+                        className="h-8 text-xs font-mono"
+                        required
+                      />
+                    </div>
+                    <p className="text-[11px] text-purple-500/90 leading-tight">
+                      ⏰ Automated reminder: MasaCRM will automatically dispatch this follow-up on {followUpScheduledAt ? new Date(followUpScheduledAt).toLocaleString() : "the scheduled date"} to any recipient who has not replied.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Step 3: Follow-Up Message Content */}
+              <div className="space-y-3 rounded-lg border bg-card p-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    3. Follow-Up Email Details
+                  </Label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-[11px] gap-1 border-amber-500/30 text-amber-500 hover:bg-amber-500/10"
+                    onClick={() => {
+                      const tpl = STARTER_EMAIL_TEMPLATES.find((t) => t.id === "regibiz-followup");
+                      if (tpl) {
+                        setFollowUpSubject(tpl.subject);
+                        setFollowUpBodyHtml(tpl.bodyHtml);
+                        toast.success("Loaded RegiBIZ Quick Follow-Up template!");
+                      }
+                    }}
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    Load RegiBIZ Follow-Up Template
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="followup-name" className="text-xs">
+                      Follow-Up Batch Name
+                    </Label>
+                    <Input
+                      id="followup-name"
+                      value={followUpName}
+                      onChange={(e) => setFollowUpName(e.target.value)}
+                      placeholder="e.g. Complaudi — Follow-up 1"
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="followup-subject" className="text-xs">
+                      Subject Line *
+                    </Label>
+                    <Input
+                      id="followup-subject"
+                      value={followUpSubject}
+                      onChange={(e) => setFollowUpSubject(e.target.value)}
+                      placeholder="Re: Your previous email subject"
+                      className="h-8 text-xs"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">Follow-Up Message Body *</Label>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={followUpBodyMode === "write" ? "secondary" : "ghost"}
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() => setFollowUpBodyMode("write")}
+                      >
+                        Write
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={followUpBodyMode === "preview" ? "secondary" : "ghost"}
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() => setFollowUpBodyMode("preview")}
+                      >
+                        Preview
+                      </Button>
+                    </div>
+                  </div>
+
+                  {followUpBodyMode === "write" ? (
+                    <Textarea
+                      rows={5}
+                      value={followUpBodyHtml}
+                      onChange={(e) => setFollowUpBodyHtml(e.target.value)}
+                      placeholder="Hi {{name}}, just following up on our previous note..."
+                      className="field-sizing-fixed min-h-[110px] text-xs font-sans"
+                      required
+                    />
+                  ) : (
+                    <div className="rounded-md border bg-white p-3 text-black text-xs min-h-[110px] max-h-48 overflow-y-auto">
+                      <div
+                        dangerouslySetInnerHTML={{
+                          __html: wrapPreviewHtml(followUpBodyHtml),
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-1 pt-1 text-[11px] text-muted-foreground">
+                    <span>Merge tags:</span>
+                    {["{{name}}", "{{email}}", "{{company_name}}"].map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => {
+                          setFollowUpBodyHtml((prev) => prev + " " + tag);
+                          toast.success(`Inserted ${tag}`);
+                        }}
+                        className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-mono hover:bg-muted/80 text-foreground"
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Threading Header Option */}
+                <div className="flex items-start gap-2 pt-1">
+                  <Checkbox
+                    id="followup-keep-thread"
+                    checked={followUpKeepThread}
+                    onCheckedChange={(checked) => setFollowUpKeepThread(Boolean(checked))}
+                  />
+                  <div className="space-y-0.5">
+                    <Label
+                      htmlFor="followup-keep-thread"
+                      className="text-xs font-medium cursor-pointer"
+                    >
+                      Keep in same email thread (In-Reply-To header)
+                    </Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      Email clients like Gmail and Outlook will group this follow-up inside the original email conversation thread.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="shrink-0 gap-2 border-t pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setFollowUpOpen(false)}
+              disabled={submittingFollowUp}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                loadingFollowUpStats ||
+                submittingFollowUp ||
+                selectedFollowUpIds.size === 0 ||
+                !followUpSubject.trim() ||
+                !followUpBodyHtml.trim()
+              }
+              className={cn(
+                followUpTiming === "scheduled"
+                  ? "bg-purple-600 hover:bg-purple-700 text-white"
+                  : "bg-amber-600 hover:bg-amber-700 text-white",
+              )}
+              onClick={() => void submitFollowUp()}
+            >
+              {submittingFollowUp ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {followUpTiming === "scheduled" ? "Scheduling..." : "Sending Follow-Up..."}
+                </>
+              ) : followUpTiming === "scheduled" ? (
+                <>
+                  <CalendarClock className="mr-2 h-4 w-4" />
+                  Schedule Reminder ({selectedFollowUpIds.size})
+                </>
+              ) : (
+                <>
+                  <Send className="mr-2 h-4 w-4" />
+                  Send Follow-Up Now ({selectedFollowUpIds.size})
+                </>
+              )}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
