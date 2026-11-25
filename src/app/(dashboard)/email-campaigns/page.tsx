@@ -38,6 +38,23 @@ import {
   SendHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
+import { createClient } from "@/lib/supabase/client";
+
+async function getEmailAuthHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  try {
+    const supabase = createClient();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      headers["Authorization"] = `Bearer ${session.access_token}`;
+    }
+  } catch {
+    // Ignore fallback
+  }
+  return headers;
+}
 
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
@@ -652,10 +669,11 @@ export default function EmailCampaignsPage() {
     try {
       const audience = reconcileRecipientsWithMetadata(recipients, importedRecipients);
 
+      const authHeaders = await getEmailAuthHeaders();
       const cleanSenderName = sanitizeSenderName(fromName);
       const res = await fetch("/api/email/campaigns", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({
           name: name.trim(),
           subject: subject.trim(),
@@ -684,6 +702,7 @@ export default function EmailCampaignsPage() {
         } else {
           const sendRes = await fetch(`/api/email/campaigns/${createdCampaign.id}/send`, {
             method: "POST",
+            headers: authHeaders,
           });
           const sendData = await sendRes.json();
           if (!sendRes.ok) {
@@ -715,8 +734,10 @@ export default function EmailCampaignsPage() {
     if (sendingId) return;
     setSendingId(campaign.id);
     try {
+      const authHeaders = await getEmailAuthHeaders();
       const res = await fetch(`/api/email/campaigns/${campaign.id}/send`, {
         method: "POST",
+        headers: authHeaders,
       });
       const data = await res.json();
 

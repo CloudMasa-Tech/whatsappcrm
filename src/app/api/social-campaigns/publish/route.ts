@@ -476,16 +476,25 @@ async function publishXTarget(params: {
       summary,
     };
   } catch (err) {
+    const rawMsg =
+      err instanceof XApiError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : 'X publish failed';
+    const isCreditDepleted =
+      (err instanceof XApiError && err.status === 402) ||
+      rawMsg.toLowerCase().includes('credits depleted') ||
+      rawMsg.toLowerCase().includes('payment required');
+    const error = isCreditDepleted
+      ? 'X (Twitter) Developer monthly post credits are depleted. Upgrade your plan on developer.x.com or wait for your monthly cycle to reset.'
+      : rawMsg;
+
     return {
       platform: 'x',
       status: 'failed',
-      summary: 'X publish failed',
-      error:
-        err instanceof XApiError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : 'X publish failed',
+      summary: isCreditDepleted ? 'X post credits depleted' : 'X publish failed',
+      error,
     };
   }
 }

@@ -1002,6 +1002,7 @@
         "yes": "Yes",
         "no": "No"
       },
+      "delete": "Delete",
       "addStep": "Add step",
       "config": {
         "messageText": "Message text",

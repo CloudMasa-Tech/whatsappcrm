@@ -94,6 +94,14 @@ function parseXErrorMessage(
     typeof errorsArr[0]?.message === 'string' ? errorsArr[0].message : '';
 
   const combined = [title, detail, firstErrMsg].filter(Boolean).join(': ');
+  const lower = combined.toLowerCase();
+  if (
+    status === 402 ||
+    lower.includes('credits depleted') ||
+    lower.includes('payment required')
+  ) {
+    return 'X (Twitter) Developer monthly post credits are depleted. Upgrade your plan on developer.x.com or wait for your monthly cycle to reset.';
+  }
   if (status === 401) {
     return (
       combined ||

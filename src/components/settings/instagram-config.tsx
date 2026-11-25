@@ -561,7 +561,20 @@ export function InstagramConfig({ canDisconnect = true }: InstagramConfigProps) 
         }
       }
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to send direct message.");
+      const msg = err instanceof Error ? err.message : "Failed to send direct message.";
+      if (msg.includes("IGSID") || msg.includes("missing_igsid") || msg.includes("messages you first")) {
+        toast.error("Meta Cloud API requires the customer to message you first. To initiate a conversation with a new user, open Instagram Web.", {
+          duration: 6000,
+          action: {
+            label: "Open Instagram Web",
+            onClick: () => {
+              window.open("https://www.instagram.com/direct/inbox/", "_blank");
+            },
+          },
+        });
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setQuickDmSending(false);
     }
@@ -638,15 +651,33 @@ export function InstagramConfig({ canDisconnect = true }: InstagramConfigProps) 
   };
 
   const uploadSingleFile = async (file: File): Promise<string> => {
+    if (file.size > 50 * 1024 * 1024) {
+      throw new Error(`File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum allowed size is 50 MB.`);
+    }
+
     const formData = new FormData();
     formData.append("file", file);
     const uploadRes = await fetch("/api/instagram/upload", {
       method: "POST",
       body: formData,
     });
-    const uploadData = await uploadRes.json();
+
+    const resText = await uploadRes.text();
+    let uploadData: Record<string, unknown> = {};
+    try {
+      uploadData = resText ? (JSON.parse(resText) as Record<string, unknown>) : {};
+    } catch {
+      if (uploadRes.status === 413) {
+        throw new Error("File size exceeds server upload limits (HTTP 413). Please upload a smaller video under 25 MB.");
+      }
+      if (uploadRes.status === 504 || uploadRes.status === 502) {
+        throw new Error("Upload server timed out. Please try again with a compressed video.");
+      }
+      throw new Error(`Upload server error (HTTP ${uploadRes.status}).`);
+    }
+
     if (!uploadRes.ok || uploadData.error) {
-      throw new Error(uploadData.error || "Failed to upload media file.");
+      throw new Error(String(uploadData.error || "Failed to upload media file."));
     }
     return uploadData.url as string;
   };
@@ -679,13 +710,19 @@ export function InstagramConfig({ canDisconnect = true }: InstagramConfigProps) 
             caption: publishCaption.trim(),
           }),
         });
-        const data = await res.json();
-        if (!res.ok || data.error) throw new Error(data.error || "Failed to publish carousel.");
+        const resText = await res.text();
+        let data: Record<string, unknown> = {};
+        try {
+          data = resText ? (JSON.parse(resText) as Record<string, unknown>) : {};
+        } catch {
+          throw new Error(`Failed to parse response from publishing server (HTTP ${res.status}).`);
+        }
+        if (!res.ok || data.error) throw new Error(String(data.error || "Failed to publish carousel."));
         if (data.direct) {
-          toast.info(data.message);
+          toast.info(String(data.message));
           handleOpenWebCreator();
         } else {
-          toast.success(data.message || "Carousel published successfully!");
+          toast.success(String(data.message || "Carousel published successfully!"));
           carouselItems.forEach((i) => URL.revokeObjectURL(i.previewUrl));
           setCarouselItems([]);
           setPublishCaption("");
@@ -719,21 +756,32 @@ export function InstagramConfig({ canDisconnect = true }: InstagramConfigProps) 
         }),
       });
 
-      const data = await res.json();
+      const resText = await res.text();
+      let data: Record<string, unknown> = {};
+      try {
+        data = resText ? (JSON.parse(resText) as Record<string, unknown>) : {};
+      } catch {
+        throw new Error(`Failed to parse response from publishing server (HTTP ${res.status}).`);
+      }
       if (!res.ok || data.error) {
-        throw new Error(data.error || "Failed to publish media.");
+        throw new Error(String(data.error || "Failed to publish media."));
       }
 
       if (data.direct) {
-        toast.info(data.message);
+        toast.info(String(data.message));
         handleOpenWebCreator();
       } else {
-        toast.success(data.message || "Published successfully to Instagram!");
+        toast.success(String(data.message || "Published successfully to Instagram!"));
         handleRemoveMedia();
         setPublishCaption("");
       }
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to publish to Instagram.");
+      const msg = err instanceof Error ? err.message : "Failed to publish to Instagram.";
+      if (msg.includes("string did not match the expected pattern")) {
+        toast.error("Network or parsing error occurred during media upload. Ensure the video is a standard MP4/MOV file and try again.");
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setPublishing(false);
       setUploadingMedia(false);
@@ -1383,6 +1431,24 @@ export function InstagramConfig({ canDisconnect = true }: InstagramConfigProps) 
                         ? "Send an instant direct message or campaign with multiple targeted users by entering handles separated by commas or new lines (e.g. @hari, @alex)."
                         : "Enter any Instagram @username or comma-separated list of usernames to start or continue Direct Message threads."}
                     </p>
+
+                    {isCloudApi && (
+                      <div className="rounded-xl border border-pink-500/20 bg-pink-500/5 p-3 text-xs space-y-1.5">
+                        <div className="flex items-center justify-between font-semibold text-pink-400">
+                          <span>Meta Cloud API Messaging Policy</span>
+                          <button
+                            type="button"
+                            onClick={() => window.open("https://www.instagram.com/direct/inbox/", "_blank")}
+                            className="text-[11px] underline hover:text-pink-300 cursor-pointer"
+                          >
+                            Open Instagram Web Direct ↗
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-relaxed">
+                          Meta permits API DMs to users who have messaged your account first or commented on your posts. To message a new user who has not messaged you yet, open Instagram Web Direct.
+                        </p>
+                      </div>
+                    )}
                     <form onSubmit={handleSendQuickDm} className="space-y-3">
                       <div className="space-y-1.5">
                         <Label htmlFor="quick-dm-user" className="text-xs">

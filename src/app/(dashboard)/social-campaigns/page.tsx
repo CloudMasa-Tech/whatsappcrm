@@ -1260,7 +1260,19 @@ export default function SocialCampaignsPage() {
                       </p>
                     )}
                     {res.error && (
-                      <p className="mt-1 text-[11px] text-red-300">{res.error}</p>
+                      <div className="mt-1 space-y-1">
+                        <p className="text-[11px] text-red-300">{res.error}</p>
+                        {res.error.toLowerCase().includes("credits") && (
+                          <a
+                            href="https://developer.x.com/en/portal/dashboard"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-400 underline hover:text-blue-300"
+                          >
+                            Open X Developer Portal ↗
+                          </a>
+                        )}
+                      </div>
                     )}
                   </div>
                 ))}

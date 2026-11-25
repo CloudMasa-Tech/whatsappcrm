@@ -26,7 +26,8 @@
 // ============================================================
 
 import { NextResponse } from "next/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { headers } from "next/headers";
+import type { SupabaseClient, User } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
 import { hasMinRole, isAccountRole, isPlatformRole, type AccountRole, type PlatformRole } from "./roles";
@@ -108,10 +109,36 @@ export interface AccountContext {
 export async function getCurrentAccount(): Promise<AccountContext> {
   const supabase = await createClient();
 
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
+  let user: User | null = null;
+  let userErr: unknown = null;
+
+  // 1. Try Bearer token from Authorization header if present
+  try {
+    const headerStore = await headers();
+    const authHeader = headerStore.get("authorization");
+    if (authHeader && authHeader.toLowerCase().startsWith("bearer ")) {
+      const token = authHeader.slice(7).trim();
+      if (token) {
+        const bearerRes = await supabase.auth.getUser(token);
+        if (bearerRes.data?.user) {
+          user = bearerRes.data.user;
+        }
+      }
+    }
+  } catch {
+    // headers() might be called outside request context (e.g. tests)
+  }
+
+  // 2. Fall back to cookie-based session
+  if (!user) {
+    const {
+      data: { user: cookieUser },
+      error: cookieErr,
+    } = await supabase.auth.getUser();
+    user = cookieUser;
+    userErr = cookieErr;
+  }
+
   if (userErr || !user) {
     throw new UnauthorizedError();
   }

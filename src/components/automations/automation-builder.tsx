@@ -1154,7 +1154,14 @@ function StepRenderer({
                   onClick={() => props.deleteStepAt(path)}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                  {t("delete", { defaultValue: "Delete" })}
+                  {(() => {
+                    try {
+                      const val = t("delete");
+                      return val && !val.includes("Automations.builder") ? val : "Delete";
+                    } catch {
+                      return "Delete";
+                    }
+                  })()}
                 </Button>
               </div>
             </div>
