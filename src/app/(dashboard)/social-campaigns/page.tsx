@@ -406,6 +406,48 @@ export default function SocialCampaignsPage() {
     try {
       const uploaded: SocialMediaItem[] = [];
       for (const file of list) {
+        // 1. Try signed upload URL (bypasses Nginx body size limits)
+        let fileUrl = "";
+        const fileKind: SocialMediaItem["kind"] = file.type.startsWith("image/")
+          ? "image"
+          : file.type.startsWith("video/")
+            ? "video"
+            : "document";
+
+        try {
+          const signRes = await fetch("/api/storage/signed-upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fileName: file.name, contentType: file.type }),
+          });
+          if (signRes.ok) {
+            const signData = await signRes.json();
+            if (signData?.signedUrl && signData?.publicUrl) {
+              const putRes = await fetch(signData.signedUrl, {
+                method: "PUT",
+                headers: { "Content-Type": file.type || "application/octet-stream" },
+                body: file,
+              });
+              if (putRes.ok) {
+                fileUrl = signData.publicUrl as string;
+              }
+            }
+          }
+        } catch {
+          // Fall back to server route
+        }
+
+        if (fileUrl) {
+          uploaded.push({
+            url: fileUrl,
+            kind: fileKind,
+            fileName: file.name,
+            mimeType: file.type,
+          });
+          continue;
+        }
+
+        // 2. Fall back to server endpoint with safe error handling
         const fd = new FormData();
         fd.append("file", file);
         if (effectiveProjectId && effectiveProjectId !== "default") {
@@ -415,9 +457,19 @@ export default function SocialCampaignsPage() {
           method: "POST",
           body: fd,
         });
-        const json = await res.json();
+        const resText = await res.text();
+        let json: Record<string, unknown> = {};
+        try {
+          json = resText ? (JSON.parse(resText) as Record<string, unknown>) : {};
+        } catch {
+          if (res.status === 413) {
+            throw new Error(`File "${file.name}" exceeds server upload limits (HTTP 413). Please upload a smaller file under 25 MB.`);
+          }
+          throw new Error(`Upload server error (HTTP ${res.status}).`);
+        }
+
         if (!res.ok) {
-          throw new Error(json?.error || `Failed to upload ${file.name}`);
+          throw new Error(String(json?.error || `Failed to upload ${file.name}`));
         }
         uploaded.push({
           url: json.url as string,

@@ -49,6 +49,7 @@ import { InstagramMediaFeed } from "@/components/instagram/instagram-media-feed"
 import { InstagramCommentsPanel } from "@/components/instagram/instagram-comments-panel";
 import { InstagramInsightsPanel } from "@/components/instagram/instagram-insights-panel";
 import { toast } from "sonner";
+import { uploadAccountMedia } from "@/lib/storage/upload-media";
 
 interface InstagramConfigProps {
   canDisconnect?: boolean;
@@ -655,6 +656,46 @@ export function InstagramConfig({ canDisconnect = true }: InstagramConfigProps) 
       throw new Error(`File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum allowed size is 50 MB.`);
     }
 
+    // 1. Try signed upload URL (direct browser-to-Supabase PUT, completely bypasses Nginx reverse proxy limits)
+    try {
+      const signRes = await fetch("/api/storage/signed-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: file.name, contentType: file.type }),
+      });
+      if (signRes.ok) {
+        const signData = await signRes.json();
+        if (signData?.signedUrl && signData?.publicUrl) {
+          const putRes = await fetch(signData.signedUrl, {
+            method: "PUT",
+            headers: {
+              "Content-Type": file.type === "video/quicktime" ? "video/mp4" : (file.type || "application/octet-stream"),
+            },
+            body: file,
+          });
+          if (putRes.ok) {
+            return signData.publicUrl as string;
+          }
+        }
+      }
+    } catch {
+      // Fall through to client direct upload
+    }
+
+    // 2. Try direct upload to Supabase Storage (bypasses Nginx body size limits)
+    try {
+      const direct = await uploadAccountMedia("chat-media", file);
+      if (direct?.publicUrl) return direct.publicUrl;
+    } catch {
+      try {
+        const direct = await uploadAccountMedia("flow-media", file);
+        if (direct?.publicUrl) return direct.publicUrl;
+      } catch {
+        // Fall back to server endpoint
+      }
+    }
+
+    // 3. Fall back to server route with safe text/HTML error parsing
     const formData = new FormData();
     formData.append("file", file);
     const uploadRes = await fetch("/api/instagram/upload", {

@@ -123,10 +123,11 @@ export async function uploadAccountMedia(
   }
 
   const path = buildMediaPath(profile.account_id as string, file.name);
+  const safeContentType = file.type === "video/quicktime" ? "video/mp4" : (file.type || "application/octet-stream");
   const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, {
     cacheControl: "3600",
     upsert: false,
-    contentType: file.type,
+    contentType: safeContentType,
   });
   if (upErr) throw new Error(upErr.message);
 

@@ -44,6 +44,7 @@ import { FacebookFeed } from "@/components/facebook/facebook-feed";
 import { FacebookInsightsPanel } from "@/components/facebook/facebook-insights-panel";
 import { toast } from "sonner";
 import { sanitizeAccessToken } from "@/lib/instagram/meta-client";
+import { uploadAccountMedia } from "@/lib/storage/upload-media";
 
 interface FacebookConfigProps {
   canDisconnect?: boolean;
@@ -341,17 +342,74 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
 
   // Upload helper:
   const uploadSingleFile = async (file: File): Promise<string> => {
+    if (file.size > 50 * 1024 * 1024) {
+      throw new Error(`File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum allowed size is 50 MB.`);
+    }
+
+    // 1. Try signed upload URL (direct browser-to-Supabase PUT, completely bypasses Nginx reverse proxy limits)
+    try {
+      const signRes = await fetch("/api/storage/signed-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: file.name, contentType: file.type }),
+      });
+      if (signRes.ok) {
+        const signData = await signRes.json();
+        if (signData?.signedUrl && signData?.publicUrl) {
+          const putRes = await fetch(signData.signedUrl, {
+            method: "PUT",
+            headers: {
+              "Content-Type": file.type === "video/quicktime" ? "video/mp4" : (file.type || "application/octet-stream"),
+            },
+            body: file,
+          });
+          if (putRes.ok) {
+            return signData.publicUrl as string;
+          }
+        }
+      }
+    } catch {
+      // Fall through to client direct upload
+    }
+
+    // 2. Try direct upload to Supabase Storage (bypasses Nginx body size limits)
+    try {
+      const direct = await uploadAccountMedia("chat-media", file);
+      if (direct?.publicUrl) return direct.publicUrl;
+    } catch {
+      try {
+        const direct = await uploadAccountMedia("flow-media", file);
+        if (direct?.publicUrl) return direct.publicUrl;
+      } catch {
+        // Fall back to server endpoint
+      }
+    }
+
+    // 3. Fall back to server route with safe text/HTML error parsing
     const formData = new FormData();
     formData.append("file", file);
     const res = await fetch("/api/facebook/upload", {
       method: "POST",
       body: formData,
     });
-    const data = await res.json();
-    if (!res.ok || data.error || !data.url) {
-      throw new Error(data.error || "Media upload to storage failed");
+    const resText = await res.text();
+    let data: Record<string, unknown> = {};
+    try {
+      data = resText ? (JSON.parse(resText) as Record<string, unknown>) : {};
+    } catch {
+      if (res.status === 413) {
+        throw new Error("File size exceeds server upload limits (HTTP 413). Please upload a smaller video under 25 MB.");
+      }
+      if (res.status === 504 || res.status === 502) {
+        throw new Error("Upload server timed out. Please try again with a compressed video.");
+      }
+      throw new Error(`Upload server error (HTTP ${res.status}).`);
     }
-    return data.url;
+
+    if (!res.ok || data.error || !data.url) {
+      throw new Error(String(data.error || "Media upload to storage failed"));
+    }
+    return data.url as string;
   };
 
   // Studio Publish Submission:
@@ -410,9 +468,15 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
         }),
       });
 
-      const data = await res.json();
+      const resText = await res.text();
+      let data: Record<string, unknown> = {};
+      try {
+        data = resText ? (JSON.parse(resText) as Record<string, unknown>) : {};
+      } catch {
+        throw new Error(`Failed to parse response from Facebook publishing server (HTTP ${res.status}).`);
+      }
       if (!res.ok || data.error) {
-        throw new Error(data.error || "Failed to publish post to Facebook");
+        throw new Error(String(data.error || "Failed to publish post to Facebook"));
       }
 
       toast.success("Post successfully published to Facebook!");
@@ -423,7 +487,12 @@ export function FacebookConfig({ canDisconnect = true }: FacebookConfigProps) {
       setCarouselItems([]);
       setActiveActionTab("feed");
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to publish post.");
+      const msg = err instanceof Error ? err.message : "Failed to publish post.";
+      if (msg.includes("string did not match the expected pattern")) {
+        toast.error("Network or parsing error occurred during media upload. Ensure the video is a standard MP4/MOV file and try again.");
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setPublishing(false);
       setUploadingMedia(false);

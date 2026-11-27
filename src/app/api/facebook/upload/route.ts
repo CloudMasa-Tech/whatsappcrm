@@ -5,6 +5,7 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { buildProjectMediaPath } from '@/lib/storage/upload-media';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
 
 export async function POST(request: NextRequest) {
   try {
