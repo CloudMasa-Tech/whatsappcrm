@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     const path = buildProjectMediaPath(ctx.accountId, ctx.projectId, fileName);
     const db = supabaseAdmin();
 
-    const { data, error } = await db.storage.from(bucket).createSignedUploadUrl(path);
+    const { data, error } = await db.storage.from(bucket).createSignedUploadUrl(path, { upsert: true });
     if (error || !data) {
       return NextResponse.json(
         { error: error?.message || "Could not generate signed upload URL" },

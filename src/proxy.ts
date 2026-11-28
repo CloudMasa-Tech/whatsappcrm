@@ -106,8 +106,12 @@ export async function proxy(request: NextRequest) {
     '/facebook',
     '/profile',
     '/email-campaigns',
+    '/email',
     '/social-campaigns',
     '/templates',
+    '/tickets',
+    '/linkedin',
+    '/x',
   ]
   if (!user && protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))) {
     const url = request.nextUrl.clone()
